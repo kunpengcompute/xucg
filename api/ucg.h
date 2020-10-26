@@ -14,7 +14,7 @@
 BEGIN_C_DECLS
 
 /**
- * @defgroup UCG_API Unified Communication Protocol (UCG) API
+ * @defgroup UCG_API Unified Communication Group (UCG) API
  * @{
  * This section describes UCG API.
  * @}
@@ -63,14 +63,14 @@ BEGIN_C_DECLS
  * present. It is used to enable backward compatibility support.
  */
 enum ucg_params_field {
-    UCG_PARAM_FIELD_JOB_UID       = UCS_BIT(0), /**< Unique ID for this job */
-    UCG_PARAM_FIELD_ADDRESS_CB    = UCS_BIT(1), /**< Peer address lookup */
-    UCG_PARAM_FIELD_NEIGHBORS_CB  = UCS_BIT(2), /**< Neighborhood info */
-    UCG_PARAM_FIELD_DATATYPE_CB   = UCS_BIT(3), /**< Callback for datatypes */
-    UCG_PARAM_FIELD_REDUCE_OP_CB  = UCS_BIT(4), /**< Callback for reduce ops */
-    UCG_PARAM_FIELD_COMPLETION_CB = UCS_BIT(5), /**< Actions upon completion */
-    UCG_PARAM_FIELD_MPI_IN_PLACE  = UCS_BIT(6), /**< MPI_IN_PLACE value */
-    UCG_PARAM_FIELD_HANDLE_FAULT  = UCS_BIT(7)  /**< Fault-tolerance support */
+    UCG_PARAM_FIELD_ADDRESS_CB    = UCS_BIT(0), /**< Peer address lookup */
+    UCG_PARAM_FIELD_NEIGHBORS_CB  = UCS_BIT(1), /**< Neighborhood info */
+    UCG_PARAM_FIELD_DATATYPE_CB   = UCS_BIT(2), /**< Callback for datatypes */
+    UCG_PARAM_FIELD_REDUCE_OP_CB  = UCS_BIT(3), /**< Callback for reduce ops */
+    UCG_PARAM_FIELD_COMPLETION_CB = UCS_BIT(4), /**< Actions upon completion */
+    UCG_PARAM_FIELD_MPI_IN_PLACE  = UCS_BIT(5), /**< MPI_IN_PLACE value */
+    UCG_PARAM_FIELD_HANDLE_FAULT  = UCS_BIT(6), /**< Fault-tolerance support */
+    UCG_PARAM_FIELD_JOB_INFO      = UCS_BIT(7)  /**< Info about the MPI job */
 };
 
 enum ucg_fault_tolerance_mode {
@@ -81,6 +81,38 @@ enum ucg_fault_tolerance_mode {
                                       return value of the handler will indicate
                                       success or failure to handle the fault.*/
 };
+
+enum ucg_topo_info_type {
+    UCG_TOPO_INFO_DISTANCE_TABLE = 0, /**< Info form is a 2-D distance table */
+    UCG_TOPO_INFO_PLACEMENT_TABLE     /**< Info form is placement per level */
+};
+
+/**
+ * @ingroup UCG_GROUP
+ * @brief UCG group member distance.
+ *
+ * During group creation, the caller can pass information about the distance of
+ * each other member of the group. This information may be used to select the
+ * best logical topology for collective operations inside UCG.
+ */
+enum ucg_group_member_distance {
+    UCG_GROUP_MEMBER_DISTANCE_NONE = 0,
+
+    /* Within the same host */
+    UCG_GROUP_MEMBER_DISTANCE_HWTHREAD,
+    UCG_GROUP_MEMBER_DISTANCE_CORE,
+    UCG_GROUP_MEMBER_DISTANCE_L1CACHE,
+    UCG_GROUP_MEMBER_DISTANCE_L2CACHE,
+    UCG_GROUP_MEMBER_DISTANCE_L3CACHE,
+    UCG_GROUP_MEMBER_DISTANCE_SOCKET,
+    UCG_GROUP_MEMBER_DISTANCE_HOST,
+
+    /* Over the network */
+    UCG_GROUP_MEMBER_DISTANCE_RACK,
+    UCG_GROUP_MEMBER_DISTANCE_CLUSTER,
+
+    UCG_GROUP_MEMBER_DISTANCE_UNKNOWN
+} UCS_S_PACKED;
 
 /**
  * @ingroup UCG_CONTEXT
@@ -98,8 +130,6 @@ typedef struct ucg_params {
      * Provides ABI compatibility with respect to adding new fields.
      */
     uint64_t field_mask;
-
-    uint32_t job_uid; /** Unique ID of the job which this process is a member of */
 
     /* Callback functions for address lookup, used at connection establishment */
     struct {
@@ -181,6 +211,26 @@ typedef struct ucg_params {
         int (*handler_f)(void *context, int *error_code, ...);
         void (*err_str_f)(int error_code, char **error_description);
     } fault;
+
+    struct {
+        uint32_t job_uid;  /** Unique ID of the job which this process is a member of */
+        uint32_t step_idx; /** Step index within this job (e.g. in SLURM) */
+
+        enum ucg_group_member_distance map_by;  /* mpirun --map-by=?  */
+        enum ucg_group_member_distance rank_by; /* mpirun --rank-by=? */
+        enum ucg_group_member_distance bind_to; /* mpirun --bind-to=? (previously: bind-to none flag) */
+
+        enum ucg_topo_info_type info_type;
+        union {
+            /* Distance table, where [i][j] is the distance between i and j */
+            /* Used if info_type is set to @ref UCG_TOPO_INFO_DISTANCE_TABLE */
+            enum ucg_group_member_distance **distance_table;
+
+            /* Placement table, so [1][2]=4 means the rank 1 is running on core 4 */
+            /* Used if info_type is set to @ref UCG_TOPO_INFO_PLACEMENT_TABLE */
+            uint16_t *placement[UCG_GROUP_MEMBER_DISTANCE_UNKNOWN];
+        };
+    } job_info;
 } ucg_params_t;
 
 /**
@@ -223,6 +273,12 @@ enum ucg_collective_modifiers {
     UCG_GROUP_COLLECTIVE_MODIFIER_SYMMETRIC          = UCS_BIT(11), /* persistent on all ranks */
     UCG_GROUP_COLLECTIVE_MODIFIER_BARRIER            = UCS_BIT(12), /* prevent others from starting */
     UCG_GROUP_COLLECTIVE_MODIFIER_MOCK_EPS           = UCS_BIT(13), /* information gathering only */
+
+
+    UCG_GROUP_COLLECTIVE_MODIFIER_ALLTOALL           = UCS_BIT(14), /* MPI_ALLTOALL */
+    UCG_GROUP_COLLECTIVE_MODIFIER_ALLGATHER          = UCS_BIT(15), /* MPI_ALLGATHER */
+
+    UCG_GROUP_COLLECTIVE_MODIFIER_MASK               = UCS_MASK(16)
 };
 
 /**
@@ -237,32 +293,11 @@ enum ucg_collective_modifiers {
  * In other cases, the "root" field is ignored.
  */
 typedef struct ucg_collective_type {
-    uint16_t                 modifiers; /* Collective description, using
-                                           @ref ucg_collective_modifiers */
-    ucg_group_member_index_t root :48;  /* Root rank, if applicable */
+    uint16_t                 modifiers;        /* Collective description, using
+                                                  @ref ucg_collective_modifiers */
+    ucg_hash_index_t         plan_cache_index; /* the index of collective type in plan cache. */
+    ucg_group_member_index_t root;             /* Root rank, if applicable */
 } UCS_S_PACKED ucg_collective_type_t;
-
-/**
- * @ingroup UCG_GROUP
- * @brief UCG group member distance.
- *
- * During group creation, the caller can pass information about the distance of
- * each other member of the group. This information may be used to select the
- * best logical topology for collective operations inside UCG.
- */
-enum ucg_group_member_distance {
-    UCG_GROUP_MEMBER_DISTANCE_SELF   = 0, /* This is the calling member */
-    UCG_GROUP_MEMBER_DISTANCE_CACHE  = UCS_MASK(1), /* member shares cache memory */
-    /* Reserved for in-socket proximity values */
-    UCG_GROUP_MEMBER_DISTANCE_SOCKET = UCS_MASK(3), /* member is on the same socket */
-    /* Reserved for in-host proximity values */
-    UCG_GROUP_MEMBER_DISTANCE_HOST   = UCS_MASK(4), /* member is on the same host */
-    /* Reserved for network proximity values */
-    UCG_GROUP_MEMBER_DISTANCE_NET    = UCS_MASK(8) - 2, /* member is on the network */
-
-    UCG_GROUP_MEMBER_DISTANCE_FAULT  = UCS_MASK(8) - 1,
-    UCG_GROUP_MEMBER_DISTANCE_LAST   = UCS_MASK(8)
-} UCS_S_PACKED;
 
 /**
  * @ingroup UCG_GROUP
@@ -276,7 +311,8 @@ enum ucg_group_params_field {
     UCG_GROUP_PARAM_FIELD_MEMBER_COUNT = UCS_BIT(1), /**< Number of members */
     UCG_GROUP_PARAM_FIELD_MEMBER_INDEX = UCS_BIT(2), /**< My member index */
     UCG_GROUP_PARAM_FIELD_CB_CONTEXT   = UCS_BIT(3), /**< context for callbacks */
-    UCG_GROUP_PARAM_FIELD_DISTANCES    = UCS_BIT(4)  /**< Member distance array */
+    UCG_GROUP_PARAM_FIELD_DISTANCES    = UCS_BIT(4), /**< Member distance array */
+    UCG_GROUP_PARAM_FIELD_RANK_MAP     = UCS_BIT(5)  /**< Map to global ranks */
 };
 
 /**
@@ -322,6 +358,9 @@ typedef struct ucg_group_params {
      *    ...
      */
     enum ucg_group_member_distance *distance;
+
+    ucg_group_member_index_t *rank_map; /* Maps from the index of each rank in
+                                           this group to the global job rank */
 } ucg_group_params_t;
 
 
@@ -334,7 +373,7 @@ typedef struct ucg_group_params {
  * to performance, as well as it being contiguous, because its entire contents
  * are accessed during run-time.
  */
-typedef struct ucg_collective {
+typedef struct ucg_collective_params {
     struct {
         union {
             /* only in "send" (see @ref UCG_PARAM_TYPE ) */
@@ -482,11 +521,6 @@ void ucg_request_cancel(ucg_coll_h coll);
 /**
  * @ingroup UCG_COLLECTIVE
  * @brief Destroys a collective operation handle.
- *
- * This is only required for persistent collectives, where the flag
- * UCG_GROUP_COLLECTIVE_MODIFIER_PERSISTENT is passed when calling
- * @ref ucg_collective_create. Otherwise, the handle is
- * destroyed when the collective operation is completed.
  *
  * @param [in]  coll         Collective operation handle.
  *

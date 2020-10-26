@@ -24,9 +24,8 @@
 
 UCS_LIST_HEAD(ucg_plan_components_list);
 
-__KHASH_IMPL(ucg_group_ep, static UCS_F_MAYBE_UNUSED inline,
-             ucg_group_member_index_t, ucp_ep_h, 1, kh_int64_hash_func,
-             kh_int64_hash_equal);
+KHASH_IMPL(ucg_group_ep, ucg_group_member_index_t, ucp_ep_h,
+           1, kh_int_hash_func, kh_int_hash_equal);
 
 #define ucg_plan_foreach(_descs, _desc_cnt, _plan_ctx, _grp_ctx) \
     typeof(_desc_cnt) idx = 0; \
@@ -330,7 +329,7 @@ ucs_status_t ucg_plan_connect(ucg_group_h group,
 
     int is_root = flags & UCG_PLAN_CONNECT_FLAG_AM_ROOT;
 
-    ucs_trace("connecting with flags=%u to remote peer #%" PRIx64, flags, idx);
+    ucs_trace("connecting with flags=%u to remote peer #%u", flags, idx);
 
     /* Look-up the UCP endpoint based on the index */
     ucp_ep_h ucp_ep;
@@ -428,7 +427,7 @@ am_retry:
         *ep_p = ucg_plan_connect_loopback((*ep_p)->iface);
         ucs_assert(*ep_p != NULL);
     } else {
-        ucs_trace("connection successful to remote peer #%" PRIx64, idx);
+        ucs_trace("connection successful to remote peer #%u", idx);
     }
 
     *md_p      = ucp_ep_md(ucp_ep, lane);

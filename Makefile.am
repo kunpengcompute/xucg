@@ -5,7 +5,7 @@
 
 if HAVE_UCG
 
-SUBDIRS = base builtin
+SUBDIRS = base builtin hicoll
 
 lib_LTLIBRARIES    = libucg.la
 libucg_la_CFLAGS   = $(BASE_CFLAGS)

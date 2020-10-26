@@ -56,6 +56,27 @@ static ucs_stats_class_t ucg_group_stats_class = {
 #define UCG_GROUP_THREAD_CS_EXIT(_obj)
 #endif
 
+void ucg_init_group_cache(struct ucg_group *new_group)
+{
+    unsigned idx, rank, algo_idx;
+    for (algo_idx = 0; algo_idx <  UCG_GROUP_MSG_SIZE_LEVEL; algo_idx++) {
+        for (rank = 0; rank < UCG_GROUP_MAX_ROOT_PARAM; rank++) {
+            for (idx = 0; idx < UCG_GROUP_MAX_COLL_TYPE_BUCKETS; idx++) {
+                new_group->cache[algo_idx][rank][idx] = NULL;
+            }
+        }
+     }
+}
+
+void ucg_init_group_root_used(struct ucg_group *new_group)
+{
+    unsigned rank;
+    /* Initalization of root_used */
+    for (rank = 0; rank < UCG_GROUP_MAX_ROOT_PARAM; rank++) {
+        new_group->root_used[rank] = (unsigned) -1;
+    }
+}
+
 static inline ucs_status_t ucg_group_plan(ucg_group_h group,
                                           const ucg_collective_params_t *params,
                                           ucg_plan_t **plan_p)
@@ -73,7 +94,7 @@ static inline ucs_status_t ucg_group_plan(ucg_group_h group,
     }
 
     UCS_PROFILE_CODE("ucg_plan") {
-        status = planner->component->plan(gctx, &UCG_PARAM_TYPE(params), &plan);
+        status = planner->component->plan(gctx, params, &plan);
     }
     if (ucs_unlikely(status != UCS_OK)) {
         return status;
@@ -112,7 +133,7 @@ ucg_group_wireup_coll_iface_calc(enum ucg_group_member_distance *distance,
     ucg_group_member_index_t idx, cnt = 0;
 
     for (idx = 0; idx < member_count; idx++) {
-        if (distance[idx] == UCG_GROUP_MEMBER_DISTANCE_SELF) {
+        if (distance[idx] == UCG_GROUP_MEMBER_DISTANCE_NONE) {
             *proc_idx = (uint32_t)idx;
             status    = UCS_OK;
         } else if (distance[idx] <= UCG_GROUP_MEMBER_DISTANCE_HOST) {
@@ -297,7 +318,7 @@ ucs_status_t ucg_group_create(ucp_worker_h worker,
         memcpy(group->params.distance, params->distance, dist_size);
     } else {
         /* If the user didn't specify the distances - treat as uniform */
-        memset(group->params.distance, UCG_GROUP_MEMBER_DISTANCE_LAST, dist_size);
+        memset(group->params.distance, UCG_GROUP_MEMBER_DISTANCE_UNKNOWN, dist_size);
     }
 
     if ((params->field_mask & UCG_GROUP_PARAM_FIELD_ID) != 0) {
@@ -333,6 +354,9 @@ ucs_status_t ucg_group_create(ucp_worker_h worker,
             return status;
         }
     }
+
+    ucg_init_group_cache(group);
+    ucg_init_group_root_used(group);
 
     *group_p = group;
     return UCS_OK;
@@ -388,17 +412,119 @@ void ucg_request_cancel(ucg_coll_h coll)
     // TODO: implement
 }
 
+void ucg_get_cache_plan(unsigned int message_size_level, unsigned int coll_root,
+                        ucg_group_h group, const ucg_collective_params_t *params,
+                        ucg_plan_t **cache_plan)
+{
+    ucg_group_member_index_t root = params->send.type.root;
+
+    ucg_plan_t *plan = group->cache[message_size_level][coll_root][params->send.type.plan_cache_index];
+    if (plan == NULL) {
+        *cache_plan = NULL;
+        return;
+    }
+
+    if (params->recv.op && !ucg_global_params.reduce_op.is_commutative_f(params->recv.op) && !plan->support_non_commutative) {
+        *cache_plan = NULL;
+        return;
+    }
+
+    if (params->recv.op && !ucg_global_params.reduce_op.is_commutative_f(params->recv.op) && params->send.count > 1) {
+        *cache_plan = NULL;
+        return;
+    }
+
+    /* TODO: (alex) need to find a good way to keep the config private, but still filter by message size... maybe new component API?
+    ucg_builtin_config_t *config = (ucg_builtin_config_t *)plan->planner->config; // TODO: only available in (builtin-)bctx->config
+    if (params->send.dtype > config->large_datatype_threshold && !plan->support_large_datatype) {
+        *cache_plan = NULL;
+        return;
+    }
+    */
+
+    if (plan != NULL && root != plan->type.root) {
+        *cache_plan = NULL;
+        return;
+    }
+
+    ucs_debug("select plan from cache: %p", plan);
+    *cache_plan = plan;
+}
+
+void ucg_update_group_cache(ucg_group_h group,
+                            unsigned int message_size_level,
+                            unsigned int coll_root,
+                            const ucg_collective_params_t *params,
+                            ucg_plan_t *plan)
+{
+    if (group->cache[message_size_level][coll_root][params->send.type.plan_cache_index] != NULL) {
+        // TODO: (alex) need to avoid memory leak without using "buildin" specifically
+        // ucg_builtin_plan_t *builtin_plan = ucs_derived_of(group->cache[message_size_level][coll_root][params->plan_cache_index], ucg_builtin_plan_t);
+        // (void)ucg_builtin_destroy_plan(builtin_plan, group);
+        group->cache[message_size_level][coll_root][params->send.type.plan_cache_index] = NULL;
+    }
+    group->cache[message_size_level][coll_root][params->send.type.plan_cache_index] = plan;
+}
+
+void ucg_collective_create_choose_algorithm(unsigned msg_size, unsigned *message_size_level)
+{
+    /* choose algorithm due to message size */
+    if (msg_size < UCG_GROUP_MED_MSG_SIZE) {
+        *message_size_level = 0;
+    } else {
+        *message_size_level = 1;
+    }
+}
+
+// TODO: (alex) remove this later...
+#include <ucp/dt/dt.inl>
+extern ucs_status_t ucg_builtin_convert_datatype(void *param_datatype, ucp_datatype_t *ucp_datatype);
+
 UCS_PROFILE_FUNC(ucs_status_t, ucg_collective_create,
         (group, params, coll), ucg_group_h group,
         const ucg_collective_params_t *params, ucg_coll_h *coll)
 {
+    /* check the recycling/cache for this collective */
     int is_match;
-    ucg_op_t *op;
+    ucg_op_t *op = NULL;
     ucs_status_t status;
+    if (group == NULL || params == NULL || coll == NULL || params->send.count < 0) {
+        status = UCS_ERR_INVALID_PARAM;
+        goto out;
+    }
 
-    uint16_t modifiers = UCG_PARAM_TYPE(params).modifiers;
-    unsigned coll_mask = modifiers & UCG_GROUP_CACHE_MODIFIER_MASK;
-    ucg_plan_t *plan   = group->cache[coll_mask];
+    /* find the plan of current root whether has been established */
+    ucg_group_member_index_t root = UCG_ROOT_RANK(params);
+    unsigned coll_root;
+    ucp_datatype_t send_dt;
+    unsigned message_size_level;
+    unsigned is_coll_root_found = 1;
+
+    status = ucg_builtin_convert_datatype(params->send.dtype, &send_dt);
+    if (ucs_unlikely(status != UCS_OK)) {
+        return status;
+    }
+    unsigned msg_size = ucp_dt_length(send_dt, params->send.count, NULL, NULL);
+
+    if (root >= group->params.member_count) {
+        status = UCS_ERR_INVALID_PARAM;
+        ucs_error("Invalid root[%u] for communication group size[%u]", root, group->params.member_count);
+        goto out;
+    }
+
+    /* root cache has been not found */
+    if (root != group->root_used[root % UCG_GROUP_MAX_ROOT_PARAM]) {
+        group->root_used[root % UCG_GROUP_MAX_ROOT_PARAM] = root;
+        is_coll_root_found = 0;
+    }
+    coll_root = root % UCG_GROUP_MAX_ROOT_PARAM;
+
+    ucg_collective_create_choose_algorithm(msg_size, &message_size_level);
+
+    ucg_plan_t *plan = NULL;
+    if (is_coll_root_found) {
+        ucg_get_cache_plan(message_size_level, coll_root, group, params, &plan);
+    }
 
     /* check the recycling/cache for this collective */
     if (ucs_likely(plan != NULL)) {
@@ -443,7 +569,7 @@ UCS_PROFILE_FUNC(ucs_status_t, ucg_collective_create,
 
         UCG_GROUP_THREAD_CS_ENTER(plan);
 
-        group->cache[coll_mask] = plan;
+        ucg_update_group_cache(group, msg_size, coll_root, params, plan);
 
         UCS_STATS_UPDATE_COUNTER(group->stats, UCG_GROUP_STAT_PLANS_CREATED, 1);
     }

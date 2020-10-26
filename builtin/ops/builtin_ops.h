@@ -1,5 +1,5 @@
 /*
- * Copyright (C) Huawei Technologies Co., Ltd. 2019.  ALL RIGHTS RESERVED.
+ * Copyright (C) Huawei Technologies Co., Ltd. 2019-2020.  ALL RIGHTS RESERVED.
  * See file LICENSE for terms.
  */
 
@@ -248,6 +248,13 @@ typedef struct ucg_builtin_comp_slot {
     ucg_builtin_request_t req;
     ucs_ptr_array_t       messages;
 } UCS_V_ALIGNED(UCS_SYS_CACHE_LINE_SIZE) ucg_builtin_comp_slot_t;
+
+typedef struct ucg_builtin_comp_desc {
+    ucp_recv_desc_t      super;
+    char                 padding[UCP_WORKER_HEADROOM_PRIV_SIZE];
+    ucg_builtin_header_t header;
+    char                 data[0];
+} ucg_builtin_comp_desc_t;
 
 typedef struct ucg_builtin_ctx {
     ucs_ptr_array_t      group_by_id;

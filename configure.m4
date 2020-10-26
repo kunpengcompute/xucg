@@ -50,8 +50,7 @@ CPPFLAGS="$SAVE_CPPFLAGS"
 ucg_modules=":builtin"
 m4_include([src/ucg/base/configure.m4])
 m4_include([src/ucg/builtin/configure.m4])
+m4_include([src/ucg/hicoll/configure.m4])
 AC_DEFINE_UNQUOTED([ucg_MODULES], ["${ucg_modules}"], [UCG loadable modules])
 
-AC_CONFIG_FILES([src/ucg/Makefile
-                 src/ucg/api/ucg_version.h
-                 src/ucg/base/ucg_version.c])
+AC_CONFIG_FILES([src/ucg/Makefile])

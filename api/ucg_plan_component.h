@@ -49,10 +49,10 @@ typedef struct ucg_plan_plogp_params {
     } send, recv, gap;
 
     /* p2p latency, in seconds, by distance (assumes uniform network) */
-    double latency_in_sec[UCG_GROUP_MEMBER_DISTANCE_LAST];
+    double latency_in_sec[UCG_GROUP_MEMBER_DISTANCE_UNKNOWN];
 
     /* number of peers on each level */
-    ucg_group_member_index_t peer_count[UCG_GROUP_MEMBER_DISTANCE_LAST];
+    ucg_group_member_index_t peer_count[UCG_GROUP_MEMBER_DISTANCE_UNKNOWN];
 } ucg_plan_plogp_params_t;
 
 typedef double (*ucg_plan_estimator_f)(ucg_plan_plogp_params_t plogp,
@@ -98,8 +98,15 @@ typedef struct ucg_plan_params {
 } ucg_plan_params_t;
 
 typedef struct ucg_plan {
+    /* Plan lookup - caching mechanism */
+    ucg_collective_type_t    type;
     ucs_recursive_spinlock_t lock;
     ucs_list_link_t          op_head;   /**< List of requests following this plan */
+
+    /*  Attribute */
+    int                      support_non_contiguous;
+    int                      support_non_commutative;
+    int                      support_large_datatype;
 
     /* Plan progress */
     ucg_plan_desc_t         *planner;
@@ -163,7 +170,7 @@ struct ucg_plan_component {
 
     /* plan a collective operation with this component */
     ucs_status_t           (*plan)    (ucg_group_ctx_h gctx,
-                                       const ucg_collective_type_t *coll_type,
+                                       const ucg_collective_params_t *coll_params,
                                        ucg_plan_t **plan_p);
     /* Prepare an operation to follow the given plan */
     ucs_status_t           (*prepare) (ucg_plan_t *plan,

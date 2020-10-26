@@ -17,8 +17,9 @@ libucg_builtin_la_SOURCES = \
 	ops/builtin_pack.c \
 	ops/builtin_data.c \
 	ops/builtin_control.c \
-	plan/builtin_tree.c \
-	plan/builtin_neighbor.c \
-	plan/builtin_recursive.c \
+	plan/builtin_binomial_tree.c \
 	plan/builtin_bruck.c \
-	plan/builtin_pairwise.c
+	plan/builtin_pairwise.c \
+	plan/builtin_recursive.c \
+	plan/builtin_ring.c \
+	plan/builtin_topo_info.c

@@ -605,8 +605,8 @@ ucg_builtin_step_select_packers(const ucg_collective_params_t *params,
                                      UCG_BUILTIN_OP_STEP_FLAG_RECV_BEFORE_SEND1|\
                                      UCG_BUILTIN_OP_STEP_FLAG_RECV1_BEFORE_SEND)
 
-static inline int ucg_builtin_convert_datatype(void *param_datatype,
-                                               ucp_datatype_t *ucp_datatype)
+// TODO: make this function "static inline" again
+ucs_status_t ucg_builtin_convert_datatype(void *param_datatype, ucp_datatype_t *ucp_datatype)
 {
     if (ucs_unlikely(param_datatype == NULL)) {
         return ucp_dt_make_contig(1);
@@ -1146,16 +1146,16 @@ ucs_status_t ucg_builtin_op_create(ucg_plan_t *plan,
     size_t send_dt_len = ucg_builtin_op_get_send_dt_length(op);
     /* Note: this needs to be after op->params and op->send_dt are set */
 
-    /* Check for non-zero-root trees */
-    if (ucs_unlikely(UCG_PARAM_TYPE(params).root != 0)) {
-        /* Assume the plan is tree-based, since Recursive K-ing has no root */
-        status = ucg_builtin_topo_tree_set_root(UCG_PARAM_TYPE(params).root,
-                                                plan->my_index, builtin_plan,
-                                                &next_phase, &phase_count);
-        if (ucs_unlikely(status != UCS_OK)) {
-            return status;
-        }
-    }
+//    /* Check for non-zero-root trees */ // TODO: (alex) replace with something?
+//    if (ucs_unlikely(UCG_PARAM_TYPE(params).root != 0)) {
+//        /* Assume the plan is tree-based, since Recursive K-ing has no root */
+//        status = ucg_builtin_topo_tree_set_root(UCG_PARAM_TYPE(params).root,
+//                                                plan->my_index, builtin_plan,
+//                                                &next_phase, &phase_count);
+//        if (ucs_unlikely(status != UCS_OK)) {
+//            return status;
+//        }
+//    }
 
     /* Create a step in the op for each phase in the topology */
     enum ucg_builtin_op_step_flags flags = 0;
@@ -1350,3 +1350,705 @@ ucs_status_t ucg_builtin_op_trigger(ucg_op_t *op,
     header.msg.coll_id = coll_id;
     return ucg_builtin_step_execute(builtin_req, header);
 }
+
+
+
+
+
+// TODO: (alex) relocate these functions left from builtin_cb.inl
+//
+//
+///*
+// * Below is a list of possible callback functions for pretreatment before sending.
+// */
+//
+///* send_cb for alltoall to sned discrete elements */
+//static void ucg_builtin_send_alltoall(ucg_builtin_request_t *req)
+//{
+//    unsigned i, k;
+//    size_t len = req->step->buf_len_unit;
+//    ucg_builtin_op_step_t *step = req->step;
+//    size_t buffer_length_discrete = 0;
+//    if (step->displs_rule == UCG_BUILTIN_OP_STEP_DISPLS_RULE_BRUCK_ALLTOALL) {
+//        k = (unsigned)step->am_header.step_idx;
+//        for (i = 0; i < num_procs; i++) {
+//            if ((i >> k) & 1) { //kth bit is 1
+//                memcpy(step->send_buffer + buffer_length_discrete * len,
+//                    step->recv_buffer + i * len, len);
+//                buffer_length_discrete++;
+//            }
+//        }
+//    }
+//}
+//
+///*
+// * Below is a list of possible callback functions for operation initialization.
+// */
+//static void ucg_builtin_init_dummy(ucg_builtin_op_t *op) {}
+//
+//static void ucg_builtin_init_gather(ucg_builtin_op_t *op)
+//{
+//    ucg_builtin_op_step_t *step = &op->steps[0];
+//    size_t len = step->buffer_length;
+//    memcpy(step->recv_buffer + (op->super.plan->group_id * len),
+//            step->send_buffer, len);
+//}
+//
+//static void ucg_builtin_init_reduce(ucg_builtin_op_t *op)
+//{
+//    ucg_builtin_op_step_t *step = &op->steps[0];
+//    if (op->super.params.send.buf == MPI_IN_PLACE) {
+//        memcpy(step->recv_buffer, op->super.params.recv.buf, step->buffer_length);
+//    } else {
+//        memcpy(step->recv_buffer, op->super.params.send.buf, step->buffer_length);
+//    }
+//}
+//
+//static void ucg_builtin_init_ring(ucg_builtin_op_t *op)
+//{
+//    ucg_builtin_op_step_t *step = &op->steps[0];
+//    size_t len = step->buf_len_unit;
+//    unsigned step_idx;
+//    for (step_idx = 0; step_idx < ((ucg_builtin_plan_t *)op->super.plan)->phs_cnt; step_idx++) {
+//        (&op->steps[step_idx])->am_header.remote_offset = (&op->steps[step_idx])->remote_offset;
+//    }
+//
+//    memcpy(step->recv_buffer, step->send_buffer - step->am_header.remote_offset, len);
+//}
+//
+///* for allgather, add initial step for first element storage*/
+//static void ucg_builtin_init_allgather(ucg_builtin_op_t *op)
+//{
+//    ucg_builtin_op_step_t *step = &op->steps[0];
+//    size_t len = step->buf_len_unit;
+//    memcpy(step->recv_buffer, step->send_buffer, len);
+//    //set offset of every step for allgather
+//    ucg_builtin_plan_t* builtin_plan = (ucg_builtin_plan_t*)op->super.plan;
+//    for (unsigned step_index = 0; step_index < builtin_plan->phs_cnt; step_index++, step++) {
+//        step->am_header.remote_offset = len;
+//        for (unsigned i = 0; i < step_index; i++) {
+//            size_t step_idx_offset = 1UL << i;
+//            step->am_header.remote_offset += step_idx_offset * len;
+//        }
+//    }
+//}
+//
+//static void ucg_builtin_init_allgather_recursive(ucg_builtin_op_t *op)
+//{
+//    ucg_builtin_op_step_t *step = &op->steps[0];
+//    size_t init_offset = 0;
+//    init_offset = op->super.plan->my_index * op->super.params.send.count *op->super.params.send.dt_len;
+//    memcpy(step->recv_buffer + init_offset, step->send_buffer, step->buffer_length);
+//}
+//
+///* for alltoall, add initial step for local rotation*/
+//static void ucg_builtin_init_alltoall(ucg_builtin_op_t *op)
+//{
+//    const ucg_group_params_t *params = ucg_group_get_params(op->super.plan->group);
+//    size_t proc_count = params->member_count;
+//    size_t my_index   = op->super.plan->my_index;
+//    ucg_builtin_op_step_t *step = &op->steps[0];
+//    size_t len = step->buf_len_unit;
+//
+//    memcpy(step->recv_buffer, step->send_buffer + my_index * len, (proc_count - my_index)*len);
+//
+//    if (my_index != 0) {
+//        memcpy(step->recv_buffer + (proc_count - my_index)*len, step->send_buffer, my_index*len);
+//    }
+//}
+//
+//
+//
+///* local shift for allgather at final step */
+//static void ucg_builtin_final_allgather(ucg_builtin_request_t *req)
+//{
+//    const ucg_group_params_t *params = ucg_group_get_params(req->op->super.plan->group);
+//    size_t num_procs_count  = params->member_count;
+//    size_t len = req->step->buf_len_unit;
+//    size_t my_index   = req->op->super.plan->my_index;
+//    size_t len_move = len * (num_procs_count - my_index);
+//    void *temp_buffer = ucs_calloc(1, len * (num_procs_count - 1), "ucg_allgather_final_step_buffer");
+//    ucs_assert(temp_buffer != NULL);
+//    if (req->op->super.plan->my_index != 0) {
+//        memcpy(temp_buffer, req->step->recv_buffer, len_move);
+//        memmove(req->step->recv_buffer, req->step->recv_buffer + len_move, len*my_index);
+//        memcpy(req->step->recv_buffer + len * my_index, temp_buffer, len_move);
+//    }
+//    free(temp_buffer);
+//    temp_buffer = NULL;
+//}
+//
+///* local inverse rotation for alltoall at final step */
+//static void ucg_builtin_final_alltoall(ucg_builtin_request_t *req)
+//{
+//    const ucg_group_params_t *params = ucg_group_get_params(req->op->super.plan->group);
+//    size_t num_procs_count = params->member_count;
+//    size_t len       = req->step->buf_len_unit;
+//    size_t my_index  = req->op->super.plan->my_index;
+//
+//    size_t dst;
+//    unsigned i;
+//    size_t len_move = len * num_procs_count;
+//    int8_t *temp_buffer = (int8_t*)ucs_calloc(1, len * num_procs_count, "ucg_alltoall_final_step_buffer");
+//    ucs_assert(temp_buffer != NULL);
+//    for (i = 0; i < num_procs_count; i++) {
+//        dst = (my_index - i + num_procs_count) % num_procs_count;
+//        memcpy(temp_buffer + dst * len, req->step->recv_buffer + i * len, len);
+//    }
+//    memcpy(req->step->recv_buffer, temp_buffer, len_move);
+//    free(temp_buffer);
+//    temp_buffer = NULL;
+//}
+//
+//// TODO: (alex) relocate these functions left from builtin_ops.c
+//
+//void ucg_builtin_dispose_packet(ucg_builtin_comp_desc_t *desc)
+//{
+//    /* Dispose of the packet, according to its allocation */
+//    if (desc->super.flags == UCT_CB_PARAM_FLAG_DESC) {
+//        uct_iface_release_desc(desc);
+//    } else {
+//        ucs_mpool_put_inline(desc);
+//    }
+//}
+//
+//ucs_status_t ucg_builtin_msg_process(ucg_builtin_comp_slot_t *slot, ucg_builtin_request_t *req)
+//{
+//    static unsigned loop_cnt = 0;
+//    static unsigned is_return = 0;
+//    unsigned max_msg_list_size = ((ucg_builtin_config_t*) req->op->super.plan->planner->plan_config)->max_msg_list_size;
+//
+//    /* Look for matches in list of packets waiting on this slot */
+//    uint16_t local_id = slot->local_id;
+//    ucg_builtin_op_step_t *step = req->step;
+//
+//    ucg_builtin_comp_desc_t *desc = NULL;
+//    ucg_builtin_comp_desc_t *iter = NULL;
+//
+//    ucs_list_for_each_safe(desc, iter, &slot->msg_head, super.tag_list[0]) {
+//        /*
+//         * Note: stored message coll_id can be either larger or smaller than
+//         * the one currently handled - due to coll_id wrap-around.
+//         */
+//        if (ucs_likely(desc->header.local_id == local_id)) {
+//            /* Check loop count - return in_progress if attach max size */
+//            if (++loop_cnt > max_msg_list_size) {
+//                is_return = 1;
+//                loop_cnt--;
+//                return UCS_INPROGRESS;
+//            }
+//
+//            /* Remove the packet (next call may lead here recursively) */
+//            ucs_list_del(&desc->super.tag_list[0]);
+//
+//            char *header_tmp = &desc->data[0];
+//            char *recv_buffer_tmp = (char *)slot->req.step->recv_buffer;
+//            size_t real_length = desc->super.length;
+//            if (req->step->phase->is_swap) {
+//                char *temp_buffer = (char*)UCS_ALLOC_CHECK(real_length, "temp buffer");
+//                memcpy(temp_buffer, header_tmp, real_length);
+//                memcpy(header_tmp, recv_buffer_tmp + desc->header.remote_offset, real_length);
+//                memcpy(recv_buffer_tmp + desc->header.remote_offset, temp_buffer, real_length);
+//                free(temp_buffer);
+//                temp_buffer = NULL;
+//            }
+//
+//            /* Handle this "waiting" packet, possibly completing the step */
+//            int is_step_done = step->recv_cb(&slot->req,
+//                                             desc->header.remote_offset, &desc->data[0],
+//                                             desc->super.length);
+//            ucg_builtin_dispose_packet(desc);
+//
+//            loop_cnt--;
+//
+//            /* If the step has indeed completed - check the entire op */
+//            if (is_step_done) {
+//                /* Continue msg processing if return by loop check */
+//                if (loop_cnt == 0 && is_return == 1) {
+//                    is_return = 0;
+//                    return ucg_builtin_msg_process(slot, req);
+//                } else {
+//                    return (req->comp_req->flags & UCP_REQUEST_FLAG_COMPLETED) ?
+//                           req->comp_req->status : UCS_INPROGRESS;
+//                }
+//            }
+//        }
+//    }
+//
+//    return UCS_INPROGRESS;
+//}
+//
+//static UCS_F_ALWAYS_INLINE ucs_status_t ucg_builtin_step_send_flags(ucg_builtin_op_step_t *step,
+//                                                                    ucg_builtin_plan_phase_t *phase,
+//                                                                    const ucg_collective_params_t *params,
+//                                                                    enum ucg_builtin_op_step_flags *send_flag)
+//{
+//    size_t length = step->buffer_length;
+//    size_t dt_len = params->send.dt_len;
+//    unsigned partial_length = 0;
+//
+//    /* Flag whether to go error and resend data */
+//    step->resend_flag = UCG_BUILTIN_OP_STEP_FIRST_SEND;
+//
+//    /*
+//     * Short messages (e.g. RDMA "inline")
+//     */
+//    if (ucs_likely(length <= phase->send_thresh.max_short_one
+//                   && phase->send_thresh.max_short_one != 0)) {
+//        /* Short send - single message */
+//        *send_flag = UCG_BUILTIN_OP_STEP_FLAG_SEND_AM_SHORT;
+//        step->fragments = 1;
+//    } else if (ucs_likely(length <= phase->send_thresh.max_short_max
+//                        && phase->send_thresh.max_short_max != 0
+//                        )) {
+//        if (ucs_likely(dt_len <= phase->send_thresh.max_short_one)) {
+//            /* Short send - multiple messages */
+//            step->fragment_length = phase->send_thresh.max_short_one - (phase->send_thresh.max_short_one % dt_len);
+//        } else {
+//            step->fragment_length = phase->send_thresh.max_short_one;
+//        }
+//        ucs_assert(step->fragment_length > 0);
+//        *send_flag = (enum ucg_builtin_op_step_flags)(UCG_BUILTIN_OP_STEP_FLAG_SEND_AM_SHORT |
+//                UCG_BUILTIN_OP_STEP_FLAG_FRAGMENTED);
+//        partial_length = (length % step->fragment_length) > 0;
+//        step->fragments = length / step->fragment_length + partial_length;
+//
+//    /*
+//     * Large messages, if supported (e.g. RDMA "zero-copy")
+//     */
+//    } else if (ucs_unlikely((length >  phase->send_thresh.max_bcopy_max) &&
+//                            (phase->md_attr->cap.max_reg))) {
+//        if (ucs_likely(length < phase->send_thresh.max_zcopy_one)) {
+//            /* ZCopy send - single message */
+//            *send_flag            = UCG_BUILTIN_OP_STEP_FLAG_SEND_AM_ZCOPY;
+//            step->fragments       = 1;
+//        } else {
+//            /* ZCopy send - multiple message */
+//            if (ucs_likely(dt_len <= phase->send_thresh.max_zcopy_one)) {
+//                step->fragment_length = phase->send_thresh.max_zcopy_one - (phase->send_thresh.max_zcopy_one % dt_len);
+//            } else {
+//                step->fragment_length = phase->send_thresh.max_zcopy_one;
+//            }
+//            ucs_assert(step->fragment_length > 0);
+//            *send_flag = (enum ucg_builtin_op_step_flags)(UCG_BUILTIN_OP_STEP_FLAG_SEND_AM_ZCOPY |
+//                    UCG_BUILTIN_OP_STEP_FLAG_FRAGMENTED);
+//            partial_length = (length % step->fragment_length) > 0;
+//            step->fragments = length / step->fragment_length + partial_length;
+//        }
+//
+//        if (phase->method != UCG_PLAN_METHOD_RECV_TERMINAL && phase->method != UCG_PLAN_METHOD_REDUCE_TERMINAL) {
+//            /* memory registration (using the memory registration cache) */
+//            ucs_status_t status = ucg_builtin_step_zcopy_prep(step);
+//            if (ucs_unlikely(status != UCS_OK)) {
+//                return status;
+//            }
+//        } else {
+//            /* recv only method */
+//            return UCS_OK;
+//        }
+//
+//    /*
+//     * Medium messages
+//     */
+//    } else if (ucs_likely(length <= phase->send_thresh.max_bcopy_one)) {
+//        /* BCopy send - single message */
+//        *send_flag = UCG_BUILTIN_OP_STEP_FLAG_SEND_AM_BCOPY;
+//        step->fragment_length = step->buffer_length;
+//        step->fragments       = 1;
+//    } else {
+//        /* BCopy send - multiple messages */
+//        if (ucs_likely(dt_len <= phase->send_thresh.max_bcopy_one)) {
+//            step->fragment_length = phase->send_thresh.max_bcopy_one - (phase->send_thresh.max_bcopy_one % dt_len);
+//        } else {
+//            step->fragment_length = phase->send_thresh.max_bcopy_one;
+//        }
+//        ucs_assert(step->fragment_length > 0);
+//        *send_flag = (enum ucg_builtin_op_step_flags)(UCG_BUILTIN_OP_STEP_FLAG_SEND_AM_BCOPY |
+//                UCG_BUILTIN_OP_STEP_FLAG_FRAGMENTED);
+//        partial_length = (length % step->fragment_length) > 0;
+//        step->fragments = length / step->fragment_length + partial_length;
+//    }
+//
+//    return UCS_OK;
+//}
+//
+//
+//static UCS_F_ALWAYS_INLINE void ucg_builtin_step_fragment_flags(size_t thresh_one,
+//                                                                size_t dt_len,
+//                                                                size_t length,
+//                                                                ucg_builtin_op_step_t *step,
+//                                                                ucg_builtin_plan_phase_t *phase,
+//                                                                enum ucg_builtin_op_step_flags *recv_flag)
+//{
+//    unsigned partial_length = 0;
+//    size_t fragment_length = 0;
+//    if (ucs_unlikely(dt_len > thresh_one)) {
+//        phase->segmented = 1;
+//        fragment_length = thresh_one;
+//    } else {
+//        fragment_length = thresh_one - (thresh_one % dt_len);
+//    }
+//
+//    if (fragment_length == 0) {
+//        return;
+//    }
+//    *recv_flag = UCG_BUILTIN_OP_STEP_FLAG_FRAGMENTED;
+//    partial_length = (length % fragment_length) > 0;
+//    step->fragments_recv = length / fragment_length + partial_length;
+//}
+//
+///*
+// * For some algorithms (e.g. Bruck, Ring), the thresholds of sender and receiver
+// * are not same!
+// * So, receiver should set fragment_recv according to phase->max_XXX_recv and
+// * recv_flag should also be set to distinguish with send_flag to choose correct recv_cb.
+// */
+//static UCS_F_ALWAYS_INLINE ucs_status_t ucg_builtin_step_recv_flags(ucg_builtin_op_step_t *step,
+//                                                                    ucg_builtin_plan_phase_t *phase,
+//                                                                    const ucg_collective_params_t *params,
+//                                                                    enum ucg_builtin_op_step_flags *recv_flag)
+//{
+//    *recv_flag = (enum ucg_builtin_op_step_flags)0;
+//    size_t length = step->buffer_length;
+//    size_t dt_len = params->send.dt_len;
+//    size_t fragment_length = 0;
+//    unsigned partial_length = 0;
+//
+//    /* for ring, the length of send_buffer and recv_buffer may be different */
+//    if (phase->method == UCG_PLAN_METHOD_REDUCE_SCATTER_RING ||
+//        phase->method == UCG_PLAN_METHOD_ALLGATHER_RING) {
+//        length = step->buffer_length_recv;
+//    }
+//    /*
+//     * Short messages (e.g. RDMA "inline")
+//     */
+//    if (length <= phase->recv_thresh.max_short_one) {
+//        /* Short send - single message */
+//        step->fragments_recv = 1;
+//    } else if (length <= phase->recv_thresh.max_short_max) {
+//        /* Short send - multiple messages */
+//        ucg_builtin_step_fragment_flags(phase->recv_thresh.max_short_one, dt_len, length,
+//                                        step, phase, recv_flag);
+//    /*
+//     * Large messages, if supported (e.g. RDMA "zero-copy")
+//     */
+//    } else if ((length > phase->recv_thresh.max_bcopy_max) &&
+//        (length <= phase->recv_thresh.md_attr_cap_max_reg)) {
+//        if (length < phase->recv_thresh.max_zcopy_one) {
+//            /* ZCopy send - single message */
+//            step->fragments_recv = 1;
+//        } else {
+//            /* ZCopy send - multiple message */
+//            ucg_builtin_step_fragment_flags(phase->recv_thresh.max_zcopy_one, dt_len, length,
+//                                            step, phase, recv_flag);
+//        }
+//
+//    /*
+//     * Medium messages
+//     */
+//    } else if (length <= phase->recv_thresh.max_bcopy_one) {
+//        /* BCopy send - single message */
+//        step->fragments_recv = 1;
+//    } else {
+//        /* BCopy send - multiple messages */
+//        if (ucs_unlikely(dt_len > phase->recv_thresh.max_bcopy_one)) {
+//            phase->segmented = 1;
+//            fragment_length = phase->recv_thresh.max_bcopy_one;
+//        } else {
+//            fragment_length = phase->recv_thresh.max_bcopy_one - (phase->recv_thresh.max_bcopy_one % dt_len);
+//        }
+//
+//        *recv_flag = UCG_BUILTIN_OP_STEP_FLAG_FRAGMENTED;
+//        if (phase->recv_thresh.max_bcopy_one > 0) {
+//            partial_length = (length % fragment_length) > 0;
+//            step->fragments_recv = length / fragment_length + partial_length;
+//        } else {
+//            ucs_warn("phase->recv_thresh.max_bcopy_one is negative or zero");
+//            partial_length = 0;
+//            step->fragments_recv = length;
+//        }
+//    }
+//
+//    return UCS_OK;
+//}
+//
+//ucs_status_t ucg_builtin_step_create(ucg_builtin_plan_phase_t *phase,
+//                                     unsigned extra_flags,
+//                                     unsigned base_am_id,
+//                                     ucg_group_id_t group_id,
+//                                     const ucg_collective_params_t *params,
+//                                     int8_t **current_data_buffer,
+//                                     ucg_builtin_op_step_t *step)
+//{
+//    ucs_status_t status;
+//    /* Set the parameters determining the send-flags later on */
+//    step->buffer_length      = params->send.dt_len * params->send.count;
+//    step->uct_md             = phase->md;
+//    if (phase->md) {
+//        step->uct_iface      = (phase->ep_cnt == 1) ? phase->single_ep->iface :
+//                                                      phase->multi_eps[0]->iface;
+//    }
+//    /* Note: we assume all the UCT endpoints have the same interface */
+//    step->phase              = phase;
+//    step->am_id              = base_am_id;
+//    step->am_header.group_id = group_id;
+//    step->am_header.step_idx = (ucg_step_idx_t)phase->step_index;
+//    step->iter_ep            = 0;
+//    step->iter_offset        = 0;
+//    step->fragment_pending   = NULL;
+//    step->recv_buffer        = (int8_t*)params->recv.buf;
+//    step->send_buffer        = ((params->send.buf == MPI_IN_PLACE) ||
+//            !(extra_flags & UCG_BUILTIN_OP_STEP_FLAG_FIRST_STEP)) ?
+//                    (int8_t*)params->recv.buf : (int8_t*)params->send.buf;
+//    step->send_cb            = NULL;
+//
+//    /* special parameter of buffer length should be set for allgather with bruck plan */
+//    if (phase->method == UCG_PLAN_METHOD_ALLGATHER_BRUCK) {
+//        step->buf_len_unit = step->buffer_length;
+//        size_t special_offset = 1UL << phase->step_index;
+//        if (extra_flags == UCG_BUILTIN_OP_STEP_FLAG_LAST_STEP) {
+//            step->buffer_length *= (num_procs - special_offset);
+//        } else {
+//            step->buffer_length *= special_offset;
+//        }
+//    }
+//
+//    /* for alltoall bruck, buffer_length should be changed! */
+//    if (phase->method == UCG_PLAN_METHOD_ALLTOALL_BRUCK) {
+//        step->displs_rule = UCG_BUILTIN_OP_STEP_DISPLS_RULE_BRUCK_ALLTOALL;
+//        unsigned i, k;
+//        size_t buffer_length_discrete = 0;
+//        if (step->displs_rule == UCG_BUILTIN_OP_STEP_DISPLS_RULE_BRUCK_ALLTOALL) {
+//            k = (unsigned)step->am_header.step_idx;
+//            for (i = 0; i < num_procs; i++) {
+//                if ((i >> k) & 1) { // kth bit is 1
+//                    buffer_length_discrete++;
+//                }
+//            }
+//        }
+//
+//        step->buf_len_unit   = step->buffer_length;
+//        step->buffer_length *= buffer_length_discrete;
+//        /* set send cb for alltoall only, should be move to proper place */
+//        step->send_cb = ucg_builtin_send_alltoall;
+//    }
+//
+//    if (phase->method != UCG_PLAN_METHOD_BCAST_WAYPOINT) {
+//        if (*current_data_buffer) {
+//            step->send_buffer = *current_data_buffer;
+//        } else {
+//            *current_data_buffer = step->recv_buffer;
+//        }
+//    }
+//
+//    if (phase->method == UCG_PLAN_METHOD_REDUCE_SCATTER_RING ||
+//        phase->method == UCG_PLAN_METHOD_ALLGATHER_RING) {
+//        int num_offset_blocks;
+//        int send_position;
+//        int recv_position;
+//        int quotient = params->send.count / num_procs;
+//        int remainder = params->send.count % num_procs;
+//
+//        step->buf_len_unit   = step->buffer_length; // for ring init
+//        step->buffer_length = params->send.dt_len * quotient;
+//        num_offset_blocks = (g_myidx - phase->step_index + UCG_BUILTIN_NUM_PROCS_DOUBLE * num_procs) % num_procs;
+//        send_position = num_offset_blocks + 1;
+//        recv_position = (num_offset_blocks - 1 + num_procs) % num_procs + 1;
+//        if (recv_position <= remainder) {
+//            step->buffer_length_recv = step->buffer_length + params->send.dt_len;
+//        } else {
+//            step->buffer_length_recv = step->buffer_length;
+//        }
+//        if (send_position <= remainder) {
+//            step->buffer_length += params->send.dt_len;
+//        }
+//        step->am_header.remote_offset = params->send.dt_len * (num_offset_blocks * quotient +
+//                               (num_offset_blocks <= remainder ? num_offset_blocks : remainder));
+//
+//        step->remote_offset = step->am_header.remote_offset;
+//        step->send_buffer +=  step->am_header.remote_offset;
+//    }
+//
+//    if (phase->method == UCG_PLAN_METHOD_ALLGATHER_RECURSIVE) {
+//        size_t power = 1UL << (phase->step_index - 1);
+//        size_t base_index = 0;
+//        base_index = (g_myidx / power) * power;
+//
+//        step->am_header.remote_offset = base_index * params->send.count * params->send.dt_len;
+//        /* need set the send offset if it's not the first step */
+//        if (!(extra_flags & UCG_BUILTIN_OP_STEP_FLAG_FIRST_STEP)) {
+//            step->send_buffer += step->am_header.remote_offset;
+//        }
+//        step->buffer_length *= power;
+//    }
+//    ucs_assert(base_am_id < UCP_AM_ID_MAX);
+//
+//    /* Decide how the messages are sent (regardless of my role) */
+//    enum ucg_builtin_op_step_flags send_flag, recv_flag;
+//    recv_flag = (enum ucg_builtin_op_step_flags) 0;
+//    send_flag = (enum ucg_builtin_op_step_flags) 0;
+//    /* Note: in principle, step->send_buffer should not be changed after this function */
+//    status = ucg_builtin_step_send_flags(step, phase, params, &send_flag);
+//    extra_flags |= (send_flag & UCG_BUILTIN_OP_STEP_FLAG_FRAGMENTED);
+//    if (ucs_unlikely(status != UCS_OK)) {
+//        return status;
+//    }
+//
+//    /* Set the actual step-related parameters */
+//    switch (phase->method) {
+//        /* Send-only */
+//        case UCG_PLAN_METHOD_SCATTER_TERMINAL:
+//            extra_flags      |= UCG_BUILTIN_OP_STEP_FLAG_LENGTH_PER_REQUEST;
+//            /* no break */
+//        case UCG_PLAN_METHOD_SEND_TERMINAL:
+//            step->flags       = send_flag | extra_flags;
+//            break;
+//
+//        /* Recv-only */
+//        case UCG_PLAN_METHOD_RECV_TERMINAL:
+//        case UCG_PLAN_METHOD_REDUCE_TERMINAL:
+//            extra_flags      |= UCG_BUILTIN_OP_STEP_FLAG_RECV_AFTER_SEND;
+//            step->flags       = extra_flags;
+//            break;
+//
+//        /* Recv-all, Send-one */
+//        case UCG_PLAN_METHOD_GATHER_WAYPOINT:
+//            extra_flags      |= UCG_BUILTIN_OP_STEP_FLAG_LENGTH_PER_REQUEST;
+//            /* no break */
+//        case UCG_PLAN_METHOD_REDUCE_WAYPOINT:
+//            if ((send_flag & UCG_BUILTIN_OP_STEP_FLAG_FRAGMENTED) && ucg_algo.pipeline) {
+//                extra_flags  |= UCG_BUILTIN_OP_STEP_FLAG_PIPELINED;
+//            }
+//            extra_flags      |= UCG_BUILTIN_OP_STEP_FLAG_RECV_BEFORE_SEND1;
+//            step->flags       = send_flag | extra_flags;
+//            *current_data_buffer = (int8_t*)ucs_calloc(1, step->buffer_length, "ucg_fanin_waypoint_buffer");
+//            if (*current_data_buffer == NULL) {
+//                return UCS_ERR_NO_MEMORY;
+//            }
+//            step->send_buffer = *current_data_buffer;
+//            step->recv_buffer = step->send_buffer;
+//
+//            if (params->send.buf == MPI_IN_PLACE) {
+//                memcpy(step->send_buffer, params->recv.buf, step->buffer_length);
+//            } else {
+//                memcpy(step->send_buffer, params->send.buf, step->buffer_length);
+//            }
+//
+//            if (send_flag & UCG_BUILTIN_OP_STEP_FLAG_SEND_AM_ZCOPY) {
+//                /* The send buffer changed, reregister it */
+//                uct_md_mem_dereg(step->uct_md, step->zcopy.memh);
+//                status = uct_md_mem_reg(step->uct_md, step->send_buffer,
+//                                        step->buffer_length, UCT_MD_MEM_ACCESS_ALL, &step->zcopy.memh);
+//                if (status != UCS_OK) {
+//                    return status;
+//                }
+//            }
+//
+//            if (!step->recv_buffer) {
+//                return UCS_ERR_NO_MEMORY;
+//            }
+//            break;
+//
+//        /* Recv-one, Send-all */
+//        case UCG_PLAN_METHOD_BCAST_WAYPOINT:
+//            if ((send_flag & UCG_BUILTIN_OP_STEP_FLAG_FRAGMENTED) && ucg_algo.pipeline) {
+//                extra_flags  |= UCG_BUILTIN_OP_STEP_FLAG_PIPELINED;
+//            }
+//            extra_flags      |= UCG_BUILTIN_OP_STEP_FLAG_RECV1_BEFORE_SEND;
+//            step->flags       = send_flag | extra_flags;
+//            break;
+//
+//        case UCG_PLAN_METHOD_SCATTER_WAYPOINT:
+//            if ((send_flag & UCG_BUILTIN_OP_STEP_FLAG_FRAGMENTED) && ucg_algo.pipeline) {
+//                extra_flags  |= UCG_BUILTIN_OP_STEP_FLAG_PIPELINED;
+//            }
+//            extra_flags      |= UCG_BUILTIN_OP_STEP_FLAG_RECV1_BEFORE_SEND;
+//            extra_flags      |= UCG_BUILTIN_OP_STEP_FLAG_LENGTH_PER_REQUEST;
+//            step->flags       = send_flag | extra_flags;
+//            *current_data_buffer = (int8_t*)ucs_calloc(1, step->buffer_length, "ucg_fanout_waypoint_buffer");
+//            if (*current_data_buffer == NULL) {
+//                return UCS_ERR_NO_MEMORY;
+//            }
+//            step->send_buffer = *current_data_buffer;
+//            step->recv_buffer = step->send_buffer;
+//            if (!step->recv_buffer) {
+//                return UCS_ERR_NO_MEMORY;
+//            }
+//            break;
+//
+//        /* Recursive patterns */
+//        case UCG_PLAN_METHOD_REDUCE_RECURSIVE:
+//        case UCG_PLAN_METHOD_ALLGATHER_RECURSIVE:
+//            extra_flags      |= UCG_BUILTIN_OP_STEP_FLAG_RECV_AFTER_SEND;
+//            step->flags       = send_flag | extra_flags;
+//            break;
+//
+//        /* Bruck patterns for allgather */
+//        case UCG_PLAN_METHOD_ALLGATHER_BRUCK:
+//            extra_flags |= UCG_BUILTIN_OP_STEP_FLAG_RECV_AFTER_SEND;
+//            step->flags = send_flag | extra_flags;
+//            break;
+//
+//        /* Bruck patterns for alltoall */
+//        case UCG_PLAN_METHOD_ALLTOALL_BRUCK:
+//            extra_flags |= UCG_BUILTIN_OP_STEP_FLAG_RECV_AFTER_SEND;
+//            step->flags = send_flag | extra_flags;
+//            // should malloc a new buffer to handle ucg_alltoall_step_buffer_discrete
+//            step->send_buffer = (int8_t*)params->send.buf;
+//            // bellow does not work
+//            /* max buffer size for alltoall at every step is num_procs/2 !!!! */
+//            break;
+//
+//        case UCG_PLAN_METHOD_REDUCE_SCATTER_RING:
+//        case UCG_PLAN_METHOD_ALLGATHER_RING:
+//            extra_flags |= UCG_BUILTIN_OP_STEP_FLAG_RECV_AFTER_SEND;
+//            step->flags = send_flag | extra_flags;
+//            break;
+//
+//        default:
+//            ucs_error("Invalid method for a collective operation.");
+//            return UCS_ERR_INVALID_PARAM;
+//    }
+//    status = ucg_builtin_step_recv_flags(step, phase, params, &recv_flag);
+//    if (status != UCS_OK) {
+//        return status;
+//    }
+//
+//    /* fill in additional data before finishing this step */
+//    if (phase->ep_cnt == 1) {
+//        step->flags |= UCG_BUILTIN_OP_STEP_FLAG_SINGLE_ENDPOINT;
+//    }
+//
+//    if (step->flags & send_flag) {
+//        if (phase->method != UCG_PLAN_METHOD_ALLGATHER_RECURSIVE &&
+//            phase->method != UCG_PLAN_METHOD_REDUCE_SCATTER_RING &&
+//            phase->method != UCG_PLAN_METHOD_ALLGATHER_RING) {
+//            step->am_header.remote_offset = 0;
+//        }
+//    }
+//
+//    /* Pipelining preparation */
+//    if ((step->flags & UCG_BUILTIN_OP_STEP_FLAG_PIPELINED) && ucg_algo.pipeline) {
+//        step->fragment_pending = (uint8_t*)UCS_ALLOC_CHECK(step->fragments *
+//                sizeof(uint8_t*), "ucg_builtin_step_pipelining");
+//    }
+//
+//    if (phase->method != UCG_PLAN_METHOD_ALLGATHER_BRUCK &&
+//        phase->method != UCG_PLAN_METHOD_ALLTOALL_BRUCK &&
+//        phase->method != UCG_PLAN_METHOD_REDUCE_SCATTER_RING &&
+//        phase->method != UCG_PLAN_METHOD_ALLGATHER_RING) {
+//        recv_flag = (enum ucg_builtin_op_step_flags)step->flags;
+//        step->fragments_recv = step->fragments;
+//    }
+//
+//    if (phase->segmented) {
+//        phase->recv_cache_buffer = (int8_t *)UCS_ALLOC_CHECK(params->send.count * params->send.dt_len, "recv_cache_buffer");
+//        ucs_debug("segmented phase %p fragments %" PRIu32 "", phase, step->fragments_recv);
+//    } else {
+//        phase->recv_cache_buffer = NULL;
+//    }
+//
+//    /* Select the right completion callback */
+//    return ucg_builtin_step_select_callbacks(phase, &step->recv_cb,
+//                                             params->send.count > 0, recv_flag);
+//}

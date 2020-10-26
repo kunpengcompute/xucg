@@ -19,6 +19,9 @@ typedef struct ucg_config {
     /** Up to how many operations should be cached in each group */
     unsigned group_cache_size_thresh;
 
+    /** Above how many group members should UCG preconnect all the topologies */
+    unsigned group_preconnect_thresh;
+
     /** Above how many group members should UCG initiate collective transports */
     unsigned coll_iface_member_thresh;
 

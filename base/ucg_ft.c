@@ -279,7 +279,7 @@ ucs_status_t ucg_ft_init(ucs_async_context_t *async, ucg_group_h main_group,
 {
     /* Find my index in the distance array */
     ucg_group_member_index_t index = 0;
-    while ((main_group->params.distance[index] != UCG_GROUP_MEMBER_DISTANCE_SELF) &&
+    while ((main_group->params.distance[index] != UCG_GROUP_MEMBER_DISTANCE_NONE) &&
            (index < main_group->params.member_count)) {
         index++;
     }

@@ -27,6 +27,10 @@ ucs_config_field_t ucg_config_table[] = {
    ucs_offsetof(ucg_context_config_t, group_cache_size_thresh), UCS_CONFIG_TYPE_UINT},
 
   {"COLL_IFACE_MEMBER_THRESH", "3",
+   "How many members prevent the preconnection of transports in the group.\n",
+   ucs_offsetof(ucg_context_config_t, group_preconnect_thresh), UCS_CONFIG_TYPE_UINT},
+
+  {"COLL_IFACE_MEMBER_THRESH", "3",
    "How many members warrant the use of collective transports.\n",
    ucs_offsetof(ucg_context_config_t, coll_iface_member_thresh), UCS_CONFIG_TYPE_UINT},
 
@@ -152,7 +156,9 @@ ucs_status_t ucg_context_unset_async_timer(ucs_async_context_t *async,
 }
 
 
-static ucs_status_t ucg_context_init(void *groups_ctx)
+static ucs_status_t ucg_context_init(const ucg_params_t *params,
+                                     const ucg_config_t *config,
+                                     void *groups_ctx)
 {
     ucg_context_t *ctx          = (ucg_context_t*)groups_ctx;
     ctx->next_group_id          = 0;
@@ -435,7 +441,7 @@ ucs_status_t ucg_init_version(unsigned ucg_api_major_version,
 #endif
 
     *context_p = ucs_container_of(*context_p, ucg_context_t, ucp_ctx);
-    status     = ucg_context_init(*context_p);
+    status     = ucg_context_init(params, config, *context_p);
     if (status != UCS_OK) {
         goto err_context;
     }

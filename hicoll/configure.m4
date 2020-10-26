@@ -3,4 +3,4 @@
 # See file LICENSE for terms.
 #
 
-AC_CONFIG_FILES([src/ucg/base/Makefile])
+AC_CONFIG_FILES([src/ucg/hicoll/Makefile])

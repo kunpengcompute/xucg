@@ -670,6 +670,9 @@ zcopy_redo:
     step->uct_progress            = step->uct_iface->ops.iface_progress;
     /* Note: we assume all the UCT endpoints have the same interface */
 
+    step->bcopy.pack_state.dt.generic.state   = NULL;
+    step->bcopy.unpack_state.dt.generic.state = NULL;
+
     /* If the previous step involved receiving - plan accordingly  */
     if (*flags & UCG_BUILTIN_STEP_RECV_FLAGS) {
         step->send_buffer = *current_data_buffer ?
@@ -1080,29 +1083,6 @@ ucs_status_t ucg_builtin_step_create_rkey_bcast(ucg_builtin_plan_t *plan,
                                    &dummy_skip);
 }
 
-static inline size_t ucg_builtin_op_get_send_dt_length(ucg_builtin_op_t *op)
-{
-    const ucg_collective_params_t *params = &op->super.params;
-
-    if (params->send.count == 0) {
-        return 0;
-    }
-
-    if (UCP_DT_IS_CONTIG(op->send_dt)) {
-        return ucp_contig_dt_length(op->send_dt, 1);
-    }
-
-    ucg_builtin_init_state(op, 1);
-
-    ucp_dt_generic_t *dt_gen = ucp_dt_to_generic(op->send_dt);
-
-    size_t len = dt_gen->ops.packed_size(op->rstate.dt.generic.state);
-
-    ucg_builtin_finalize_state(op, 1);
-
-    return len;
-}
-
 ucs_status_t ucg_builtin_op_create(ucg_plan_t *plan,
                                    const ucg_collective_params_t *params,
                                    ucg_op_t **new_op)
@@ -1143,7 +1123,7 @@ ucs_status_t ucg_builtin_op_create(ucg_plan_t *plan,
     /* copy the parameters aside, and use those from now on */
     memcpy(&op->super.params, params, sizeof(*params));
     params = &op->super.params;
-    size_t send_dt_len = ucg_builtin_op_get_send_dt_length(op);
+    size_t send_dt_len = ucp_dt_length(op->send_dt, 1, NULL, next_step->bcopy.pack_state.dt.generic.state);
     /* Note: this needs to be after op->params and op->send_dt are set */
 
 //    /* Check for non-zero-root trees */ // TODO: (alex) replace with something?

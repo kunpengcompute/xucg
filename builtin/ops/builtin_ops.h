@@ -200,6 +200,8 @@ typedef struct ucg_builtin_op_step {
             uct_pack_callback_t  pack_full_cb;
             uct_pack_callback_t  pack_part_cb;
             uct_pack_callback_t  pack_single_cb;
+            ucp_dt_state_t       pack_state;
+            ucp_dt_state_t       unpack_state;
         } bcopy;
         struct {
             uct_mem_h            memh;   /* Data buffer memory handle */

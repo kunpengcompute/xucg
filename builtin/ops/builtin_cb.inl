@@ -5,9 +5,12 @@
 
 #include "builtin_ops.h"
 
+#include "../builtin.h"
 #include <ucs/debug/log.h>
 #include <ucs/type/status.h>
 #include <ucs/profile/profile.h>
+#include <ucg/base/ucg_group.h>
+#include <ucg/base/ucg_collective.h>
 
 /*
  * Below is a list of possible callback/helper functions for an incoming message.
@@ -16,12 +19,10 @@
  * handled otherwise (using intermediate buffers).
  */
 
-mpi_reduce_f ucg_builtin_mpi_reduce_cb;
 static UCS_F_ALWAYS_INLINE void ucg_builtin_mpi_reduce(void *mpi_op,
         void *src, void *dst, unsigned dcount, void* mpi_datatype)
 {
-    UCS_PROFILE_CALL_VOID(ucg_builtin_mpi_reduce_cb, mpi_op, (char*)src,
-            (char*)dst, dcount, mpi_datatype);
+    UCS_PROFILE_CALL_VOID(ucg_builtin_mpi_reduce_cb, mpi_op, src, dst, dcount, mpi_datatype);
 }
 
 #define ucg_builtin_mpi_reduce_full(_req, _offset, _data, _length, _params)    \
@@ -418,7 +419,7 @@ static void ucg_builtin_send_alltoall(ucg_builtin_request_t *req)
     size_t buffer_length_discrete = 0;
     if (step->displs_rule == UCG_BUILTIN_OP_STEP_DISPLS_RULE_BRUCK_ALLTOALL) {
         k = (unsigned)step->am_header.step_idx;
-        for (i = 0; i < num_procs; i++) {
+        for (i = 0; i < ucg_builtin_num_procs; i++) {
             if ((i >> k) & 1) { //kth bit is 1
                 memcpy(step->send_buffer + buffer_length_discrete * len,
                     step->recv_buffer + i * len, len);
@@ -444,7 +445,7 @@ static void ucg_builtin_init_gather(ucg_builtin_op_t *op)
 static void ucg_builtin_init_reduce(ucg_builtin_op_t *op)
 {
     ucg_builtin_op_step_t *step = &op->steps[0];
-    if (op->super.params.send.buf == MPI_IN_PLACE) {
+    if (op->super.params.send.buf == ucg_builtin_mpi_in_place) {
         memcpy(step->recv_buffer, op->super.params.recv.buf, step->buffer_length);
     } else {
         memcpy(step->recv_buffer, op->super.params.send.buf, step->buffer_length);
@@ -592,11 +593,11 @@ static ucs_status_t ucg_builtin_op_select_callback(ucg_builtin_plan_t *plan,
     return UCS_OK;
 }
 
-static void ucg_builtin_step_am_zcopy_comp_step_check_cb(uct_completion_t *self,
-                                                         ucs_status_t status)
+static void ucg_builtin_step_am_zcopy_comp_step_check_cb(uct_completion_t *self)
 {
 
     ucg_builtin_zcomp_t *zcomp = ucs_container_of(self, ucg_builtin_zcomp_t, comp);
+    ucs_status_t status = zcomp->comp.status;
     ucg_builtin_request_t *req = zcomp->req;
     zcomp->comp.count          = 1;
 
@@ -614,13 +615,14 @@ static inline ucs_status_t ucg_builtin_step_zcopy_prep(ucg_builtin_op_step_t *st
     step->zcopy.memh           = NULL; /* - in case the allocation fails... */
     step->zcopy.num_store      = 0;
     ucg_builtin_zcomp_t *zcomp =
-             step->zcopy.zcomp = (ucg_builtin_zcomp_t*)UCS_ALLOC_CHECK(zcomp_cnt *
+             step->zcopy.zcomp = (ucg_builtin_zcomp_t*)UCG_ALLOC_CHECK(zcomp_cnt *
                      sizeof(*zcomp), "ucg_zcopy_completion");
 
     /* Initialize all the zero-copy send completion structures */
     while (zcomp_cnt--) {
-        zcomp->comp.func  = ucg_builtin_step_am_zcopy_comp_step_check_cb;
-        zcomp->comp.count = 1;
+        zcomp->comp.func   = ucg_builtin_step_am_zcopy_comp_step_check_cb;
+        zcomp->comp.count  = 1;
+        zcomp->comp.status = UCS_OK;
         zcomp++;
     }
 
@@ -628,8 +630,8 @@ static inline ucs_status_t ucg_builtin_step_zcopy_prep(ucg_builtin_op_step_t *st
     ucs_status_t status = uct_md_mem_reg(step->uct_md, step->send_buffer,
             step->buffer_length, UCT_MD_MEM_ACCESS_ALL, &step->zcopy.memh);
     if (status != UCS_OK) {
-        ucs_free(zcomp);
-        zcomp = NULL;
+        ucs_free(step->zcopy.zcomp);
+        step->zcopy.zcomp = NULL;
         return status;
     }
     return UCS_OK;

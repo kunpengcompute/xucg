@@ -21,36 +21,6 @@
 BEGIN_C_DECLS
 
 /**
- * @defgroup UCG_API Unified Communication Protocol (UCG) API
- * @{
- * This section describes UCG API.
- * @}
- */
-#define ucg_context_h               ucp_context_h
-#define ucg_config_t                ucp_config_t
-#define ucg_address_t               ucp_address_t
-#define ucg_worker_h                ucp_worker_h
-#define ucg_params_t                ucp_params_t
-#define ucg_context_attr_t          ucp_context_attr_t
-#define ucg_worker_attr_t           ucp_worker_attr_t
-#define ucg_worker_params_t         ucp_worker_params_t
-
-#define ucg_config_read             ucp_config_read
-#define ucg_config_release          ucp_config_release
-#define ucg_config_modify           ucp_config_modify
-#define ucg_config_print            ucp_config_print
-#define ucg_get_version             ucp_get_version
-#define ucg_get_version_string      ucp_get_version_string
-#define ucg_cleanup                 ucp_cleanup
-#define ucg_context_query           ucp_context_query
-#define ucg_context_print_info      ucp_context_print_info
-#define ucg_worker_destroy          ucp_worker_destroy
-#define ucg_worker_query            ucp_worker_query
-#define ucg_worker_print_info       ucp_worker_print_info
-#define ucg_worker_get_address      ucp_worker_get_address
-#define ucg_worker_release_address  ucp_worker_release_address
-
-/**
  * @ingroup UCG_GROUP
  * @brief UCG group collective operation description.
  *
@@ -102,10 +72,79 @@ enum UCS_S_PACKED ucg_group_hierarchy_level {
     UCG_GROUP_HIERARCHY_LEVEL_L3CACHE
 };
 
-typedef struct ucg_group_params {
-    ucg_group_member_index_t member_count; /* number of group members */
-    uint32_t cid;                          /* Assign value to group_id */
+/**
+ * @ingroup UCG_CONTEXT
+ * @brief UCG context parameters field mask.
+ *
+ * The enumeration allows specifying which fields in @ref ucg_params_t are
+ * present. It is used to enable backward compatibility support.
+ */
+enum ucg_params_field {
+    UCG_PARAM_FIELD_ADDRESS_CB   = UCS_BIT(0), /**< Peer address lookup */
+    UCG_PARAM_FIELD_REDUCE_CB    = UCS_BIT(1), /**< Callback for reduce ops */
+    UCG_PARAM_FIELD_COMMUTE_CB   = UCS_BIT(2), /**< Callback for check op communative */
+    UCG_PARAM_FIELD_MPI_IN_PLACE = UCS_BIT(3), /**< MPI_IN_PLACE value */
+};
 
+/**
+ * @ingroup UCG_CONTEXT
+ * @brief Creation parameters for the UCG context.
+ * 
+ * The structure defines the parameters that are used during the UCG
+ * initialization by @ref ucg_init .
+ */
+typedef struct ucg_params {
+    /**
+     * Mask of valid fields in this structure, using bits from @ref ucg_params_field.
+     * Fields not specified in this mask will be ignored.
+     * Provides ABI compatibility with respect to adding new fields.
+     */
+    uint64_t field_mask;
+
+    /* Callback functions for address lookup, used at connection establishment */
+    struct {
+        ucg_addr_lookup_callback_t lookup_f;
+        ucg_addr_release_callback_t release_f;
+    } address;
+
+    /* Callback function for mpi reduce */
+    ucg_mpi_reduce_callback_t mpi_reduce_f;
+
+    /* Callback function for checking op communative */
+    ucg_mpi_op_is_commute_callback_t op_is_commute_f;
+
+    /* The value of MPI_IN_PLACE */
+    void *mpi_in_place;
+} ucg_params_t;
+
+enum ucg_group_params_field {
+    UCG_GROUP_PARAM_FIELD_UCP_WORKER    = UCS_BIT(0),
+    UCG_GROUP_PARAM_FIELD_ID            = UCS_BIT(1),
+    UCG_GROUP_PARAM_FIELD_MEMBER_COUNT  = UCS_BIT(2),
+    UCG_GROUP_PARAM_FIELD_TOPO_MAP      = UCS_BIT(3),
+    UCG_GROUP_PARAM_FIELD_DISTANCE      = UCS_BIT(4),
+    UCG_GROUP_PARAM_FIELD_NODE_INDEX    = UCS_BIT(5),
+    UCG_GROUP_PARAM_FIELD_BIND_TO_NONE  = UCS_BIT(6),
+    UCG_GROUP_PARAM_FIELD_CB_GROUP_IBJ  = UCS_BIT(7),
+};
+
+typedef struct ucg_group_params {
+    /**
+     * Mask of valid fields in this structure, using bits from @ref ucg_group_params_field.
+     * Fields not specified in this mask will be ignored.
+     * Provides ABI compatibility with respect to adding new fields.
+     */
+    uint64_t field_mask;
+
+    /* UCP worker to create a ucg group on top of */
+    ucp_worker_h ucp_worker;
+
+    /* Unique group identifier */
+    uint32_t group_id;
+
+    /* number of group members */           
+    int member_count; 
+    
     char **topo_map; /* Global topology map, topo_map[i][j] means Distance between rank i and rank j. */
 
     /*
@@ -136,19 +175,8 @@ typedef struct ucg_group_params {
     /* bind-to none flag */
     unsigned is_bind_to_none;
 
-    /* MPI passes its own reduction function, used for complex data-types */
-    void (*mpi_reduce_f)(void *mpi_op, char *src, char *dst, unsigned count, void *mpi_dtype);
-
-    /* Callback function for connection establishment */
-    ucs_status_t (*resolve_address_f)(void *cb_group_obj, ucg_group_member_index_t index,
-                                      ucg_address_t **addr, size_t *addr_len);
-    void         (*release_address_f)(ucg_address_t *addr);
-
-    void *cb_group_obj;  /* external group object for call-backs (MPI_Comm) */
-
-    /* Callback function for MPI_OP */
-    int (*op_is_commute_f)(void *mpi_op);
-
+    /* external group object for call-backs (MPI_Comm) */
+    void *cb_group_obj;  
 } ucg_group_params_t;
 
 typedef struct ucg_collective {
@@ -176,8 +204,46 @@ typedef struct ucg_collective {
     } send, recv;
 
     ucg_collective_callback_t comp_cb; /* completion callback */
-
+    
 } ucg_collective_params_t;
+
+/** @cond PRIVATE_INTERFACE */
+/**
+ * @ingroup UCG_CONTEXT
+ * @brief UCG context initialization with particular API version
+ * 
+ * This is an internal routine used to check compatibility with a paticular
+ * API version. @ref ucg_init should be used to create UCG context
+ */
+ucs_status_t ucg_init_version(unsigned api_major_version,
+                              unsigned api_minor_version,
+                              const ucg_params_t *params,
+                              const ucg_config_t *config,
+                              ucg_context_h *context_p);
+/** @endcond */
+
+/**
+ * @ingroup UCG_CONTEXT
+ * @brief UCG context initialization.
+ * @warning This routine must be called before any other UCG function
+ * call in the application.
+ */
+ucs_status_t ucg_init(const ucg_params_t *params,
+                      const ucg_config_t *config,
+                      ucg_context_h *context_p);
+
+
+/**
+ * @ingroup UCG_CONTEXT
+ * @brief Release UCG application context.
+ *
+ * This routine finalizes and releases the resources associated with a
+ * @ref ucg_context_h "UCG application context".
+ *
+ * @warning An application cannot call any UCG routine
+ * once the UCG application context released.
+ */
+void ucg_cleanup(ucg_context_h ctx_p);
 
 
 /**
@@ -192,7 +258,7 @@ typedef struct ucg_collective {
  *
  * @note The group object is allocated within context of the calling thread
  *
- * @param [in] worker      Worker to create a group on top of.
+ * @param [in] context     Handle to @ref ucg_context_h
  * @param [in] params      User defined @ref ucg_group_params_t configurations for the
  *                         @ref ucg_group_h "UCG group".
  * @param [out] group_p    A pointer to the group object allocated by the
@@ -200,7 +266,7 @@ typedef struct ucg_collective {
  *
  * @return Error code as defined by @ref ucs_status_t
  */
-ucs_status_t ucg_group_create(ucg_worker_h worker,
+ucs_status_t ucg_group_create(ucg_context_h context,
                               const ucg_group_params_t *params,
                               ucg_group_h *group_p);
 
@@ -232,24 +298,6 @@ void ucg_group_destroy(ucg_group_h group);
  * @param [in]  group       Group object to progress.
  */
 unsigned ucg_group_progress(ucg_group_h group);
-
-
-/**
- * @ingroup UCG_GROUP
- * @brief Progresses a Worker object with the groups (UCG) extension.
- *
- * @param [in]  group       Group object to progress.
- */
-unsigned ucg_worker_progress(ucg_worker_h worker);
-
-
-/**
- * @ingroup UCG_GROUP
- * @brief Exposes the parameters used to create the Group object.
- *
- * @param [in]  group       Group object to query.
- */
-const ucg_group_params_t* ucg_group_get_params(ucg_group_h group);
 
 
 /**
@@ -338,24 +386,121 @@ void ucg_collective_destroy(ucg_coll_h coll);
  */
 ucs_status_t ucg_request_check_status(void *request);
 
-void ucg_request_cancel(ucg_worker_h worker, void *request);
 
+/**
+ * @ingroup UCG_GROUP
+ * @brief Cancel the non-blocking request.
+ */
+void ucg_request_cancel(ucg_group_h group, void *request);
+
+
+/**
+ * @ingroup UCG_GROUP
+ * @brief free the non-blocking request.
+ */
 void ucg_request_free(void *request);
 
 
-ucs_status_t ucg_init_version(unsigned api_major_version,
-                              unsigned api_minor_version,
-                              const ucp_params_t *params,
-                              const ucp_config_t *config,
-                              ucp_context_h *context_p);
+/**
+ * @ingroup UCG_CONFIG
+ * @brief Read UCG configuration descriptor
+ *
+ * The routine fetches the information about UCG library configuration from
+ * the run-time environment. Then, the fetched descriptor is used for
+ * UCG library @ref ucg_init "initialization". The Application can print out the
+ * descriptor using @ref ucg_config_print "print" routine. In addition
+ * the application is responsible for @ref ucg_config_release "releasing" the
+ * descriptor back to the UCG library.
+ *
+ * @param [in]  env_prefix    If non-NULL, the routine searches for the
+ *                            environment variables that start with
+ *                            @e \<env_prefix\>_UCX_ prefix.
+ *                            Otherwise, the routine searches for the
+ *                            environment variables that start with
+ *                            @e UCX_ prefix.
+ * @param [in]  filename      If non-NULL, read configuration from the file
+ *                            defined by @e filename. If the file does not
+ *                            exist, it will be ignored and no error reported
+ *                            to the application.
+ * @param [out] config_p      Pointer to configuration descriptor as defined by
+ *                            @ref ucg_config_t "ucg_config_t".
+ *
+ * @return Error code as defined by @ref ucs_status_t
+ */
+ucs_status_t ucg_config_read(const char *env_prefix, const char *filename,
+                             ucg_config_t **config_p);
 
-ucs_status_t ucg_init(const ucp_params_t *params,
-                      const ucp_config_t *config,
-                      ucp_context_h *context_p);
 
-ucs_status_t ucg_worker_create(ucp_context_h context,
-                               const ucp_worker_params_t *params,
-                               ucp_worker_h *worker_p);
+/**
+ * @ingroup UCG_CONFIG
+ * @brief Release configuration descriptor
+ *
+ * The routine releases the configuration descriptor that was allocated through
+ * @ref ucg_config_read "ucg_config_read()" routine.
+ *
+ * @param [out] config        Configuration descriptor as defined by
+ *                            @ref ucg_config_t "ucg_config_t".
+ */
+void ucg_config_release(ucg_config_t *config);
+
+
+/**
+ * @ingroup UCG_CONFIG
+ * @brief Modify context configuration.
+ *
+ * The routine changes one configuration setting stored in @ref ucg_config_t
+ * "configuration" descriptor.
+ *
+ * @param [in]  config        Configuration to modify.
+ * @param [in]  name          Configuration variable name.
+ * @param [in]  value         Value to set.
+ *
+ * @return Error code.
+ */
+ucs_status_t ucg_config_modify(ucg_config_t *config, const char *name,
+                               const char *value);
+
+
+/**
+ * @ingroup UCG_CONFIG
+ * @brief Print configuration information
+ *
+ * The routine prints the configuration information that is stored in
+ * @ref ucg_config_t "configuration" descriptor.
+ *
+ * @todo Expose ucs_config_print_flags_t
+ *
+ * @param [in]  config        @ref ucg_config_t "Configuration descriptor"
+ *                            to print.
+ * @param [in]  stream        Output stream to print the configuration to.
+ * @param [in]  title         Configuration title to print.
+ * @param [in]  print_flags   Flags that control various printing options.
+ */
+void ucg_config_print(const ucg_config_t *config, FILE *stream,
+                      const char *title, ucs_config_print_flags_t print_flags);
+
+
+/**
+ * @ingroup UCG_CONTEXT
+ * @brief Get UCG library version.
+ *
+ * This routine returns the UCG library version.
+ *
+ * @param [out] major_version       Filled with library major version.
+ * @param [out] minor_version       Filled with library minor version.
+ * @param [out] release_number      Filled with library release number.
+ */
+void ucg_get_version(unsigned *major_version, unsigned *minor_version,
+                     unsigned *release_number);
+
+/**
+ * @ingroup UCG_CONTEXT
+ * @brief Get UCG library version as a string.
+ *
+ * This routine returns the UCG library version as a string which consists of:
+ * "major.minor.release".
+ */
+const char* ucg_get_version_string(void);
 
 END_C_DECLS
 

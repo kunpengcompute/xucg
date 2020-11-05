@@ -6,10 +6,23 @@
 #ifndef UCG_DEF_H_
 #define UCG_DEF_H_
 
+#include <ucp/api/ucp.h>
 #include <ucs/type/status.h>
 #include <ucs/config/types.h>
 #include <stddef.h>
 #include <stdint.h>
+
+/**
+ * @ingroup UCG_CONTEXT
+ * @brief UCG Application Context
+ */
+typedef struct ucg_context               *ucg_context_h;
+
+/**
+ * @ingroup UCG_CONFIG
+ * @brief UCG configuration descriptor
+ */
+typedef struct ucg_config                ucg_config_t;
 
  /**
   * @ingroup UCG_GROUP
@@ -73,5 +86,36 @@ typedef void (*ucg_collective_callback_t)(void *request, ucs_status_t status);
  * This type is used as index of hash array.
  */
 typedef uint32_t                         ucg_hash_index_t;
+
+/**
+ * @ingroup UCG_GROUP
+ * @brief Lookup address by member index.
+ */
+typedef ucs_status_t (*ucg_addr_lookup_callback_t)(void *cb_group_obj,
+                                                   ucg_group_member_index_t index,
+                                                   ucp_address_t **addr,
+                                                   size_t *addr_len);
+
+/**
+ * @ingroup UCG_GROUP
+ * @brief Release address returned by lookup.
+ */
+typedef void (*ucg_addr_release_callback_t)(ucp_address_t *addr);
+
+/**
+ * @ingroup UCG_GROUP
+ * @brief Perform a reduction operation.
+ */
+typedef void (*ucg_mpi_reduce_callback_t)(void *mpi_op,
+                                          void *src,
+                                          void *dst,
+                                          int count,
+                                          void *mpi_dtype);
+
+/**
+ * @ingroup UCG_GROUP
+ * @brief Check to see if an op is communative or not
+ */
+typedef int (*ucg_mpi_op_is_commute_callback_t)(void *mpi_op);
 
 #endif

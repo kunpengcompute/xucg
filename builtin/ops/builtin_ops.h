@@ -6,8 +6,6 @@
 #ifndef UCG_BUILTIN_OPS_H_
 #define UCG_BUILTIN_OPS_H_
 
-BEGIN_C_DECLS
-
 #include "../plan/builtin_plan.h"
 #include <ucp/core/ucp_request.h>
 
@@ -27,20 +25,9 @@ BEGIN_C_DECLS
  * step templates are used to generate an instance
  * (or it is fetched from cache) and that instance is executed.
  */
-typedef void (*mpi_reduce_f)(void *mpi_op, char *src_buffer,
-                             char *dst_buffer, unsigned dcount,
-                             void* mpi_datatype);
-typedef void(*ucg_builtin_op_complete_cb_f)(void *complete_cb_arg);
 
-extern ucg_plan_component_t ucg_builtin_component;
-extern mpi_reduce_f ucg_builtin_mpi_reduce_cb;
-extern unsigned builtin_base_am_id;
-extern ucg_group_member_index_t g_myidx;
-extern unsigned num_procs;
-
-#ifndef MPI_IN_PLACE
-#define MPI_IN_PLACE ((void*)0x1)
-#endif
+extern ucg_group_member_index_t ucg_builtin_my_idx;
+extern unsigned ucg_builtin_num_procs;
 
 typedef union ucg_builtin_header {
     struct {
@@ -215,7 +202,7 @@ typedef struct ucg_builtin_comp_desc {
     char                 data[0];
 } ucg_builtin_comp_desc_t;
 
-struct ucg_builtin_comp_slot {
+typedef struct ucg_builtin_comp_slot {
     ucg_builtin_request_t      req;
     union {
         struct {
@@ -227,7 +214,7 @@ struct ucg_builtin_comp_slot {
     ucg_builtin_comp_recv_cb_t cb;
     ucs_list_link_t            msg_head;
     ucs_mpool_t               *mp; /* pool of @ref ucg_builtin_comp_desc_t */
-};
+} ucg_builtin_comp_slot_t;
 
 
 /*
@@ -242,6 +229,5 @@ struct ucg_builtin_comp_slot {
 
 #define UCG_BUILTIN_NUM_PROCS_DOUBLE 2
 
-END_C_DECLS
 
 #endif

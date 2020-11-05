@@ -3,13 +3,14 @@
  * See file LICENSE for terms.
  */
 
+#include "../builtin.h"
+#include "builtin_plan.h"
 #include <math.h>
 #include <ucs/debug/log.h>
 #include <ucs/debug/assert.h>
 #include <ucs/debug/memtrack.h>
 #include <uct/api/uct_def.h>
 
-#include "builtin_plan.h"
 
 
 /* find my own rank */
@@ -70,10 +71,10 @@ static ucs_status_t ucg_builtin_prepare_topology_info(const ucg_group_params_t *
 
     /* allocate rank_same_node & subroot_array */
     size_t alloc_size = sizeof(ucg_group_member_index_t) * topo_params->ppn_cnt;
-    topo_params->rank_same_node = (ucg_group_member_index_t*)UCS_ALLOC_CHECK(alloc_size, "rank same node");
+    topo_params->rank_same_node = (ucg_group_member_index_t*)UCG_ALLOC_CHECK(alloc_size, "rank same node");
 
     alloc_size = sizeof(ucg_group_member_index_t) * topo_params->node_cnt;
-    topo_params->subroot_array  = (ucg_group_member_index_t*)UCS_ALLOC_CHECK(alloc_size, "subroot array");
+    topo_params->subroot_array  = (ucg_group_member_index_t*)UCG_ALLOC_CHECK(alloc_size, "subroot array");
 
     /* Initialization */
     for (node_idx = 0; node_idx < topo_params->node_cnt; node_idx++) {
@@ -178,7 +179,7 @@ ucs_status_t ucg_builtin_check_ppn(const ucg_group_params_t *group_params,
 
     /* ppn array: record ppn vaule in every single node */
     size_t alloc_size = sizeof(unsigned) * node_cnt;
-    unsigned *ppn_array = (unsigned *)UCS_ALLOC_CHECK(alloc_size, "ppn array");
+    unsigned *ppn_array = (unsigned *)UCG_ALLOC_CHECK(alloc_size, "ppn array");
     memset(ppn_array, 0, alloc_size);
     for (member_idx = 0; member_idx < group_params->member_count; member_idx++) {
         node_idx = group_params->node_index[member_idx];

@@ -3,6 +3,7 @@
  * See file LICENSE for terms.
  */
 
+#include "../builtin.h"
 #include "builtin_plan.h"
 #include <string.h>
 #include <ucs/debug/log.h>
@@ -14,7 +15,7 @@
 #define MAX_PHASES 16
 #define NUM_TWO 2
 
-static ucs_status_t ucg_builtin_recursive_non_pow_two_pre(ucg_builtin_group_ctx_t *ctx,
+static ucs_status_t ucg_builtin_recursive_non_pow_two_pre(ucg_builtin_planner_ctx_t *ctx,
                                                           uct_ep_h *next_ep,
                                                           ucg_builtin_plan_phase_t *phase,
                                                           ucg_group_member_index_t my_index,
@@ -30,7 +31,7 @@ static ucs_status_t ucg_builtin_recursive_non_pow_two_pre(ucg_builtin_group_ctx_
         phase->ep_cnt = factor - 1;
         phase->step_index = step_idx;
 #if ENABLE_DEBUG_DATA
-        phase->indexes = UCS_ALLOC_CHECK((factor - 1) * sizeof(my_index), "recursive topology indexes");
+        phase->indexes = UCG_ALLOC_CHECK((factor - 1) * sizeof(my_index), "recursive topology indexes");
 #endif
         ucg_group_member_index_t peer_index = my_index - 1;
         phase->multi_eps = next_ep;
@@ -41,7 +42,7 @@ static ucs_status_t ucg_builtin_recursive_non_pow_two_pre(ucg_builtin_group_ctx_
         phase->ep_cnt = factor - 1;
         phase->step_index = step_idx;
 #if ENABLE_DEBUG_DATA
-        phase->indexes = UCS_ALLOC_CHECK((factor - 1) * sizeof(my_index), "recursive topology indexes");
+        phase->indexes = UCG_ALLOC_CHECK((factor - 1) * sizeof(my_index), "recursive topology indexes");
 #endif
         ucg_group_member_index_t peer_index = my_index + 1;
         phase->multi_eps = next_ep;
@@ -52,7 +53,7 @@ static ucs_status_t ucg_builtin_recursive_non_pow_two_pre(ucg_builtin_group_ctx_
     return status;
 }
 
-static ucs_status_t ucg_builtin_recursive_non_pow_two_post(ucg_builtin_group_ctx_t *ctx,
+static ucs_status_t ucg_builtin_recursive_non_pow_two_post(ucg_builtin_planner_ctx_t *ctx,
                                                            uct_ep_h *next_ep,
                                                            ucg_builtin_plan_phase_t *phase,
                                                            ucg_group_member_index_t my_index,
@@ -69,7 +70,7 @@ static ucs_status_t ucg_builtin_recursive_non_pow_two_post(ucg_builtin_group_ctx
         phase->ep_cnt = factor - 1;
         phase->step_index = step_idx;
 #if ENABLE_DEBUG_DATA
-        phase->indexes = UCS_ALLOC_CHECK((factor - 1) * sizeof(my_index), "recursive topology indexes");
+        phase->indexes = UCG_ALLOC_CHECK((factor - 1) * sizeof(my_index), "recursive topology indexes");
 #endif
         ucg_group_member_index_t peer_index = my_index - 1;
         phase->multi_eps = next_ep;
@@ -80,7 +81,7 @@ static ucs_status_t ucg_builtin_recursive_non_pow_two_post(ucg_builtin_group_ctx
         phase->ep_cnt = factor - 1;
         phase->step_index = step_idx;
 #if ENABLE_DEBUG_DATA
-        phase->indexes = UCS_ALLOC_CHECK((factor - 1) * sizeof(my_index), "recursive topology indexes");
+        phase->indexes = UCG_ALLOC_CHECK((factor - 1) * sizeof(my_index), "recursive topology indexes");
 #endif
         ucg_group_member_index_t peer_index = my_index + 1;
         phase->multi_eps = next_ep;
@@ -108,7 +109,7 @@ static ucs_status_t ucg_builtin_check_swap(unsigned factor, ucg_step_idx_t step_
     return UCS_OK;
 }
 
-static ucs_status_t ucg_builtin_recursive_non_pow_two_inter(ucg_builtin_group_ctx_t *ctx,
+static ucs_status_t ucg_builtin_recursive_non_pow_two_inter(ucg_builtin_planner_ctx_t *ctx,
                                                             ucg_group_member_index_t new_my_index,
                                                             ucg_group_member_index_t *member_list,
                                                             unsigned step_size,
@@ -131,7 +132,7 @@ static ucs_status_t ucg_builtin_recursive_non_pow_two_inter(ucg_builtin_group_ct
             (*phase)->ep_cnt = factor - 1;
             (*phase)->step_index = step_idx + idx; /* need further check */
 #if ENABLE_DEBUG_DATA
-            (*phase)->indexes = UCS_ALLOC_CHECK((factor - 1) * sizeof(new_my_index), "recursive topology indexes");
+            (*phase)->indexes = UCG_ALLOC_CHECK((factor - 1) * sizeof(new_my_index), "recursive topology indexes");
 #endif
 
             if (check_swap) {
@@ -160,7 +161,7 @@ static ucs_status_t ucg_builtin_recursive_non_pow_two_inter(ucg_builtin_group_ct
     return status;
 }
 
-static ucs_status_t ucg_builtin_recursive_non_pow_two(ucg_builtin_group_ctx_t *ctx,
+static ucs_status_t ucg_builtin_recursive_non_pow_two(ucg_builtin_planner_ctx_t *ctx,
                                                       ucg_group_member_index_t my_index,
                                                       ucg_group_member_index_t *member_list,
                                                       ucg_group_member_index_t member_cnt,
@@ -251,7 +252,7 @@ static ucs_status_t ucg_builtin_recursive_non_pow_two(ucg_builtin_group_ctx_t *c
     return status;
 }
 
-static ucs_status_t ucg_builtin_recursive_pow_two(ucg_builtin_group_ctx_t *ctx,
+static ucs_status_t ucg_builtin_recursive_pow_two(ucg_builtin_planner_ctx_t *ctx,
                                                   ucg_group_member_index_t my_index,
                                                   ucg_group_member_index_t *member_list,
                                                   ucg_group_member_index_t member_cnt,
@@ -273,7 +274,7 @@ static ucs_status_t ucg_builtin_recursive_pow_two(ucg_builtin_group_ctx_t *ctx,
         phase->ep_cnt = factor - 1;
         phase->step_index = recursive->step_cnt + step_idx; /* plus 1 to be consistent with no-power-of two process */
 #if ENABLE_DEBUG_DATA
-            phase->indexes = UCS_ALLOC_CHECK((factor - 1) * sizeof(my_index), "recursive topology indexes");
+            phase->indexes = UCG_ALLOC_CHECK((factor - 1) * sizeof(my_index), "recursive topology indexes");
 #endif
 
         if (check_swap) {
@@ -309,7 +310,7 @@ void ucg_builtin_recursive_log(ucg_builtin_plan_t *recursive)
     }
 }
 
-ucs_status_t ucg_builtin_recursive_connect(ucg_builtin_group_ctx_t *ctx,
+ucs_status_t ucg_builtin_recursive_connect(ucg_builtin_planner_ctx_t *ctx,
                                            ucg_group_member_index_t my_rank,
                                            ucg_group_member_index_t *member_list,
                                            ucg_group_member_index_t member_cnt,
@@ -402,7 +403,7 @@ void ucg_builtin_recursive_init_member_list(ucg_group_member_index_t member_cnt,
     }
 }
 
-ucs_status_t ucg_builtin_recursive_create(ucg_builtin_group_ctx_t *ctx,
+ucs_status_t ucg_builtin_recursive_create(ucg_builtin_planner_ctx_t *ctx,
     enum ucg_builtin_plan_topology_type plan_topo_type, const ucg_builtin_config_t *config,
     const ucg_group_params_t *group_params, const ucg_collective_type_t *coll_type, ucg_builtin_plan_t **plan_p)
 {
@@ -415,7 +416,7 @@ ucs_status_t ucg_builtin_recursive_create(ucg_builtin_group_ctx_t *ctx,
     }
 
     ucg_group_member_index_t member_cnt = group_params->member_count;
-    ucg_group_member_index_t *member_list = UCS_ALLOC_CHECK(member_cnt * sizeof(ucg_group_member_index_t), "member list");
+    ucg_group_member_index_t *member_list = UCG_ALLOC_CHECK(member_cnt * sizeof(ucg_group_member_index_t), "member list");
     ucg_builtin_recursive_init_member_list(member_cnt, member_list);
 
     unsigned factor = config->recursive.factor;
@@ -445,8 +446,8 @@ ucs_status_t ucg_builtin_recursive_create(ucg_builtin_group_ctx_t *ctx,
     }
 
     recursive->super.my_index = my_rank;
-    recursive->super.support_non_commutative = 1;
-    recursive->super.support_large_datatype = 1;
+    recursive->feature |= UCG_ALGORITHM_SUPPORT_NON_COMMUTATIVE_OPS |
+                          UCG_ALGORITHM_SUPPORT_LARGE_DATATYPE;
     *plan_p = recursive;
 out:
     ucs_free(member_list);

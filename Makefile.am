@@ -23,7 +23,6 @@ libucg_la_LIBADD   = \
 nobase_dist_libucg_la_HEADERS = \
 	api/ucg_def.h \
 	api/ucg_version.h \
-	api/ucg_plan_component.h \
 	api/ucg_mpi.h \
 	api/ucg.h
 

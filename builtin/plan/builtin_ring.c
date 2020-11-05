@@ -3,12 +3,12 @@
  * See file LICENSE for terms.
  */
 
+#include "../builtin.h"
+#include "builtin_plan.h"
 #include <string.h>
 #include <ucs/debug/log.h>
 #include <ucs/debug/memtrack.h>
 #include <uct/api/uct_def.h>
-
-#include "builtin_plan.h"
 
 #define INDEX_DOUBLE 2
 
@@ -24,7 +24,7 @@ void ucg_builtin_ring_assign_recv_thresh(ucg_builtin_plan_phase_t *phase)
     }
 }
 
-ucs_status_t ucg_builtin_ring_connect(ucg_builtin_group_ctx_t *ctx,
+ucs_status_t ucg_builtin_ring_connect(ucg_builtin_planner_ctx_t *ctx,
                                       ucg_builtin_plan_phase_t *phase,
                                       ucg_step_idx_ext_t step_idx,
                                       ucg_group_member_index_t peer_index_src,
@@ -88,7 +88,7 @@ void ucg_builtin_ring_find_my_index(const ucg_group_params_t *group_params, unsi
     }
     ucs_assert(*my_index != proc_count);
 }
-ucs_status_t ucg_builtin_ring_create(ucg_builtin_group_ctx_t *ctx,
+ucs_status_t ucg_builtin_ring_create(ucg_builtin_planner_ctx_t *ctx,
                                      enum ucg_builtin_plan_topology_type plan_topo_type,
                                      const ucg_builtin_config_t *config,
                                      const ucg_group_params_t *group_params,
@@ -109,7 +109,7 @@ ucs_status_t ucg_builtin_ring_create(ucg_builtin_group_ctx_t *ctx,
                                    (step_idx * sizeof(ucg_builtin_plan_phase_t)
                                     + (INDEX_DOUBLE * step_idx * sizeof(uct_ep_h)));
 
-    ucg_builtin_plan_t *ring       = (ucg_builtin_plan_t*)UCS_ALLOC_CHECK(alloc_size, "ring topology");
+    ucg_builtin_plan_t *ring       = (ucg_builtin_plan_t*)UCG_ALLOC_CHECK(alloc_size, "ring topology");
     memset(ring, 0, alloc_size);
     ucg_builtin_plan_phase_t *phase = &ring->phss[0];
     ring->ep_cnt                   = step_idx * INDEX_DOUBLE;  /* the number of endpoints each step is always 2 for ring */
@@ -132,7 +132,7 @@ ucs_status_t ucg_builtin_ring_create(ucg_builtin_group_ctx_t *ctx,
     peer_index_dst = (my_index + 1) % proc_count;
 
 #if ENABLE_DEBUG_DATA
-    phase->indexes     = UCS_ALLOC_CHECK((peer_index_src == peer_index_dst ? 1 : INDEX_DOUBLE) * sizeof(my_index),
+    phase->indexes     = UCG_ALLOC_CHECK((peer_index_src == peer_index_dst ? 1 : INDEX_DOUBLE) * sizeof(my_index),
                                          "ring indexes");
 #endif
 
@@ -167,8 +167,8 @@ ucs_status_t ucg_builtin_ring_create(ucg_builtin_group_ctx_t *ctx,
     }
 
     ring->super.my_index = my_index;
-    ring->super.support_non_commutative = 1;
-    ring->super.support_large_datatype = 1;
+    ring->feature |= UCG_ALGORITHM_SUPPORT_NON_COMMUTATIVE_OPS |
+                     UCG_ALGORITHM_SUPPORT_LARGE_DATATYPE;
     *plan_p = ring;
     return status;
 }

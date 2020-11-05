@@ -6,9 +6,9 @@
 #ifndef UCG_GROUP_H_
 #define UCG_GROUP_H_
 
-#include "ucg_plan.h"
-#include "../api/ucg.h"
+#include "ucg_component.h"
 
+#include <ucg/api/ucg.h>
 #include <ucs/stats/stats.h>
 
 #define UCG_GROUP_MAX_IFACES 8
@@ -25,45 +25,44 @@
 /* max number of collective type in the plan cache. */
 #define UCG_GROUP_MAX_COLL_TYPE_BUCKETS 16
 
-extern size_t ucg_ctx_worker_offset;
-#define UCG_WORKER_TO_GROUPS_CTX(worker) \
-    ((ucg_groups_t*)((char*)(worker) + ucg_ctx_worker_offset))
-
 #define UCG_FLAG_MASK(params) \
     ((params)->type.modifiers & UCG_GROUP_COLLECTIVE_MODIFIER_MASK)
 
 #define UCG_ROOT_RANK(params) \
     ((params)->type.root)
 
-/*
- * To enable the "Groups" feature in UCX - it's registered as part of the UCX
- * context - and allocated a context slot in each UCP Worker at a certain offset.
+#if ENABLE_STATS
+/**
+ * UCG group statistics counters
  */
-typedef struct ucg_groups {
-    ucs_list_link_t       groups_head;
-    ucg_group_id_t        next_id;
+enum {
+    UCG_GROUP_STAT_PLANS_CREATED,
+    UCG_GROUP_STAT_PLANS_USED,
 
-    unsigned              iface_cnt;
-    uct_iface_h           ifaces[UCG_GROUP_MAX_IFACES];
+    UCG_GROUP_STAT_OPS_CREATED,
+    UCG_GROUP_STAT_OPS_USED,
+    UCG_GROUP_STAT_OPS_IMMEDIATE,
 
-    size_t                total_planner_sizes;
-    unsigned              num_planners;
-    ucg_plan_desc_t      *planners;
-} ucg_groups_t;
+    UCG_GROUP_STAT_LAST
+};
+#endif
 
-struct ucg_group {
+typedef struct ucg_group {
     /*
      * Whether a current barrier is waited upon. If so, new collectives cannot
      * start until this barrier is cleared, so it is put in the pending queue.
      */
     int                is_barrier_outstanding;
 
-    ucg_worker_h       worker;       /* for conn. est. and progress calls */
+    ucg_context_h      context;
+    ucg_planner_ctx_h *planners_context;
+    int                num_planners_context;
+
+    ucp_worker_h       worker;       /* shortcut for params.ucp_worker */
     ucg_coll_id_t      next_id;      /* for the next collective operation */
-    ucg_group_id_t     group_id;     /* group identifier (order of creation) */
     ucs_queue_head_t   pending;      /* requests currently pending execution */
     ucg_group_params_t params;       /* parameters, for future connections */
-    ucs_list_link_t    list;         /* worker's group list */
+    ucs_list_link_t    list;         /* group list */
 
     UCS_STATS_NODE_DECLARE(stats);
 
@@ -77,13 +76,45 @@ struct ucg_group {
      */
     ucg_plan_t        *cache[UCG_GROUP_MSG_SIZE_LEVEL][UCG_GROUP_MAX_ROOT_PARAM][UCG_GROUP_MAX_COLL_TYPE_BUCKETS];
 
-    /*
-     * for root collective operations(e.g. Bcast), the parameter of root should be
+    /* 
+     * for root collective operations(e.g. Bcast), the parameter of root should be 
      * the criterion to decide whether plan has been found.
      */
     unsigned           root_used[UCG_GROUP_MAX_ROOT_PARAM];
 
-    /* Below this point - the private per-planner data is allocated/stored */
-};
+    /* shortcut for address lookup and release */
+    struct {
+        ucg_addr_lookup_callback_t lookup_f;
+        ucg_addr_release_callback_t release_f;
+    } address;
+} ucg_group_t;
+
+typedef struct ucg_group_ep
+{
+    uct_ep_h am_ep;
+    const uct_iface_attr_t *am_iface_attr;
+    ucp_ep_h ucp_ep;
+    uct_md_h md;
+    const uct_md_attr_t *md_attr;
+} ucg_group_ep_t;
+
+const ucg_group_params_t* ucg_group_get_params(ucg_group_h group);
+
+ucs_status_t ucg_group_connect(ucg_group_h group, 
+                               ucg_group_member_index_t dst,
+                               ucg_group_ep_t *ep);
+
+ucg_plan_t* ucg_group_get_cache_plan(ucg_group_h group,
+                                     ucg_collective_params_t *params);
+
+void ucg_group_update_cache_plan(ucg_group_h group,
+                                 ucg_collective_params_t *params,
+                                 ucg_plan_t *plan);
+
+ucs_status_t ucg_group_select_planner(ucg_group_h group,
+                                      const char* planner_name,
+                                      const ucg_collective_params_t *coll_params,
+                                      ucg_planner_h *planner_p,
+                                      ucg_planner_ctx_h *planner_ctx_p);
 
 #endif /* UCG_GROUP_H_ */

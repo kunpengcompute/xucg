@@ -807,29 +807,14 @@ void ucg_builtin_allreduce_decision_fixed(const size_t msg_size,
                                           const int is_unbalanced_ppn,
                                           enum ucg_builtin_allreduce_algorithm *allreduce_algo_decision)
 {
-    ucp_datatype_t send_dt;
-    ucs_status_t status = ucg_builtin_convert_datatype(coll_params->send.dtype, &send_dt);
-    ucs_assert(status == UCS_OK);
-    unsigned dt_len = ucp_dt_length(send_dt, coll_params->send.count, NULL, NULL);
-
-    unsigned is_large_datatype = (dt_len > large_datatype_threshold);
-    unsigned is_non_commutative = (coll_params->recv.op && !ucg_global_params.reduce_op.is_commutative_f(coll_params->recv.op));
-    if (is_large_datatype || is_non_commutative) {
-        ucg_builtin_plan_decision_in_noncommutative_largedata_case(msg_size, allreduce_algo_decision);
-    } else if(is_unbalanced_ppn) {
-        /* Node-aware Recursive */
-        *allreduce_algo_decision = UCG_ALGORITHM_ALLREDUCE_NODE_AWARE_RECURSIVE_AND_BMTREE;
+    if (msg_size < UCG_GROUP_MED_MSG_SIZE) {
+        /* Node-aware Kinomial tree (DEFAULT) */
+        *allreduce_algo_decision = UCG_ALGORITHM_ALLREDUCE_NODE_AWARE_KMTREE;
         ucg_builtin_allreduce_algo_switch(*allreduce_algo_decision, &ucg_algo);
     } else {
-        if (msg_size < UCG_GROUP_MED_MSG_SIZE) {
-            /* Node-aware Kinomial tree (DEFAULT) */
-            *allreduce_algo_decision = UCG_ALGORITHM_ALLREDUCE_NODE_AWARE_KMTREE;
-            ucg_builtin_allreduce_algo_switch(*allreduce_algo_decision, &ucg_algo);
-        } else {
-            /* Ring */
-            *allreduce_algo_decision = UCG_ALGORITHM_ALLREDUCE_RING;
-            ucg_builtin_allreduce_algo_switch(*allreduce_algo_decision, &ucg_algo);
-        }
+        /* Ring */
+        *allreduce_algo_decision = UCG_ALGORITHM_ALLREDUCE_RING;
+        ucg_builtin_allreduce_algo_switch(*allreduce_algo_decision, &ucg_algo);
     }
 }
 

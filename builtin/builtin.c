@@ -1399,6 +1399,8 @@ static ucs_status_t ucg_builtin_plan(ucg_group_ctx_h ctx,
         return status;
     }
 
+    ucs_list_head_init(&plan->super.op_head);
+
     /* Create a memory-pool for operations for this plan */
     size_t op_size = sizeof(ucg_builtin_op_t) +
                      (plan->phs_cnt + 1) * sizeof(ucg_builtin_op_step_t);

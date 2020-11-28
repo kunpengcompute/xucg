@@ -1690,7 +1690,6 @@ ucs_status_t ucg_builtin_op_trigger(ucg_op_t *op,
 //{
 //    *recv_flag = (enum ucg_builtin_op_step_flags)0;
 //    size_t length = step->buffer_length;
-//    size_t dt_len = params->send.dt_len;
 //    size_t fragment_length = 0;
 //    unsigned partial_length = 0;
 //
@@ -1702,10 +1701,10 @@ ucs_status_t ucg_builtin_op_trigger(ucg_op_t *op,
 //    /*
 //     * Short messages (e.g. RDMA "inline")
 //     */
-//    if (length <= phase->recv_thresh.max_short_one) {
+//    if (length <= phase->recv_thresh.max_short_one && is_recv_contig) {
 //        /* Short send - single message */
 //        step->fragments_recv = 1;
-//    } else if (length <= phase->recv_thresh.max_short_max) {
+//    } else if (length <= phase->recv_thresh.max_short_max && is_recv_contig) {
 //        /* Short send - multiple messages */
 //        ucg_builtin_step_fragment_flags(phase->recv_thresh.max_short_one, dt_len, length,
 //                                        step, phase, recv_flag);
@@ -1713,7 +1712,7 @@ ucs_status_t ucg_builtin_op_trigger(ucg_op_t *op,
 //     * Large messages, if supported (e.g. RDMA "zero-copy")
 //     */
 //    } else if ((length > phase->recv_thresh.max_bcopy_max) &&
-//        (length <= phase->recv_thresh.md_attr_cap_max_reg)) {
+//        (length <= phase->recv_thresh.md_attr_cap_max_reg) && is_recv_contig) {
 //        if (length < phase->recv_thresh.max_zcopy_one) {
 //            /* ZCopy send - single message */
 //            step->fragments_recv = 1;

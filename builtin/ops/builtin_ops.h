@@ -186,6 +186,7 @@ ucs_status_t ucg_builtin_op_trigger(ucg_op_t *op,
                                     ucg_request_t **request);
 ucs_status_t ucg_builtin_msg_process(ucg_builtin_comp_slot_t *slot, ucg_builtin_request_t *req);
 
+typedef void (*release_desc_func_t)(void* desc);
 /*
  * Incoming messages are processed for one of the collective operations
  * currently outstanding - arranged in as a window (think: TCP) of slots.
@@ -197,7 +198,9 @@ ucs_status_t ucg_builtin_msg_process(ucg_builtin_comp_slot_t *slot, ucg_builtin_
  */
 typedef struct ucg_builtin_comp_desc {
     ucp_recv_desc_t      super;
-    char                 padding[UCP_WORKER_HEADROOM_PRIV_SIZE];
+    release_desc_func_t  release_desc;
+    char                 padding[UCP_WORKER_HEADROOM_PRIV_SIZE
+                                 - sizeof(release_desc_func_t)];
     ucg_builtin_header_t header;
     char                 data[0];
 } ucg_builtin_comp_desc_t;

@@ -586,16 +586,6 @@ step_execute_error:
     return status;
 }
 
-void ucg_builtin_dispose_packet(ucg_builtin_comp_desc_t *desc)
-{
-    /* Dispose of the packet, according to its allocation */
-    if (desc->super.flags == UCT_CB_PARAM_FLAG_DESC) {
-        uct_iface_release_desc(desc);
-    } else {
-        ucs_mpool_put_inline(desc);
-    }
-}
-
 ucs_status_t ucg_builtin_msg_process(ucg_builtin_comp_slot_t *slot, ucg_builtin_request_t *req)
 {
     static unsigned loop_cnt = 0;
@@ -642,7 +632,7 @@ ucs_status_t ucg_builtin_msg_process(ucg_builtin_comp_slot_t *slot, ucg_builtin_
             int is_step_done = step->recv_cb(&slot->req,
                                              desc->header.remote_offset, &desc->data[0],
                                              desc->super.length);
-            ucg_builtin_dispose_packet(desc);
+            desc->release_desc(desc);
 
             loop_cnt--;
 

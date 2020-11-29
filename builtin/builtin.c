@@ -33,7 +33,7 @@ static ucs_config_field_t ucg_builtin_config_table[] = {
     {"BMTREE_", "", NULL, ucs_offsetof(ucg_builtin_config_t, bmtree),
      UCS_CONFIG_TYPE_TABLE(ucg_builtin_binomial_tree_config_table)},
 
-    {"BCAST_ALGORITHM", "0", "Bcast algorithm", 
+    {"BCAST_ALGORITHM", "0", "Bcast algorithm",
      ucs_offsetof(ucg_builtin_config_t, bcast_algorithm), UCS_CONFIG_TYPE_DOUBLE},
 
     {"ALLREDUCE_ALGORITHM", "0", "Allreduce algorithm",
@@ -48,9 +48,9 @@ static ucs_config_field_t ucg_builtin_config_table[] = {
     {"MEM_REG_OPT_CNT", "10", "Operation counter before registering the memory",
      ucs_offsetof(ucg_builtin_config_t, mem_reg_opt_cnt), UCS_CONFIG_TYPE_ULUNITS},
 
-    {"BCOPY_TO_ZCOPY_OPT", "1", "Switch for optimization from bcopy to zcopy", 
+    {"BCOPY_TO_ZCOPY_OPT", "1", "Switch for optimization from bcopy to zcopy",
      ucs_offsetof(ucg_builtin_config_t, bcopy_to_zcopy_opt), UCS_CONFIG_TYPE_UINT},
-    
+
     // max_short_max threshold change from 256 to 200 to avoid hang problem within rc_x device.
     {"SHORT_MAX_TX_SIZE", "200", "Largest send operation to use short messages",
      ucs_offsetof(ucg_builtin_config_t, short_max_tx), UCS_CONFIG_TYPE_MEMUNITS},
@@ -58,10 +58,10 @@ static ucs_config_field_t ucg_builtin_config_table[] = {
     {"BCOPY_MAX_TX_SIZE", "32768", "Largest send operation to use buffer copy",
      ucs_offsetof(ucg_builtin_config_t, bcopy_max_tx), UCS_CONFIG_TYPE_MEMUNITS},
 
-    {"LARGE_DATATYPE_THRESHOLD", "32", "Large datatype threshold", 
+    {"LARGE_DATATYPE_THRESHOLD", "32", "Large datatype threshold",
      ucs_offsetof(ucg_builtin_config_t, large_datatype_threshold), UCS_CONFIG_TYPE_UINT},
 
-    {"PLANNER_PRIORITY", "1", "The priority of planner", 
+    {"PLANNER_PRIORITY", "1", "The priority of planner",
      ucs_offsetof(ucg_builtin_config_t, priority), UCS_CONFIG_TYPE_UINT},
 
     {NULL}
@@ -130,108 +130,6 @@ static enum ucg_builtin_plan_topology_type ucg_builtin_choose_type(enum ucg_coll
     return UCG_PLAN_TREE_FANIN_FANOUT;
 }
 
-UCS_PROFILE_FUNC(ucs_status_t, ucg_builtin_am_handler,
-                 (arg, data, length, am_flags),
-                 void *arg, void *data, size_t length, unsigned am_flags)
-{
-    ucg_builtin_header_t* header = data;
-    ucs_assert(length >= sizeof(header));
-
-    ucg_builtin_ctx_t *ctx  = (ucg_builtin_ctx_t*)arg;
-    ucg_group_id_t group_id = header->group_id;
-    ucg_builtin_planner_ctx_t *planner_ctx;
-    if (ucs_unlikely(!ucs_ptr_array_lookup(&ctx->group_by_id, group_id, planner_ctx))) {
-        ucs_error("Invalid group id to handle: %u", group_id);
-        return UCS_ERR_INVALID_PARAM;
-    }
-
-    ucg_builtin_comp_slot_t *slot = planner_ctx->slots + header->coll_id % UCG_BUILTIN_MAX_CONCURRENT_OPS;
-    /* Consume the message if it fits the current collective and step index */
-    if (ucs_likely(slot->cb && (header->local_id == slot->local_id))) {
-        /* Make sure the packet indeed belongs to the collective currently on */
-        ucs_debug("ucg_builtin_am_handler CB: coll_id %u step_idx %u cb %p pending %u",
-                  header->coll_id, header->step_idx, slot->cb, slot->req.pending);
-        
-        if ((slot->req.step->flags & UCG_BUILTIN_OP_STEP_FLAG_SEND_AM_ZCOPY) &&
-            (slot->req.step->flags & UCG_BUILTIN_OP_STEP_FLAG_RECV_AFTER_SEND)) {
-            /* Zcopy recv before sending finished, store msg */
-            if (slot->req.pending > slot->req.step->fragments_recv) {
-                if (++slot->req.step->zcopy.num_store > slot->req.step->fragments_recv) {
-                    /* recv msg from step - step index = step now index + 256, store msg without count */
-                    slot->req.step->zcopy.num_store--;
-                }
-                goto am_handler_store;
-            }
-            if (slot->req.step->zcopy.num_store > 0) {
-                slot->req.step->zcopy.num_store = 0;
-                (void) ucg_builtin_msg_process(slot, &slot->req);
-            }
-        }
-
-        if ((slot->req.step->flags & UCG_BUILTIN_OP_STEP_FLAG_RECV1_BEFORE_SEND) &&
-            slot->req.recv_comp) {
-            goto am_handler_store;
-        }
-
-        size_t real_length = length - sizeof(ucg_builtin_header_t); 
-        char *header_tmp = (char *)header;
-        char *recv_buffer_tmp = (char *)slot->req.step->recv_buffer;
-
-        if (slot->req.step->phase->is_swap) {
-            char *temp_buffer = (char*)UCG_ALLOC_CHECK(real_length, "temp buffer");
-            memcpy(temp_buffer, header_tmp + sizeof(ucg_builtin_header_t), real_length);
-            memcpy(header_tmp + sizeof(ucg_builtin_header_t), recv_buffer_tmp + header->remote_offset, real_length);
-            memcpy(recv_buffer_tmp + header->remote_offset, temp_buffer, real_length);
-            free(temp_buffer);
-            temp_buffer = NULL;
-        }
-
-        /* The packet arrived "on time" - process it */
-        UCS_PROFILE_CODE("ucg_builtin_am_handler_cb") {
-            (void) slot->cb(&slot->req, header->remote_offset,
-                            data + sizeof(ucg_builtin_header_t),
-                            length - sizeof(ucg_builtin_header_t));
-        }
-        return UCS_OK;
-    }
-
-    /* Store the message - use RX_headroom for @ref ucg_builtin_comp_desc_t */
-    ucs_status_t ret;
-    ucg_builtin_comp_desc_t* desc = NULL;
-am_handler_store:
-    if (am_flags & UCT_CB_PARAM_FLAG_DESC) {
-        desc = (ucg_builtin_comp_desc_t*)((char*)data -
-                offsetof(ucg_builtin_comp_desc_t, header));
-        ret = UCS_INPROGRESS;
-    } else {
-        /* Cannot use existing descriptor - must allocate my own... */
-        desc = (ucg_builtin_comp_desc_t*)ucs_mpool_get_inline(slot->mp);
-        if (desc == NULL) {
-            return UCS_ERR_NO_MEMORY;
-        }
-        memcpy(&desc->header, data, length);
-        ret = UCS_OK;
-    }
-
-    ucs_debug("ucg_builtin_am_handler STORE: group_id %u coll_id %u(%u) step_idx %u(%u)",
-              header->group_id, header->coll_id, slot->coll_id, header->step_idx, slot->step_idx);
-
-    desc->super.flags = am_flags;
-    desc->super.length = length - sizeof(ucg_builtin_header_t);
-    ucs_list_add_tail(&slot->msg_head, &desc->super.tag_list[0]);
-    return ret;
-}
-
-void ucg_builtin_msg_dump(void *arg, uct_am_trace_type_t type,
-                          uint8_t id, const void *data, size_t length,
-                          char *buffer, size_t max)
-{
-    const ucg_builtin_header_t *header = (const ucg_builtin_header_t*)data;
-    snprintf(buffer, max, "COLLECTIVE [coll_id %u step_idx %u offset %lu length %lu]",
-             (unsigned)header->coll_id, (unsigned)header->step_idx,
-             (uint64_t)header->remote_offset, length - sizeof(*header));
-}
-
 static void ucg_builtin_adapt_plan_config(ucg_builtin_config_t *config)
 {
     config->cache_size = CACHE_SIZE;
@@ -255,6 +153,154 @@ static void ucg_builtin_adapt_plan_config(ucg_builtin_config_t *config)
              config->bmtree.degree_intra_fanout, config->bmtree.degree_intra_fanin);
 
     return;
+}
+
+static ucs_status_t ucg_builtin_create_planner_ctx(ucg_builtin_ctx_t *bctx,
+                                                   ucg_group_id_t group_id,
+                                                   ucg_builtin_planner_ctx_t **planner_ctx_p)
+{
+    ucg_builtin_planner_ctx_t *planner_ctx = ucs_calloc(1, sizeof(ucg_builtin_planner_ctx_t), "planner ctx");
+    if (planner_ctx == NULL) {
+        return UCS_ERR_NO_MEMORY;
+    }
+
+    planner_ctx->group_id        = group_id;
+    planner_ctx->context         = bctx;
+    planner_ctx->config          = &bctx->config;
+    planner_ctx->am_id           = bctx->am_id;
+    ucs_list_head_init(&planner_ctx->send_head);
+    ucs_list_head_init(&planner_ctx->plan_head);
+
+    int i;
+    for (i = 0; i < UCG_BUILTIN_MAX_CONCURRENT_OPS; ++i) {
+        ucg_builtin_comp_slot_t *slot = planner_ctx->slots + i;
+        ucs_list_head_init(&slot->msg_head);
+        slot->mp = NULL;
+        slot->cb = NULL;
+    }
+    ucg_builtin_adapt_plan_config(planner_ctx->config);
+    ucs_ptr_array_set(&bctx->group_by_id, planner_ctx->group_id, planner_ctx);
+
+    *planner_ctx_p = planner_ctx;
+    return UCS_OK;
+}
+
+static ucs_status_t ucg_builtin_passive_create(ucg_builtin_ctx_t *bctx,
+                                               ucg_group_id_t group_id,
+                                               ucg_builtin_planner_ctx_t **planner_ctx_p)
+{
+    return ucg_builtin_create_planner_ctx(bctx, group_id, planner_ctx_p);
+}
+
+UCS_PROFILE_FUNC(ucs_status_t, ucg_builtin_am_handler,
+                 (arg, data, length, am_flags),
+                 void *arg, void *data, size_t length, unsigned am_flags)
+{
+    ucs_status_t status;
+    ucg_builtin_header_t* header = data;
+    ucs_assert(length >= sizeof(header));
+
+    ucg_builtin_ctx_t *ctx  = (ucg_builtin_ctx_t*)arg;
+    ucg_group_id_t group_id = header->group_id;
+    ucg_builtin_planner_ctx_t *planner_ctx;
+    if (ucs_unlikely(!ucs_ptr_array_lookup(&ctx->group_by_id, group_id, planner_ctx))) {
+        ucs_debug("passive create, group_id %u", group_id);
+        status = ucg_builtin_passive_create(ctx, group_id, &planner_ctx);
+        ucs_assert_always(status == UCS_OK);
+    }
+
+    ucg_builtin_comp_slot_t *slot = planner_ctx->slots + header->coll_id % UCG_BUILTIN_MAX_CONCURRENT_OPS;
+    /* Consume the message if it fits the current collective and step index */
+    if (ucs_likely(slot->cb && (header->local_id == slot->local_id))) {
+        /* Make sure the packet indeed belongs to the collective currently on */
+        ucs_debug("ucg_builtin_am_handler CB: coll_id %u step_idx %u cb %p pending %u",
+                  header->coll_id, header->step_idx, slot->cb, slot->req.pending);
+
+        if ((slot->req.step->flags & UCG_BUILTIN_OP_STEP_FLAG_SEND_AM_ZCOPY) &&
+            (slot->req.step->flags & UCG_BUILTIN_OP_STEP_FLAG_RECV_AFTER_SEND)) {
+            /* Zcopy recv before sending finished, store msg */
+            if (slot->req.pending > slot->req.step->fragments_recv) {
+                if (++slot->req.step->zcopy.num_store > slot->req.step->fragments_recv) {
+                    /* recv msg from step - step index = step now index + 256, store msg without count */
+                    slot->req.step->zcopy.num_store--;
+                }
+                goto am_handler_store;
+            }
+            if (slot->req.step->zcopy.num_store > 0) {
+                slot->req.step->zcopy.num_store = 0;
+                (void) ucg_builtin_msg_process(slot, &slot->req);
+            }
+        }
+
+        if ((slot->req.step->flags & UCG_BUILTIN_OP_STEP_FLAG_RECV1_BEFORE_SEND) &&
+            slot->req.recv_comp) {
+            goto am_handler_store;
+        }
+
+        size_t real_length = length - sizeof(ucg_builtin_header_t);
+        char *header_tmp = (char *)header;
+        char *recv_buffer_tmp = (char *)slot->req.step->recv_buffer;
+
+        if (slot->req.step->phase->is_swap) {
+            char *temp_buffer = (char*)UCG_ALLOC_CHECK(real_length, "temp buffer");
+            memcpy(temp_buffer, header_tmp + sizeof(ucg_builtin_header_t), real_length);
+            memcpy(header_tmp + sizeof(ucg_builtin_header_t), recv_buffer_tmp + header->remote_offset, real_length);
+            memcpy(recv_buffer_tmp + header->remote_offset, temp_buffer, real_length);
+            free(temp_buffer);
+            temp_buffer = NULL;
+        }
+
+        /* The packet arrived "on time" - process it */
+        UCS_PROFILE_CODE("ucg_builtin_am_handler_cb") {
+            (void) slot->cb(&slot->req, header->remote_offset,
+                            data + sizeof(ucg_builtin_header_t),
+                            length - sizeof(ucg_builtin_header_t));
+        }
+        return UCS_OK;
+    }
+
+    /* Store the message - use RX_headroom for @ref ucg_builtin_comp_desc_t */
+    ucg_builtin_comp_desc_t* desc = NULL;
+am_handler_store:
+    if (am_flags & UCT_CB_PARAM_FLAG_DESC) {
+        desc = (ucg_builtin_comp_desc_t*)((char*)data -
+                offsetof(ucg_builtin_comp_desc_t, header));
+        desc->release_desc = uct_iface_release_desc;
+        status = UCS_INPROGRESS;
+    } else {
+        /* Cannot use existing descriptor - must allocate my own... */
+        if (ucs_likely(slot->mp != NULL)) {
+            desc = (ucg_builtin_comp_desc_t*)ucs_mpool_get_inline(slot->mp);
+        } else {
+            /* Passively created planner_ctx's slot->mp is NULL.
+             * This doesn't happen verf often, there's no need to use a memory pool.*/
+            uint32_t malloc_size = ucs_offsetof(ucg_builtin_comp_desc_t, header) + length;
+            desc = (ucg_builtin_comp_desc_t*)ucs_calloc(1, malloc_size, "ucg desc");
+        }
+        /* Failure return may result in hang up */
+        ucs_assert_always(desc != NULL);
+        memcpy(&desc->header, data, length);
+        desc->release_desc = slot->mp != NULL ? ucs_mpool_put_inline : ucs_free;
+        status = UCS_OK;
+    }
+
+    ucs_debug("ucg_builtin_am_handler STORE: group_id %u coll_id %u(%u) step_idx %u(%u)",
+              header->group_id, header->coll_id, slot->coll_id, header->step_idx, slot->step_idx);
+
+    desc->super.flags = am_flags;
+    desc->super.length = length - sizeof(ucg_builtin_header_t);
+    ucs_list_add_tail(&slot->msg_head, &desc->super.tag_list[0]);
+    return status;
+}
+
+void ucg_builtin_msg_dump(void *arg, uct_am_trace_type_t type,
+                          uint8_t id, const void *data, size_t length,
+                          char *buffer, size_t max)
+{
+    const ucg_builtin_header_t *header = (const ucg_builtin_header_t*)data;
+    snprintf(buffer, max, "COLLECTIVE [coll_id %u step_idx %u offset %lu length %lu]",
+             (unsigned)header->coll_id, (unsigned)header->step_idx,
+             (uint64_t)header->remote_offset, length - sizeof(*header));
 }
 
 static void ucg_builtin_clean_phases(ucg_builtin_plan_t *plan)
@@ -417,7 +463,7 @@ void plan_decision_fixed(const size_t msg_size,
     *barrier_algo_decision = UCG_ALGORITHM_BARRIER_AUTO_DECISION;
     /* choose algorithm due to message size */
     if (modifiers == ucg_predefined_modifiers[UCG_PRIMITIVE_ALLREDUCE]) {
-        ucg_builtin_allreduce_decision_fixed(msg_size, group_params, coll_params, large_datatype_threshold, 
+        ucg_builtin_allreduce_decision_fixed(msg_size, group_params, coll_params, large_datatype_threshold,
                                              is_unbalanced_ppn, allreduce_algo_decision);
     }
     if (modifiers == ucg_predefined_modifiers[UCG_PRIMITIVE_BCAST]) {
@@ -626,19 +672,19 @@ void ucg_builtin_check_algorithm_param_type(ucg_builtin_config_t *config)
     }
 }
 
-enum choose_ops_mask ucg_builtin_plan_choose_ops(ucg_builtin_config_t *config, 
+enum choose_ops_mask ucg_builtin_plan_choose_ops(ucg_builtin_config_t *config,
                                                  enum ucg_collective_modifiers ops_type_choose)
 {
     ucg_builtin_check_algorithm_param_type(config);
     ucg_builtin_check_algorithm_param_size(config);
 
-    enum ucg_builtin_bcast_algorithm bcast_algo_decision = 
+    enum ucg_builtin_bcast_algorithm bcast_algo_decision =
         (enum ucg_builtin_bcast_algorithm)config->bcast_algorithm;
-    enum ucg_builtin_allreduce_algorithm allreduce_algo_decision = 
+    enum ucg_builtin_allreduce_algorithm allreduce_algo_decision =
         (enum ucg_builtin_allreduce_algorithm)config->allreduce_algorithm;
-    enum ucg_builtin_barrier_algorithm barrier_algo_decision = 
+    enum ucg_builtin_barrier_algorithm barrier_algo_decision =
         (enum ucg_builtin_barrier_algorithm)config->barrier_algorithm;
-    enum choose_ops_mask result = OPS_AUTO_DECISION; 
+    enum choose_ops_mask result = OPS_AUTO_DECISION;
 
     if (!(bcast_algo_decision | allreduce_algo_decision | barrier_algo_decision)) {
         return OPS_AUTO_DECISION;
@@ -693,7 +739,7 @@ void ucg_builtin_check_continuous_number_by_sort(ucg_group_member_index_t *array
     }
 }
 
-static void ucg_builtin_prepare_rank_same_unit(const ucg_group_params_t *group_params, 
+static void ucg_builtin_prepare_rank_same_unit(const ucg_group_params_t *group_params,
                                                enum ucg_group_member_distance domain_distance,
                                                ucg_group_member_index_t *rank_same_unit)
 {
@@ -785,7 +831,7 @@ void ucg_builtin_non_commutative_operation(const ucg_group_params_t *group_param
     }
 }
 
-/* 
+/*
    Deal with all unsupport special case.
 */
 ucs_status_t ucg_builtin_change_unsupport_algo(struct ucg_builtin_algorithm *algo,
@@ -864,11 +910,11 @@ ucs_status_t ucg_builtin_algorithm_decision(const ucg_builtin_planner_ctx_t *ctx
     enum ucg_collective_modifiers ops_type_choose = coll->modifiers;
     ucg_builtin_config_t *config = ctx->config;
 
-    enum ucg_builtin_bcast_algorithm bcast_algo_decision = 
+    enum ucg_builtin_bcast_algorithm bcast_algo_decision =
         (enum ucg_builtin_bcast_algorithm)config->bcast_algorithm;
-    enum ucg_builtin_allreduce_algorithm allreduce_algo_decision = 
+    enum ucg_builtin_allreduce_algorithm allreduce_algo_decision =
         (enum ucg_builtin_allreduce_algorithm)config->allreduce_algorithm;
-    enum ucg_builtin_barrier_algorithm barrier_algo_decision = 
+    enum ucg_builtin_barrier_algorithm barrier_algo_decision =
         (enum ucg_builtin_barrier_algorithm)config->barrier_algorithm;
 
     ucs_status_t status;
@@ -895,7 +941,7 @@ ucs_status_t ucg_builtin_algorithm_decision(const ucg_builtin_planner_ctx_t *ctx
     switch (ops_choose) {
         case OPS_AUTO_DECISION:
             /* Auto algorithm decision: according to is_ppn_unbalance/data/msg_size etc */
-            plan_decision_fixed(msg_size, group_params, ops_type_choose, coll_params, config->large_datatype_threshold, is_ppn_unbalance, 
+            plan_decision_fixed(msg_size, group_params, ops_type_choose, coll_params, config->large_datatype_threshold, is_ppn_unbalance,
                                 &bcast_algo_decision, &allreduce_algo_decision, &barrier_algo_decision);
             break;
 
@@ -922,11 +968,11 @@ ucs_status_t ucg_builtin_algorithm_decision(const ucg_builtin_planner_ctx_t *ctx
     }
 
     /* One API to deal with all special case */
-    status = ucg_builtin_change_unsupport_algo(&ucg_builtin_algo_config, 
-                                               group_params, 
-                                               msg_size, 
-                                               coll_params, 
-                                               ops_type_choose, 
+    status = ucg_builtin_change_unsupport_algo(&ucg_builtin_algo_config,
+                                               group_params,
+                                               msg_size,
+                                               coll_params,
+                                               ops_type_choose,
                                                ops_choose,
                                                config);
     ucg_builtin_log_algo();
@@ -942,7 +988,7 @@ static void ucg_builtin_set_phase_thresh_max_short(ucg_builtin_planner_ctx_t *ct
     } else {
         phase->send_thresh.max_short_one = phase->ep_attr->cap.am.max_short - sizeof(ucg_builtin_header_t);
     }
-    
+
     if (phase->send_thresh.max_short_one == 0) {
         phase->send_thresh.max_short_max = 0;
     } else {
@@ -996,7 +1042,7 @@ void ucg_builtin_log_phase_info(ucg_builtin_plan_phase_t *phase, ucg_group_membe
 }
 
 ucs_status_t ucg_builtin_connect(ucg_builtin_planner_ctx_t *ctx,
-                                 ucg_group_member_index_t idx, 
+                                 ucg_group_member_index_t idx,
                                  ucg_builtin_plan_phase_t *phase,
                                  unsigned phase_ep_index)
 {
@@ -1015,7 +1061,7 @@ ucs_status_t ucg_builtin_connect(ucg_builtin_planner_ctx_t *ctx,
     phase->ep_attr = ucg_ep.am_iface_attr;
     phase->md      = ucg_ep.md;
     phase->md_attr = ucg_ep.md_attr;
-    
+
     if (phase->ucp_eps == NULL) {
         phase->ucp_eps = UCG_ALLOC_CHECK(sizeof(ucp_ep_h) * phase->ep_cnt, "ucp_eps");
     }
@@ -1057,12 +1103,12 @@ static int ucg_builtin_check_plan(const ucg_plan_t *plan_p,
     ucg_builtin_plan_t *plan = (ucg_builtin_plan_t*)plan_p;
     ucg_builtin_planner_ctx_t *planner_ctx = plan->context;
     ucg_context_h ucg_ctx = planner_ctx->group->context;
-    if (params->send.op_ext != NULL 
-        && !ucg_ctx->params.op_is_commute_f(params->send.op_ext) 
+    if (params->send.op_ext != NULL
+        && !ucg_ctx->params.op_is_commute_f(params->send.op_ext)
         && !(plan->feature & UCG_ALGORITHM_SUPPORT_NON_COMMUTATIVE_OPS)) {
         return 0;
     }
-    
+
     if (params->send.dt_len > planner_ctx->config->large_datatype_threshold
         && !(plan->feature & UCG_ALGORITHM_SUPPORT_LARGE_DATATYPE)) {
         return 0;
@@ -1096,34 +1142,32 @@ static void ucg_builtin_destroy_plan(ucg_plan_t *plan_p)
     return;
 }
 
-static ucs_status_t ucg_builtin_create(ucg_group_h group, 
-                                       ucg_planc_ctx_h planc_ctx, 
+static ucs_status_t ucg_builtin_create(ucg_group_h group,
+                                       ucg_planc_ctx_h planc_ctx,
                                        ucg_planner_ctx_h *planner_ctx_p)
 {
+    ucs_status_t status;
     ucg_builtin_ctx_t *bctx = (ucg_builtin_ctx_t*)planc_ctx;
-    ucg_builtin_planner_ctx_t *planner_ctx = ucs_calloc(1, sizeof(ucg_builtin_planner_ctx_t), "planner ctx");
-    if (planner_ctx == NULL) {
-        return UCS_ERR_NO_MEMORY;
+    ucg_builtin_planner_ctx_t *planner_ctx;
+    uint32_t group_id = group->params.group_id;
+    if (ucs_likely(!ucs_ptr_array_lookup(&bctx->group_by_id,
+                                         group_id,
+                                         planner_ctx))) {
+        status = ucg_builtin_create_planner_ctx(bctx, group_id, &planner_ctx);
+        if (status != UCS_OK) {
+            return status;
+        }
     }
-    
+
+    /* set group information */
     planner_ctx->group           = group;
     planner_ctx->group_params    = &group->params;
-    planner_ctx->group_id        = group->params.group_id;
-    planner_ctx->context         = bctx;
-    planner_ctx->config          = &bctx->config;
-    planner_ctx->am_id           = bctx->am_id;
-    ucs_list_head_init(&planner_ctx->send_head);
-    ucs_list_head_init(&planner_ctx->plan_head);
 
     int i;
     for (i = 0; i < UCG_BUILTIN_MAX_CONCURRENT_OPS; ++i) {
         ucg_builtin_comp_slot_t *slot = planner_ctx->slots + i;
-        ucs_list_head_init(&slot->msg_head);
         slot->mp = &group->worker->am_mp;
-        slot->cb = NULL;
     }
-    ucg_builtin_adapt_plan_config(planner_ctx->config);
-    ucs_ptr_array_set(&bctx->group_by_id, planner_ctx->group_id, planner_ctx);
 
     *planner_ctx_p = planner_ctx;
     return UCS_OK;
@@ -1276,10 +1320,10 @@ static ucs_status_t ucg_builtin_query(ucg_planner_h *planner_p)
                                    UCG_GROUP_COLLECTIVE_MODIFIER_SINGLE_SOURCE;
     ucg_builtin_config_t config;
     ucs_status_t status;
-    status = ucs_config_parser_fill_opts(&config, 
+    status = ucs_config_parser_fill_opts(&config,
                                          ucg_builtin_config_table,
-                                         UCS_DEFAULT_ENV_PREFIX, 
-                                         UCG_BUILTIN_CONFIG_PREFIX, 
+                                         UCS_DEFAULT_ENV_PREFIX,
+                                         UCG_BUILTIN_CONFIG_PREFIX,
                                          0);
     if (status == UCS_OK) {
         planner->priority = config.priority;
@@ -1303,10 +1347,10 @@ static ucs_status_t ucg_builtin_init(ucg_context_h ctx, ucg_planc_ctx_h *planc_c
     bctx->context = ctx;
 
     ucs_status_t status;
-    status = ucs_config_parser_fill_opts(&bctx->config, 
+    status = ucs_config_parser_fill_opts(&bctx->config,
                                          ucg_builtin_config_table,
-                                         UCS_DEFAULT_ENV_PREFIX, 
-                                         UCG_BUILTIN_CONFIG_PREFIX, 
+                                         UCS_DEFAULT_ENV_PREFIX,
+                                         UCG_BUILTIN_CONFIG_PREFIX,
                                          0);
     if (status != UCS_OK) {
         ucs_error("Failed to read builtin configuration");
@@ -1314,8 +1358,8 @@ static ucs_status_t ucg_builtin_init(ucg_context_h ctx, ucg_planc_ctx_h *planc_c
     }
 
     ucs_ptr_array_init(&bctx->group_by_id, "builtin_group_table");
-    status = ucg_context_set_am_handler(ucg_builtin_am_handler, 
-                                        bctx, 
+    status = ucg_context_set_am_handler(ucg_builtin_am_handler,
+                                        bctx,
                                         ucg_builtin_msg_dump,
                                         &bctx->am_id);
     if (status != UCS_OK) {
@@ -1342,10 +1386,10 @@ static void ucg_builtin_cleanup(ucg_planc_ctx_h ctx)
 {
     ucg_builtin_ctx_t *bctx = (ucg_builtin_ctx_t*)ctx;
     /* TODO: Find a good way to unset am handler
-     * Currently, this function is invoked only when the process exits. 
+     * Currently, this function is invoked only when the process exits.
      * So it's OK not to unset am handler.
      */
-    
+
     ucs_ptr_array_cleanup(&bctx->group_by_id);
     ucs_config_parser_release_opts(&bctx->config, ucg_builtin_config_table);
     ucs_free(bctx);
@@ -1353,6 +1397,6 @@ static void ucg_builtin_cleanup(ucg_planc_ctx_h ctx)
 }
 
 UCG_PLAN_COMPONENT_DEFINE(ucg_builtin_component, "builtin",
-                          ucg_builtin_query, ucg_builtin_init, 
+                          ucg_builtin_query, ucg_builtin_init,
                           ucg_builtin_cleanup, UCG_BUILTIN_CONFIG_PREFIX,
                           ucg_builtin_config_table, ucg_builtin_config_t);

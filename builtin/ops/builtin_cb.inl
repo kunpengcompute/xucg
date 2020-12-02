@@ -626,7 +626,6 @@ ucg_builtin_init_state(ucg_builtin_op_step_t *step, int is_pack,
 
         step->bcopy.unpack_state.dt.generic.state = state_gen;
     }
-    // TODO: re-use ucp_request_send_state_init()+ucp_request_send_state_reset()
 }
 
 static UCS_F_ALWAYS_INLINE void

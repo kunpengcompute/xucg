@@ -205,6 +205,38 @@ enum ucg_builtin_plan_topology_type ucg_builtin_choose_type(enum ucg_collective_
     return UCG_PLAN_TREE_FANIN_FANOUT;
 }
 
+/*
+void ucg_builtin_swap_net_recv(char *netdata, size_t length, size_t offset,
+                               ucg_builtin_request_t *req)
+{
+    ucg_builtin_op_step_t *step = req->step;
+    ucp_dt_generic_t *gen_dt = req->op->recv_dt;
+    void *state_pack = step->bcopy.pack_state_recv.dt.generic.state;
+    void *state_unpack = step->bcopy.unpack_state.dt.generic.state;
+    char *recv_buffer = (char *)step->recv_buffer;
+    char *tmp_buffer = NULL;
+
+    ucs_debug("swap netdata:%p length:%lu and recv_buffer:%p offset:%lu",
+              netdata, length, recv_buffer, offset);
+
+    tmp_buffer = (char *)ucs_malloc(length, "temp swap buffer");
+    if (tmp_buffer == NULL) {
+        ucs_fatal("no memory for malloc, length:%lu", length);
+    }
+
+    memcpy(tmp_buffer, netdata, length);
+    if (gen_dt != NULL) {
+        gen_dt->ops.pack(state_pack, offset, netdata, length);
+        gen_dt->ops.unpack(state_unpack, offset, tmp_buffer, length);
+    } else {
+        memcpy(netdata, recv_buffer + offset, length);
+        memcpy(recv_buffer + offset, tmp_buffer, length);
+    }
+
+    free(tmp_buffer);
+}
+*/
+
 UCS_PROFILE_FUNC(ucs_status_t, ucg_builtin_am_handler,
                  (ctx, data, length, am_flags),
                  void *ctx, void *data, size_t length, unsigned am_flags)
@@ -266,12 +298,9 @@ UCS_PROFILE_FUNC(ucs_status_t, ucg_builtin_am_handler,
             char *recv_buffer_tmp = (char *)slot->req.step->recv_buffer;
 
             if (slot->req.step->phase->is_swap) {
-                char *temp_buffer = (char*)UCS_ALLOC_CHECK(real_length, "temp buffer");
-                memcpy(temp_buffer, header_tmp + sizeof(ucg_builtin_header_t), real_length);
-                memcpy(header_tmp + sizeof(ucg_builtin_header_t), recv_buffer_tmp + header->remote_offset, real_length);
-                memcpy(recv_buffer_tmp + header->remote_offset, temp_buffer, real_length);
-                free(temp_buffer);
-                temp_buffer = NULL;
+                ucg_builtin_swap_net_recv(data + sizeof(ucg_builtin_header_t),
+                                          length - sizeof(ucg_builtin_header_t),
+                                          header->remote_offset, &slot->req);
             } */
 
 
@@ -807,9 +836,12 @@ void ucg_builtin_allreduce_decision_fixed(const size_t msg_size,
                                           const int is_unbalanced_ppn,
                                           enum ucg_builtin_allreduce_algorithm *allreduce_algo_decision)
 {
-    unsigned is_large_datatype = (coll_params->send.dt_len > large_datatype_threshold);
-    unsigned is_non_commutative = coll_params->send.op_ext
-        && !group_params->op_is_commute_f(coll_params->send.op_ext);
+    ucp_datatype_t send_dt;
+    ucg_global_params.datatype.convert(coll_params->send.dtype, &send_dt); //TODO: check success
+    unsigned is_large_datatype = (ucp_dt_length(send_dt, 1, NULL, NULL) >
+                                  large_datatype_threshold);
+    unsigned is_non_commutative = coll_params->send.op
+        && !ucg_global_params.reduce_op.is_commutative_f(coll_params->send.op);
     if (is_large_datatype || is_non_commutative) {
         ucg_builtin_plan_decision_in_noncommutative_largedata_case(msg_size, allreduce_algo_decision);
     } else if (msg_size >= UCG_GROUP_MED_MSG_SIZE) {
@@ -1215,6 +1247,17 @@ ucs_status_t ucg_builtin_change_unsupport_algo(struct ucg_builtin_algorithm *alg
                                                ucg_builtin_config_t *config)
 {
     ucs_status_t status;
+    ucp_datatype_t ucp_datatype;
+
+    /* Currently, only algorithm 1 supports non-contiguous datatype for allreduce */
+    if (ops_type_choose == ucg_predefined_modifiers[UCG_PRIMITIVE_ALLREDUCE]) {
+        ucg_global_params.datatype.convert(coll_params->send.dtype, &ucp_datatype);
+        if (!UCP_DT_IS_CONTIG(ucp_datatype) && coll_params->send.count > 0) {
+            ucg_builtin_allreduce_algo_switch(UCG_ALGORITHM_ALLREDUCE_RECURSIVE, &ucg_algo);
+            ucs_info("allreduce non-contiguous datatype, select algo%d:recursive", UCG_ALGORITHM_ALLREDUCE_RECURSIVE);
+            return UCS_OK;
+        }
+    }
 
     /* Special Case 1 : bind-to none */
     if (!(algo->feature_flag & UCG_ALGORITHM_SUPPORT_BIND_TO_NONE) &&
@@ -1543,6 +1586,10 @@ void ucg_builtin_print_flags(ucg_builtin_op_step_t *step)
 
     case UCG_BUILTIN_OP_STEP_COMP_AGGREGATE_REDUCE:
         printf("reduce");
+        break;
+
+    case UCG_BUILTIN_OP_STEP_COMP_AGGREGATE_REDUCE_UNPACKED:
+        printf("reduce unpacked");
         break;
 
     case UCG_BUILTIN_OP_STEP_COMP_AGGREGATE_REMOTE_KEY:

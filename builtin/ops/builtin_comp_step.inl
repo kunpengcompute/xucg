@@ -188,6 +188,9 @@ ucg_builtin_step_recv_handle_chunk(enum ucg_builtin_op_step_comp_aggregation ag,
                                    int is_dt_packed, ucg_builtin_request_t *req)
 {
     ucs_status_t status;
+    ucg_collective_params_t *params;
+    ucp_dt_generic_t *gen_dt;
+    void *gen_state;
 
     switch (ag) {
     case UCG_BUILTIN_OP_STEP_COMP_AGGREGATE_NOP:
@@ -209,6 +212,17 @@ ucg_builtin_step_recv_handle_chunk(enum ucg_builtin_op_step_comp_aggregation ag,
         }
         status = UCS_OK;
         break;
+
+    case UCG_BUILTIN_OP_STEP_COMP_AGGREGATE_REDUCE_UNPACKED:
+        params    = &req->op->super.params;
+        gen_dt    = ucp_dt_to_generic(req->op->recv_dt);
+        gen_state = gen_dt->ops.start_unpack(gen_dt->context,
+                                             params->send.buffer,
+                                             params->recv.count);
+
+        gen_dt->ops.unpack(gen_state, 0, params->send.buffer, length);
+        gen_dt->ops.finish(gen_state);
+        /* no break - intentionally */
 
     case UCG_BUILTIN_OP_STEP_COMP_AGGREGATE_REDUCE:
         if (is_fragment) {
@@ -324,6 +338,7 @@ ucg_builtin_step_recv_handle_data(ucg_builtin_request_t *req, uint64_t offset,
         case_recv(UCG_BUILTIN_OP_STEP_COMP_AGGREGATE_WRITE)
         case_recv(UCG_BUILTIN_OP_STEP_COMP_AGGREGATE_GATHER)
         case_recv(UCG_BUILTIN_OP_STEP_COMP_AGGREGATE_REDUCE)
+        case_recv(UCG_BUILTIN_OP_STEP_COMP_AGGREGATE_REDUCE_UNPACKED)
         case_recv(UCG_BUILTIN_OP_STEP_COMP_AGGREGATE_REMOTE_KEY)
     }
 

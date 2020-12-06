@@ -47,37 +47,72 @@ static void ucg_builtin_init_reduce(ucg_builtin_op_t *op, ucg_coll_id_t coll_id)
 }
 
 static UCS_F_ALWAYS_INLINE void
-ucg_builtin_init_state(ucg_builtin_op_t *op, int is_pack)
+ucg_builtin_init_state(ucg_builtin_op_t *op, int option)
 {
-    ucp_dt_generic_t *dt_gen;
-
+    ucg_builtin_op_step_t *step = &op->steps[0]; // TODO: (alex) temporarily broken - I want to change this to be per-op....
     const ucg_collective_params_t *params = &op->super.params;
 
-    if (is_pack) {
-        dt_gen = ucp_dt_to_generic(op->send_dt);
-        op->rstate.dt.generic.state = dt_gen->ops.start_pack(dt_gen->context,
-                                                             params->send.buffer,
-                                                             params->send.count);
-    } else {
-        dt_gen = ucp_dt_to_generic(op->recv_dt);
-        op->wstate.dt.generic.state = dt_gen->ops.start_unpack(dt_gen->context,
-                                                               params->recv.buffer,
-                                                               params->recv.count);
+    ucp_dt_generic_t *dt_gen;
+    void *state_gen;
+    // TODO: assert that this function is only called on non-contig datatypes...
+
+    switch (option) {
+        case 0:
+            dt_gen = ucp_dt_to_generic(op->recv_dt);
+            state_gen = dt_gen->ops.start_unpack(dt_gen->context, step->recv_buffer,
+                                                 params->recv.count);
+
+            step->bcopy.unpack_state.dt.generic.state = state_gen;
+            break;
+
+        case 1:
+            dt_gen = ucp_dt_to_generic(op->send_dt);
+            state_gen = dt_gen->ops.start_pack(dt_gen->context, step->send_buffer,
+                                               params->send.count);
+
+            step->bcopy.pack_state.dt.generic.state = state_gen;
+            break;
+
+        case 2:
+            dt_gen = ucp_dt_to_generic(op->recv_dt);
+            state_gen = dt_gen->ops.start_pack(dt_gen->context, step->recv_buffer,
+                                               params->recv.count);
+
+            step->bcopy.pack_state_recv.dt.generic.state = state_gen;
+            break;
+
+        default:
+            ucs_warn("ucg_builtin_init_state, invalid option:%d", option);
+            break;
     }
-    // TODO: re-use ucp_request_send_state_init()+ucp_request_send_state_reset()?
 }
 
 static UCS_F_ALWAYS_INLINE void
-ucg_builtin_finalize_state(ucg_builtin_op_t *op, int is_pack)
+ucg_builtin_finalize_state(ucg_builtin_op_t *op, int option)
 {
-    ucp_dt_generic_t *dt_gen;
+    ucg_builtin_op_step_t *step = &op->steps[0]; // TODO: (alex) temporarily broken - I want to change this to be per-op....
 
-    if (is_pack) {
-        dt_gen = ucp_dt_to_generic(op->send_dt);
-        dt_gen->ops.finish(op->rstate.dt.generic.state);
-    } else {
-        dt_gen = ucp_dt_to_generic(op->recv_dt);
-        dt_gen->ops.finish(op->wstate.dt.generic.state);
+    ucp_dt_generic_t *dt_gen;
+    // TODO: assert that this function is only called on non-contig datatypes...
+    switch (option) {
+        case 0:
+            dt_gen = ucp_dt_to_generic(op->recv_dt);
+            dt_gen->ops.finish(step->bcopy.unpack_state.dt.generic.state);
+            break;
+
+        case 1:
+            dt_gen = ucp_dt_to_generic(op->send_dt);
+            dt_gen->ops.finish(step->bcopy.pack_state.dt.generic.state);
+            break;
+
+        case 2:
+            dt_gen = ucp_dt_to_generic(op->recv_dt);
+            dt_gen->ops.finish(step->bcopy.pack_state_recv.dt.generic.state);
+            break;
+
+        default:
+            ucs_warn("ucg_builtin_finalize_state, invalid option:%d", option);
+            break;
     }
 }
 
@@ -96,6 +131,10 @@ static void ucg_builtin_init_pack_and_unpack(ucg_builtin_op_t *op,
 {
     ucg_builtin_init_state(op, 1);
     ucg_builtin_init_state(op, 0);
+
+    if (op->steps[0].phase->is_swap) {
+        ucg_builtin_init_state(op, 2);
+    }
 }
 
 static void ucg_builtin_finalize_pack(ucg_builtin_op_t *op)
@@ -112,6 +151,10 @@ static void ucg_builtin_finalize_pack_and_unpack(ucg_builtin_op_t *op)
 {
     ucg_builtin_finalize_state(op, 1);
     ucg_builtin_finalize_state(op, 0);
+
+    if (op->steps[0].phase->is_swap) {
+        ucg_builtin_finalize_state(op, 2);
+    }
 }
 
 /* Alltoall Bruck phase 1/3: shuffle the data */
@@ -347,9 +390,12 @@ ucs_status_t ucg_builtin_op_consider_optimization(ucg_builtin_op_t *op,
 {
     ucg_builtin_op_step_t *step;
     ucg_step_idx_t step_idx = 0;
+
     do {
         step = &op->steps[step_idx++];
-        if ((step->flags & UCG_BUILTIN_OP_STEP_FLAG_SEND_AM_BCOPY) &&
+        if ((config->bcopy_to_zcopy_opt) &&
+            (!op->send_dt) &&
+            (step->flags & UCG_BUILTIN_OP_STEP_FLAG_SEND_AM_BCOPY) &&
             (step->phase->iface_attr->cap.flags & UCT_IFACE_FLAG_AM_ZCOPY) &&
             (step->phase->md_attr->cap.max_reg > step->buffer_length)) {
             op->optm_cb = ucg_builtin_optimize_am_bcopy_to_zcopy;

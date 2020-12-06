@@ -102,6 +102,7 @@ enum ucg_builtin_op_step_comp_aggregation {
     UCG_BUILTIN_OP_STEP_COMP_AGGREGATE_WRITE,
     UCG_BUILTIN_OP_STEP_COMP_AGGREGATE_GATHER,
     UCG_BUILTIN_OP_STEP_COMP_AGGREGATE_REDUCE,
+    UCG_BUILTIN_OP_STEP_COMP_AGGREGATE_REDUCE_UNPACKED,
 
     /* Unpacking remote memory keys (for Rendezvous protocol) */
     UCG_BUILTIN_OP_STEP_COMP_AGGREGATE_REMOTE_KEY
@@ -202,6 +203,7 @@ typedef struct ucg_builtin_op_step {
             uct_pack_callback_t  pack_single_cb;
             ucp_dt_state_t       pack_state;
             ucp_dt_state_t       unpack_state;
+            ucp_dt_state_t       pack_state_recv;
         } bcopy;
         struct {
             uct_mem_h            memh;   /* Data buffer memory handle */

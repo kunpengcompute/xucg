@@ -97,7 +97,8 @@ ucg_builtin_step_am_short_max(ucg_builtin_request_t *req,
     int8_t *sbuf                 = step->send_buffer;
     int8_t *buffer_iter          = sbuf + step->iter_offset;
     int8_t *buffer_iter_limit    = sbuf + step->buffer_length - frag_size;
-    am_iter.remote_offset       += step->iter_offset;
+    am_iter.remote_offset        = (is_pipelined) ? step->iter_offset :
+                                   am_iter.remote_offset + step->iter_offset;
 
     UCG_BUILTIN_ASSERT_SEND(step, AM_SHORT);
     ucs_assert(step->iter_offset != UCG_BUILTIN_OFFSET_PIPELINE_READY);
@@ -125,7 +126,8 @@ ucg_builtin_step_am_short_max(ucg_builtin_request_t *req,
         /* send last fragment of the message */
         if (ucs_unlikely(status != UCS_OK)) {
             /* assuming UCS_ERR_NO_RESOURCE, restore the state for re-entry */
-            step->iter_offset = buffer_iter - frag_size - sbuf;
+            step->iter_offset = (!is_pipelined) ? buffer_iter - frag_size - step->send_buffer :
+                                step->iter_offset;
             return status;
         }
     }
@@ -167,9 +169,11 @@ ucg_builtin_step_am_bcopy_max(ucg_builtin_request_t *req,
                               int is_pipelined)
 {
     ssize_t len;
-    ucg_offset_t frag_size  = step->fragment_length;
-    ucg_offset_t iter_limit = step->buffer_length - frag_size;
-    packed_send_t send_func = step->uct_send;
+    ucg_offset_t frag_size        = step->fragment_length;
+    ucg_offset_t iter_limit       = step->buffer_length - frag_size;
+    packed_send_t send_func       = step->uct_send;
+    step->am_header.remote_offset = (is_pipelined) ? step->iter_offset :
+                                    step->am_header.remote_offset;
 
     unsigned uct_flags;
     if (ucs_unlikely(step->flags & UCG_BUILTIN_OP_STEP_FLAG_BCOPY_PACK_LOCK)) {
@@ -215,7 +219,9 @@ ucg_builtin_step_am_bcopy_max(ucg_builtin_request_t *req,
         return (ucs_status_t)len;
     }
 
-    step->am_header.remote_offset = 0;
+    /* iter_offset can not set to be zero for pipelining */
+    step->iter_offset = (!is_pipelined) ? 0 : step->iter_offset;
+
     return UCS_OK;
 }
 
@@ -347,10 +353,12 @@ ucg_builtin_step_am_zcopy_max(ucg_builtin_request_t *req,
                               int is_pipelined)
 {
     ucs_status_t status;
-    ucg_offset_t frag_size     = step->fragment_length;
-    int8_t *sbuf               = step->send_buffer;
-    void* iov_buffer_limit     = sbuf + step->buffer_length - frag_size;
-    ucg_builtin_zcomp_t *zcomp = &step->zcopy.zcomp;
+    ucg_offset_t frag_size        = step->fragment_length;
+    int8_t *sbuf                  = step->send_buffer;
+    void* iov_buffer_limit        = sbuf + step->buffer_length - frag_size;
+    ucg_builtin_zcomp_t *zcomp    = &step->zcopy.zcomp;
+    step->am_header.remote_offset = (is_pipelined) ? step->iter_offset :
+                                    step->am_header.remote_offset;
 
     uct_iov_t iov = {
             .buffer = sbuf + step->iter_offset,

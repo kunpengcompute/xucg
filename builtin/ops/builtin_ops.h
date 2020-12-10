@@ -317,6 +317,9 @@ ucs_status_t ucg_builtin_op_trigger(ucg_op_t *op,
 void         ucg_builtin_req_enqueue_resend(ucg_builtin_group_ctx_t *gctx,
                                             ucg_builtin_request_t *req);
 
+int ucg_is_noncontig_allreduce(const ucg_group_params_t *group_params,
+                               const ucg_collective_params_t *coll_params);
+
 
 /* Callback functions exported for debugging */
 void ucg_builtin_print_init_cb_name(ucg_builtin_op_init_cb_t init_cb);

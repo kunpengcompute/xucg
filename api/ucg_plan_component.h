@@ -107,6 +107,7 @@ typedef struct ucg_plan {
     int                      support_non_contiguous;
     int                      support_non_commutative;
     int                      support_large_datatype;
+    int                      is_noncontig_allreduce;
 
     /* Plan progress */
     ucg_plan_desc_t         *planner;

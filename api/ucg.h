@@ -160,6 +160,9 @@ typedef struct ucg_params {
         /* Convert the opaque data-type into UCX's structure (should return 0) */
         int (*convert)(void *datatype, ucp_datatype_t *ucp_datatype);
 
+        /* Get the buffer size needed to unpack a (non-contiguous) data-type */
+        ptrdiff_t (*get_span)(void *datatype, int count, ptrdiff_t *gap);
+
         /* Check if the data-type is an integer (of any length) */
         int (*is_integer_f)(void *datatype, int *is_signed);
 

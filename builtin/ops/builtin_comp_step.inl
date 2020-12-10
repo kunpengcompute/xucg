@@ -190,7 +190,10 @@ ucg_builtin_step_recv_handle_chunk(enum ucg_builtin_op_step_comp_aggregation ag,
     ucs_status_t status;
     ucg_collective_params_t *params;
     ucp_dt_generic_t *gen_dt;
+    char *reduce_buf;
     void *gen_state;
+    ptrdiff_t dsize;
+    ptrdiff_t gap;
 
     switch (ag) {
     case UCG_BUILTIN_OP_STEP_COMP_AGGREGATE_NOP:
@@ -216,12 +219,19 @@ ucg_builtin_step_recv_handle_chunk(enum ucg_builtin_op_step_comp_aggregation ag,
     case UCG_BUILTIN_OP_STEP_COMP_AGGREGATE_REDUCE_UNPACKED:
         params    = &req->op->super.params;
         gen_dt    = ucp_dt_to_generic(req->op->recv_dt);
-        gen_state = gen_dt->ops.start_unpack(gen_dt->context,
-                                             params->send.buffer,
-                                             params->recv.count);
+        dsize     = ucg_global_params.datatype.get_span(params->recv.dtype,
+                                                        params->recv.count,
+                                                        &gap);
+
+        reduce_buf = (char *)ucs_alloca(dsize);
+        gen_state  = gen_dt->ops.start_unpack(gen_dt->context,
+                                              reduce_buf - gap,
+                                              params->recv.count);
 
         gen_dt->ops.unpack(gen_state, 0, params->send.buffer, length);
         gen_dt->ops.finish(gen_state);
+        src = reduce_buf - gap;
+        // TODO: (alex) offset = (offset / dt_len) * params->recv.dt_len;
         /* no break - intentionally */
 
     case UCG_BUILTIN_OP_STEP_COMP_AGGREGATE_REDUCE:

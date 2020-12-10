@@ -412,6 +412,27 @@ void ucg_request_cancel(ucg_coll_h coll)
     // TODO: implement
 }
 
+extern int ucg_is_noncontig_allreduce(const ucg_group_params_t *group_params,
+                                      const ucg_collective_params_t *coll_params);
+
+static int ucg_chk_noncontig_allreduce_plan(const ucg_collective_params_t *coll_params,
+                                            const ucg_group_params_t *group_params,
+                                            const ucg_plan_t *plan)
+{
+    int noncontig_allreduce;
+
+    if (coll_params->send.type.modifiers != ucg_predefined_modifiers[UCG_PRIMITIVE_ALLREDUCE]) {
+        return 0;
+    }
+
+    noncontig_allreduce = ucg_is_noncontig_allreduce(group_params, coll_params);
+    if (plan->is_noncontig_allreduce) {
+        return !noncontig_allreduce;
+    } else {
+        return noncontig_allreduce;
+    }
+}
+
 void ucg_get_cache_plan(unsigned int message_size_level, unsigned int coll_root,
                         ucg_group_h group, const ucg_collective_params_t *params,
                         ucg_plan_t **cache_plan)
@@ -441,6 +462,11 @@ void ucg_get_cache_plan(unsigned int message_size_level, unsigned int coll_root,
         return;
     }
     */
+
+    if (ucg_chk_noncontig_allreduce_plan(params, &group->params, plan)) {
+        *cache_plan = NULL;
+        return;
+    }
 
     if (plan != NULL && root != plan->type.root) {
         *cache_plan = NULL;
@@ -547,7 +573,7 @@ UCS_PROFILE_FUNC(ucs_status_t, ucg_collective_create,
             } else
 #endif
             is_match = (memcmp(params, &op->params, UCS_SYS_CACHE_LINE_SIZE) == 0);
-            if (is_match) {
+            if (is_match && !plan->is_noncontig_allreduce) {
                 ucs_list_del(&op->list);
                 UCG_GROUP_THREAD_CS_EXIT(plan);
                 status = UCS_OK;

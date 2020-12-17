@@ -412,9 +412,6 @@ void ucg_request_cancel(ucg_coll_h coll)
     // TODO: implement
 }
 
-extern int ucg_is_noncontig_allreduce(const ucg_group_params_t *group_params,
-                                      const ucg_collective_params_t *coll_params);
-
 static int ucg_chk_noncontig_allreduce_plan(const ucg_collective_params_t *coll_params,
                                             const ucg_group_params_t *group_params,
                                             const ucg_plan_t *plan)

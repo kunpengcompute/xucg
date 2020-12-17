@@ -1240,10 +1240,11 @@ int ucg_is_noncontig_allreduce(const ucg_group_params_t *group_params,
 {
     ucp_datatype_t ucp_datatype;
 
-    if (coll_params->send.type.modifiers == ucg_predefined_modifiers[UCG_PRIMITIVE_ALLREDUCE]) {
+    if ((coll_params->send.type.modifiers == ucg_predefined_modifiers[UCG_PRIMITIVE_ALLREDUCE]) &&
+        (coll_params->send.count > 0)) {
         ucg_global_params.datatype.convert(coll_params->send.dtype, &ucp_datatype);
-        if (!UCP_DT_IS_CONTIG(ucp_datatype) && coll_params->send.count > 0) {
-            ucs_info("allreduce non-contiguous datatype plan");
+        if (!UCP_DT_IS_CONTIG(ucp_datatype)) {
+            ucs_debug("allreduce non-contiguous datatype");
             return 1;
         }
     }
@@ -1263,16 +1264,12 @@ ucs_status_t ucg_builtin_change_unsupport_algo(struct ucg_builtin_algorithm *alg
                                                ucg_builtin_config_t *config)
 {
     ucs_status_t status;
-    ucp_datatype_t ucp_datatype;
 
     /* Currently, only algorithm 1 supports non-contiguous datatype for allreduce */
-    if (ops_type_choose == ucg_predefined_modifiers[UCG_PRIMITIVE_ALLREDUCE]) {
-        ucg_global_params.datatype.convert(coll_params->send.dtype, &ucp_datatype);
-        if (!UCP_DT_IS_CONTIG(ucp_datatype) && coll_params->send.count > 0) {
-            ucg_builtin_allreduce_algo_switch(UCG_ALGORITHM_ALLREDUCE_RECURSIVE, &ucg_algo);
-            ucs_info("allreduce non-contiguous datatype, select algo%d:recursive", UCG_ALGORITHM_ALLREDUCE_RECURSIVE);
-            return UCS_OK;
-        }
+    if (ucg_is_noncontig_allreduce(group_params, coll_params)) {
+        ucg_builtin_allreduce_algo_switch(UCG_ALGORITHM_ALLREDUCE_RECURSIVE, &ucg_algo);
+        ucs_info("allreduce non-contiguous datatype, select algo%d:recursive", UCG_ALGORITHM_ALLREDUCE_RECURSIVE);
+        return UCS_OK;
     }
 
     /* Special Case 1 : bind-to none */

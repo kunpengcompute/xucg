@@ -1476,6 +1476,12 @@ static void ucg_builtin_prepare_member_idx(const ucg_builtin_binomial_tree_param
     }
 }
 
+static int is_socket_balance(const ucg_group_params_t *group_params)
+{
+    // TODO: (alex) implement check if this group is indeed balanced
+    return 0;
+}
+
 static ucs_status_t ucg_builtin_topo_tree_build(const ucg_builtin_binomial_tree_params_t *params,
                                                 ucg_builtin_topology_info_params_t *topo_params,
                                                 enum ucg_group_member_distance domain_distance,
@@ -1510,8 +1516,7 @@ static ucs_status_t ucg_builtin_topo_tree_build(const ucg_builtin_binomial_tree_
     */
     /* case 1 */
     if (ucg_algo.topo_level == UCG_GROUP_HIERARCHY_LEVEL_SOCKET) {
-        unsigned is_socket_balance = (*pps == (*ppn - *pps) || *pps == *ppn);
-        if (!is_socket_balance) {
+        if (!is_socket_balance(params->group_params)) {
             ucs_warn("Warning: process number in every socket must be same in socket-aware algorithm, please make sure ppn "
                     "must be even and '--map-by socket' included. Switch to corresponding node-aware algorithm already.");
             ucg_algo.topo_level = UCG_GROUP_HIERARCHY_LEVEL_NODE;

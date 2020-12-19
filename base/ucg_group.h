@@ -82,6 +82,8 @@ typedef struct ucg_group {
 
 const ucg_group_params_t* ucg_group_get_params(ucg_group_h group); /* for tests */
 
+int ucg_is_segmented_allreduce(const ucg_collective_params_t *coll_params);
+
 int ucg_is_noncontig_allreduce(const ucg_group_params_t *group_params,
                                const ucg_collective_params_t *coll_params);
 

@@ -108,6 +108,7 @@ typedef struct ucg_plan {
     int                      support_non_commutative;
     int                      support_large_datatype;
     int                      is_noncontig_allreduce;
+    int                      is_ring_plan_topo_type;
 
     /* Plan progress */
     ucg_plan_desc_t         *planner;

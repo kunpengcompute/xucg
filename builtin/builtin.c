@@ -1252,6 +1252,29 @@ int ucg_is_noncontig_allreduce(const ucg_group_params_t *group_params,
     return 0;
 }
 
+#define UCT_MIN_SHORT_ONE_LEN 80
+#define UCT_MIN_BCOPY_ONE_LEN 1000
+int ucg_is_segmented_allreduce(const ucg_collective_params_t *coll_params)
+{
+    ucp_datatype_t send_dt;
+    ucs_status_t status = ucg_builtin_convert_datatype(coll_params->send.dtype, &send_dt);
+    ucs_assert(status == UCS_OK);
+    size_t dt_len = ucp_dt_length(send_dt, coll_params->send.count, NULL, NULL);
+    int count = coll_params->send.count;
+
+    if (coll_params->send.type.modifiers == ucg_predefined_modifiers[UCG_PRIMITIVE_ALLREDUCE]) {
+        if (dt_len > UCT_MIN_BCOPY_ONE_LEN) {
+            return 1;
+        }
+
+        if (dt_len > UCT_MIN_SHORT_ONE_LEN && (dt_len * count) < UCG_GROUP_MED_MSG_SIZE) {
+            return 1;
+        }
+    }
+
+    return 0;
+}
+
 /*
    Deal with all unsupport special case.
 */
@@ -1308,21 +1331,28 @@ ucs_status_t ucg_builtin_change_unsupport_algo(struct ucg_builtin_algorithm *alg
         ucs_warn("Current algorithm demand rank number is continous. Switch default algorithm whose performance may be not the best");
     }
 
+
     if (ops_choose == OPS_ALLREDUCE) {
         /* Special Case 4 : non-commutative operation */
         ucg_builtin_non_commutative_operation(group_params, coll_params, algo, msg_size);
 
+        /* Special Case 5 : large datatype */
         ucp_datatype_t send_dt;
         status = ucg_builtin_convert_datatype(coll_params->send.dtype, &send_dt);
         ucs_assert(status == UCS_OK);
         unsigned dt_len = ucp_dt_length(send_dt, coll_params->send.count, NULL, NULL);
-
-        /* Special Case 5 : large datatype */
         if (dt_len > config->large_datatype_threshold &&
             !(algo->feature_flag & UCG_ALGORITHM_SUPPORT_LARGE_DATATYPE)) {
                 ucg_builtin_plan_decision_in_noncommutative_largedata_case(msg_size, NULL);
                 ucs_warn("Current algorithm does not support large datatype, and switch to Recursive doubling or Ring Algorithm which may have unexpected performance");
         }
+    }
+
+    /* The allreduce result is wrong when phase->segmented=1 and using ring algorithm, must avoid it */
+    if (ucg_algo.ring && ucg_is_segmented_allreduce(coll_params)) {
+        ucg_builtin_allreduce_algo_switch(UCG_ALGORITHM_ALLREDUCE_RECURSIVE, &ucg_algo);
+        ucs_info("ring algorithm does not support segmented phase, select recursive algorithm");
+        return UCS_OK;
     }
 
     return status;
@@ -1481,6 +1511,8 @@ static ucs_status_t ucg_builtin_plan(ucg_group_ctx_h ctx,
 
     plan->super.is_noncontig_allreduce = (plan_topo_type != UCG_PLAN_RECURSIVE) ? 0 :
             ucg_is_noncontig_allreduce(builtin_ctx->group_params, params);
+    plan->super.is_ring_plan_topo_type = (plan_topo_type == UCG_PLAN_RING);
+
     plan->gctx      = builtin_ctx;
     plan->config    = config;
     plan->am_id     = builtin_ctx->bctx->am_id;

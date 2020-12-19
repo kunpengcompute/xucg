@@ -465,6 +465,11 @@ void ucg_get_cache_plan(unsigned int message_size_level, unsigned int coll_root,
         return;
     }
 
+    if (plan->is_ring_plan_topo_type && ucg_is_segmented_allreduce(params)) {
+        *cache_plan = NULL;
+        return;
+    }
+
     if (plan != NULL && root != plan->type.root) {
         *cache_plan = NULL;
         return;

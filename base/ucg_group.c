@@ -447,7 +447,8 @@ void ucg_get_cache_plan(unsigned int message_size_level, unsigned int coll_root,
         return;
     }
 
-    if (params->recv.op && !ucg_global_params.reduce_op.is_commutative_f(params->recv.op) && params->send.count > 1) {
+    if (params->recv.op && !ucg_global_params.reduce_op.is_commutative_f(params->recv.op) && params->send.count > 1
+        && plan->is_ring_plan_topo_type) {
         *cache_plan = NULL;
         return;
     }

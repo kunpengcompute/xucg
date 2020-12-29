@@ -202,8 +202,6 @@ ucs_status_t ucg_plan_group_create(ucg_group_h group)
         }
     }
 
-    kh_init_inplace(ucg_group_ep, &group->eps);
-
     return UCS_OK;
 }
 
@@ -212,8 +210,6 @@ void ucg_plan_group_destroy(ucg_group_h group)
     ucg_group_foreach(group) {
         comp->destroy(gctx);
     }
-
-    kh_destroy_inplace(ucg_group_ep, &group->eps);
 }
 
 void ucg_plan_print_info(ucg_plan_desc_t *descs, unsigned desc_cnt, FILE *stream)
@@ -317,7 +313,7 @@ static uct_ep_h ucg_plan_connect_loopback(uct_iface_h iface)
 }
 
 ucs_status_t ucg_plan_connect(ucg_group_h group,
-                              ucg_group_member_index_t idx,
+                              ucg_group_member_index_t group_idx,
                               enum ucg_plan_connect_flags flags,
                               uct_ep_h *ep_p, const uct_iface_attr_t **ep_attr_p,
                               uct_md_h *md_p, const uct_md_attr_t    **md_attr_p)
@@ -325,9 +321,23 @@ ucs_status_t ucg_plan_connect(ucg_group_h group,
     int ret;
     ucs_status_t status;
     size_t remote_addr_len;
-    ucp_address_t *remote_addr = NULL;
+    ucg_group_member_index_t idx;
 
-    int is_root = flags & UCG_PLAN_CONNECT_FLAG_AM_ROOT;
+    ucp_address_t *remote_addr = NULL;
+    void *group_cb_ctx         = group->params.cb_context;
+    int is_root                = flags & UCG_PLAN_CONNECT_FLAG_AM_ROOT;
+
+    if (ucg_global_params.field_mask & UCG_PARAM_FIELD_GLOBAL_INDEX) {
+        ret = ucg_global_params.get_global_index(group_cb_ctx, group_idx, &idx);
+        if (ret) {
+            ucs_error("Failed to get the global index for group #%u index #%u",
+                      group->params.id, group_idx);
+            return UCS_ERR_UNREACHABLE;
+        }
+
+        /* use global context for lookup, e.g. MPI_COMM_WORLD, not my context */
+        group = ucs_list_head(&group->context->groups_head, ucg_group_t, list);
+    }
 
     ucs_trace("connecting with flags=%u to remote peer #%u", flags, idx);
 
@@ -339,8 +349,8 @@ ucs_status_t ucg_plan_connect(ucg_group_h group,
         ucp_ep = kh_value(&group->eps, iter);
     } else {
         /* fill-in UCP connection parameters */
-        status = ucg_global_params.address.lookup_f(group->params.cb_context,
-                                                    idx, &remote_addr,
+        status = ucg_global_params.address.lookup_f(group_cb_ctx, idx,
+                                                    &remote_addr,
                                                     &remote_addr_len);
         if (status != UCS_OK) {
             ucs_error("failed to obtain a UCP endpoint from the external callback");

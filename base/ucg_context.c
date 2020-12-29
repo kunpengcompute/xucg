@@ -155,7 +155,6 @@ ucs_status_t ucg_context_unset_async_timer(ucs_async_context_t *async,
     return status;
 }
 
-
 static ucs_status_t ucg_context_init(const ucg_params_t *params,
                                      const ucg_config_t *config,
                                      void *groups_ctx)

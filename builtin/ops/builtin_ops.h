@@ -400,6 +400,13 @@ ucg_builtin_step_set_remote_address(ucg_builtin_op_step_t *step, uint8_t **ptr)
  */
 #define UCG_BUILTIN_MAX_CONCURRENT_OPS (16)
 
+/*
+ * If send data length is zero (MPI_Barrier, etc.) , UCP_DT_IS_CONTIG(_datatype)
+ * is 0 but expected be 1. So we use UCG_DT_IS_CONTIG instead.
+ */
+#define UCG_DT_IS_CONTIG(_params, _datatype) \
+    ((_params->send.dt_len) ? (UCP_DT_IS_CONTIG(_datatype)) : 1)
+
 END_C_DECLS
 
 #endif

@@ -345,7 +345,7 @@ ucs_status_t ucg_group_create(ucp_worker_h worker,
     group->cache_size = 0;
     memset(group->cache, 0, sizeof(group->cache));
 
-    ucs_list_add_head(&ctx->groups_head, &group->list);
+    ucs_list_add_tail(&ctx->groups_head, &group->list);
 
     if (group->params.member_count >= ctx->config.coll_iface_member_thresh) {
         status = ucg_group_wireup_coll_ifaces(group);

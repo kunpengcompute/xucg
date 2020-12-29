@@ -70,7 +70,8 @@ enum ucg_params_field {
     UCG_PARAM_FIELD_COMPLETION_CB = UCS_BIT(4), /**< Actions upon completion */
     UCG_PARAM_FIELD_MPI_IN_PLACE  = UCS_BIT(5), /**< MPI_IN_PLACE value */
     UCG_PARAM_FIELD_HANDLE_FAULT  = UCS_BIT(6), /**< Fault-tolerance support */
-    UCG_PARAM_FIELD_JOB_INFO      = UCS_BIT(7)  /**< Info about the MPI job */
+    UCG_PARAM_FIELD_JOB_INFO      = UCS_BIT(7), /**< Info about the MPI job */
+    UCG_PARAM_FIELD_GLOBAL_INDEX  = UCS_BIT(8)  /**< Callback for global index */
 };
 
 enum ucg_fault_tolerance_mode {
@@ -206,6 +207,19 @@ typedef struct ucg_params {
 
     /* The value of MPI_IN_PLACE, which can replace send or receive buffers */
     void* mpi_in_place;
+
+    /*
+     * Callback function to convert from group-specific index to the global
+     * index, for example the one used by the same process in MPI_COMM_WORLD.
+     *
+     * Note: if this function is passed as a parameter, it is assumed that the
+     *       the first group to be created is the "global" group, and so the
+     *       context of that group would be used for address resolution (see
+     *       lookup_f above, which also accepts cb_group_context).
+     */
+    int (*get_global_index)(void *cb_group_context,
+                            ucg_group_member_index_t group_index,
+                            ucg_group_member_index_t *global_index_p);
 
     /* Fault-tolerance can be enabled by passing */
     struct {
@@ -483,9 +497,17 @@ ucs_status_t ucg_collective_create(ucg_group_h group,
  * @param [in]  req         Request handle, allocated by the user.
  *
  * @return UCS_OK           - The collective operation was completed immediately.
+<<<<<<< HEAD
  * @return UCS_INPROGRESS   - The collective was not completed and is in progress.
  *
  * @return Error code as defined by @ref ucs_status_t
+=======
+ * @return UCS_PTR_IS_ERR(_ptr) - The collective operation failed.
+ * @return otherwise        - Operation was scheduled for send and can be
+ *                          completed in any point in time. The request handle
+ *                          is returned to the application in order to track
+ *                          progress of the message.
+>>>>>>> Fix the bug in vasp application
  */
 ucs_status_t ucg_collective_start(ucg_coll_h coll, void *req);
 

@@ -47,14 +47,6 @@ typedef struct ucg_context {
     ucp_rsc_index_t       bcast_id;
     ucp_rsc_index_t       incast_id;
 
-    struct {
-        int (*lookup_f)(void *cb_group_context,
-                        ucg_group_member_index_t index,
-                        ucp_address_t **addr,
-                        size_t *addr_len);
-        void (*release_f)(ucp_address_t *addr);
-    } address;
-
     ucg_context_config_t  config;
     ucp_context_t         ucp_ctx; /* must be last, for ABI compatibility */
 } ucg_context_t;

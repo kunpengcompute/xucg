@@ -35,6 +35,7 @@
 #define RECURSIVE_FACTOR 2
 #define DEFAULT_INTER_KVALUE 8
 #define DEFAULT_INTRA_KVALUE 2
+#define DATATYPE_ALIGN 16
 
 #define UCG_BUILTIN_SUPPORT_MASK (UCG_GROUP_COLLECTIVE_MODIFIER_AGGREGATE |\
                                   UCG_GROUP_COLLECTIVE_MODIFIER_BROADCAST)
@@ -471,6 +472,7 @@ static void ucg_builtin_async_check(int id, ucs_event_set_types_t events, void *
 #if ENABLE_FAULT_TOLERANCE
 static void ucg_builtin_async_ft(int id, ucs_event_set_types_t events, void *arg)
 {
+<<<<<<< HEAD
     if ((status == UCS_INPROGRESS) &&
             !(req->step->flags & UCG_BUILTIN_OP_STEP_FLAG_FT_ONGOING)) {
         ucg_builtin_plan_phase_t *phase = req->step->phase;
@@ -482,6 +484,12 @@ static void ucg_builtin_async_ft(int id, ucs_event_set_types_t events, void *arg
                 ucg_ft_start(group, phase->indexes[peer_idx],
                         phase->multi_eps[peer_idx], &phase->handles[peer_idx]);
                 peer_idx++;
+=======
+    for (unsigned i = 0; i < plan->phs_cnt; i++) {
+        if (plan->phss[i].ucp_eps != NULL) {
+            for (unsigned j = 0; j < plan->phss[i].ep_cnt; j++) {
+                plan->phss[i].ucp_eps[j] = NULL;
+>>>>>>> Fix the bug in vasp application
             }
         }
 
@@ -1539,6 +1547,8 @@ void  ucg_builtin_set_phase_thresh_max_short(ucg_builtin_group_ctx_t *ctx,
     if (phase->send_thresh.max_short_one > phase->send_thresh.max_short_max) {
         phase->send_thresh.max_short_one = phase->send_thresh.max_short_max;
     }
+
+    phase->send_thresh.max_short_one -= phase->send_thresh.max_short_one % DATATYPE_ALIGN;
 }
 
 void ucg_builtin_print_flags(ucg_builtin_op_step_t *step)
@@ -1868,6 +1878,9 @@ void  ucg_builtin_set_phase_thresh_max_bcopy_zcopy(ucg_builtin_group_ctx_t *ctx,
     } else {
         phase->send_thresh.max_zcopy_one = phase->send_thresh.max_bcopy_max = UCS_MEMUNITS_INF;
     }
+
+    phase->send_thresh.max_bcopy_one -= phase->send_thresh.max_bcopy_one % DATATYPE_ALIGN;
+    phase->send_thresh.max_zcopy_one -= phase->send_thresh.max_zcopy_one % DATATYPE_ALIGN;
 }
 
 void  ucg_builtin_set_phase_thresholds(ucg_builtin_group_ctx_t *ctx,

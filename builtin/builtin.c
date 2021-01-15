@@ -1232,7 +1232,7 @@ ucs_status_t choose_distance_from_topo_aware_level(enum ucg_group_member_distanc
 void ucg_builtin_non_commutative_operation(const ucg_group_params_t *group_params, const ucg_collective_params_t *coll_params, struct ucg_builtin_algorithm *algo, const size_t msg_size)
 {
     if (coll_params->recv.op && !ucg_global_params.reduce_op.is_commutative_f(coll_params->recv.op) &&
-        (algo->feature_flag & UCG_ALGORITHM_SUPPORT_NON_COMMUTATIVE_OPS)) {
+        !(algo->feature_flag & UCG_ALGORITHM_SUPPORT_NON_COMMUTATIVE_OPS)) {
         if (coll_params->send.count > 1) {
             ucg_builtin_plan_decision_in_noncommutative_many_counts_case();
             ucs_warn("Current algorithm does not support many counts non-commutative operation, and switch to Recursive doubling which may have unexpected performance");
@@ -1258,6 +1258,13 @@ int ucg_is_noncontig_allreduce(const ucg_group_params_t *group_params,
     }
 
     return 0;
+}
+
+int ucg_is_noncommutative_allreduce(const ucg_group_params_t *group_params,
+                                    const ucg_collective_params_t *coll_params)
+{
+    return coll_params->type.modifiers == ucg_predefined_modifiers[UCG_PRIMITIVE_ALLREDUCE] &&
+           coll_params->send.op_ext && !group_params->op_is_commute_f(coll_params->send.op_ext);
 }
 
 #define UCT_MIN_SHORT_ONE_LEN 80
@@ -1300,6 +1307,13 @@ ucs_status_t ucg_builtin_change_unsupport_algo(struct ucg_builtin_algorithm *alg
     if (ucg_is_noncontig_allreduce(group_params, coll_params)) {
         ucg_builtin_allreduce_algo_switch(UCG_ALGORITHM_ALLREDUCE_RECURSIVE, &ucg_algo);
         ucs_info("allreduce non-contiguous datatype, select algo%d:recursive", UCG_ALGORITHM_ALLREDUCE_RECURSIVE);
+        return UCS_OK;
+    }
+
+    /* Currently, only algorithm 1 supports non-commutative op for allreduce */
+    if (ucg_is_noncommutative_allreduce(group_params, coll_params)) {
+        ucg_builtin_allreduce_algo_switch(UCG_ALGORITHM_ALLREDUCE_RECURSIVE, &ucg_algo);
+        ucs_info("non-commutative allreduce, select algo%d:recursive", UCG_ALGORITHM_ALLREDUCE_RECURSIVE);
         return UCS_OK;
     }
 

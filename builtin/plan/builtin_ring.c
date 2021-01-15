@@ -170,7 +170,7 @@ ucs_status_t ucg_builtin_ring_create(ucg_builtin_group_ctx_t *ctx,
     }
 
     ring->super.my_index = my_index;
-    ring->super.support_non_commutative = 1;
+    ring->super.support_non_commutative = 0;
     ring->super.support_large_datatype = 1;
     *plan_p = ring;
     return status;

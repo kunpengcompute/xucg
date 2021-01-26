@@ -397,6 +397,7 @@ ucs_status_t ucg_builtin_op_consider_optimization(ucg_builtin_op_t *op,
             (!op->send_dt) &&
             (step->flags & UCG_BUILTIN_OP_STEP_FLAG_SEND_AM_BCOPY) &&
             (step->phase->iface_attr->cap.flags & UCT_IFACE_FLAG_AM_ZCOPY) &&
+            (step->phase->md_attr->cap.flags & UCT_MD_FLAG_NEED_MEMH) &&
             (step->phase->md_attr->cap.max_reg > step->buffer_length)) {
             op->optm_cb = ucg_builtin_optimize_am_bcopy_to_zcopy;
             op->opt_cnt = config->mem_reg_opt_cnt;
@@ -1643,7 +1644,7 @@ ucs_status_t ucg_builtin_op_trigger(ucg_op_t *op,
 //     * Large messages, if supported (e.g. RDMA "zero-copy")
 //     */
 //    } else if (ucs_unlikely((length >  phase->send_thresh.max_bcopy_max) &&
-//                            (phase->md_attr->cap.max_reg))) {
+//                            (length <= phase->send_thresh.md_attr_cap_max_reg))) {
 //        if (ucs_likely(length < phase->send_thresh.max_zcopy_one)) {
 //            /* ZCopy send - single message */
 //            *send_flag            = UCG_BUILTIN_OP_STEP_FLAG_SEND_AM_ZCOPY;

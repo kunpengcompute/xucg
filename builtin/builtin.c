@@ -1263,8 +1263,8 @@ int ucg_is_noncontig_allreduce(const ucg_group_params_t *group_params,
 int ucg_is_noncommutative_allreduce(const ucg_group_params_t *group_params,
                                     const ucg_collective_params_t *coll_params)
 {
-    return coll_params->type.modifiers == ucg_predefined_modifiers[UCG_PRIMITIVE_ALLREDUCE] &&
-           coll_params->send.op_ext && !group_params->op_is_commute_f(coll_params->send.op_ext);
+    return coll_params->send.type.modifiers == ucg_predefined_modifiers[UCG_PRIMITIVE_ALLREDUCE] &&
+           coll_params->recv.op && !ucg_global_params.reduce_op.is_commutative_f(coll_params->recv.op);
 }
 
 #define UCT_MIN_SHORT_ONE_LEN 80
@@ -1884,7 +1884,7 @@ void  ucg_builtin_set_phase_thresh_max_bcopy_zcopy(ucg_builtin_group_ctx_t *ctx,
 {
     phase->send_thresh.max_bcopy_one = phase->iface_attr->cap.am.max_bcopy - sizeof(ucg_builtin_header_t);
     phase->send_thresh.max_bcopy_max = ctx->bctx->config.bcopy_max_tx;
-    if (phase->md_attr->cap.max_reg) {
+    if (phase->md_attr->cap.max_reg && (phase->md_attr->cap.flags & UCT_MD_FLAG_NEED_MEMH)) {
         if (phase->send_thresh.max_bcopy_one > phase->send_thresh.max_bcopy_max) {
             phase->send_thresh.max_bcopy_one = phase->send_thresh.max_bcopy_max;
         }
@@ -1903,7 +1903,7 @@ void  ucg_builtin_set_phase_thresholds(ucg_builtin_group_ctx_t *ctx,
     ucg_builtin_set_phase_thresh_max_short(ctx, phase);
     ucg_builtin_set_phase_thresh_max_bcopy_zcopy(ctx, phase);
 
-    phase->send_thresh.md_attr_cap_max_reg = phase->md_attr->cap.max_reg;
+    phase->send_thresh.md_attr_cap_max_reg = (phase->md_attr->cap.flags & UCT_MD_FLAG_NEED_MEMH) ? phase->md_attr->cap.max_reg : 0;
     phase->send_thresh.initialized = 1;
 
     if (!phase->recv_thresh.initialized) {

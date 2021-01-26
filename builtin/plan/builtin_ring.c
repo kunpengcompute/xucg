@@ -20,7 +20,7 @@ void ucg_builtin_ring_assign_recv_thresh(ucg_builtin_plan_phase_t *phase)
     phase->recv_thresh.max_bcopy_max = phase->send_thresh.max_bcopy_max;
     phase->recv_thresh.max_zcopy_one = phase->send_thresh.max_zcopy_one;
     if (phase->md_attr != NULL) {
-        phase->recv_thresh.md_attr_cap_max_reg = phase->md_attr->cap.max_reg;
+        phase->recv_thresh.md_attr_cap_max_reg = (phase->md_attr->cap.flags & UCT_MD_FLAG_NEED_MEMH) ? phase->md_attr->cap.max_reg : 0;
     }
 }
 

@@ -579,6 +579,10 @@ UCS_PROFILE_FUNC(ucs_status_t, ucg_collective_create,
             if (is_match && !plan->is_noncontig_allreduce) {
                 ucs_list_del(&op->list);
                 UCG_GROUP_THREAD_CS_EXIT(plan);
+
+                // TODO: (alex) move to some other place - only run if needed
+                ucg_builtin_update_op(plan, op, params);
+
                 status = UCS_OK;
                 goto op_found;
             }

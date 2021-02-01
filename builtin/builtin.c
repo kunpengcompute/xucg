@@ -1243,6 +1243,26 @@ void ucg_builtin_non_commutative_operation(const ucg_group_params_t *group_param
     }
 }
 
+int ucg_builtin_op_can_reuse(const ucg_plan_t *plan, const ucg_op_t *op,
+                             const ucg_collective_params_t *params)
+{
+    ucp_datatype_t send_dtype = UCP_DATATYPE_CONTIG;
+    ucg_builtin_op_t *builtin_op = (ucg_builtin_op_t *)op;
+
+    if (builtin_op->send_dt) {
+        return 0;
+    }
+
+    if (params->send.count > 0) {
+        ucg_global_params.datatype.convert(params->send.dtype, &send_dtype);
+        if (!UCP_DT_IS_CONTIG(send_dtype)) {
+            return 0;
+        }
+    }
+
+    return 1;
+}
+
 /* TODO: (alex) place it elsewhere in the code...
 void ucg_builtin_update_op(const ucg_plan_t *plan, ucg_op_t *op,
                            const ucg_collective_params_t *params)

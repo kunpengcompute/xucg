@@ -82,6 +82,9 @@ typedef struct ucg_group {
 
 const ucg_group_params_t* ucg_group_get_params(ucg_group_h group); /* for tests */
 
+int ucg_builtin_op_can_reuse(const ucg_plan_t *plan, const ucg_op_t *op,
+                             const ucg_collective_params_t *params);
+
 void ucg_builtin_update_op(const ucg_plan_t *plan, ucg_op_t *op,
                            const ucg_collective_params_t *params);
 

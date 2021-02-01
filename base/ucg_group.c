@@ -576,13 +576,9 @@ UCS_PROFILE_FUNC(ucs_status_t, ucg_collective_create,
             } else
 #endif
             is_match = (memcmp(params, &op->params, UCS_SYS_CACHE_LINE_SIZE) == 0);
-            if (is_match && !plan->is_noncontig_allreduce) {
+            if (is_match && ucg_builtin_op_can_reuse(plan, op, params)) {
                 ucs_list_del(&op->list);
                 UCG_GROUP_THREAD_CS_EXIT(plan);
-
-                // TODO: (alex) move to some other place - only run if needed
-                ucg_builtin_update_op(plan, op, params);
-
                 status = UCS_OK;
                 goto op_found;
             }

@@ -64,7 +64,10 @@ static ucs_config_field_t ucg_builtin_config_table[] = {
      ucs_offsetof(ucg_builtin_config_t, bcopy_to_zcopy_opt), UCS_CONFIG_TYPE_UINT},
 
     // max_short_max threshold change from 256 to 200 to avoid hang problem within rc_x device.
-    {"SHORT_MAX_TX_SIZE", "200", "Largest send operation to use short messages",
+    /* max_am_inline size may be different(dc is 2046 or 186) on mlx dc&rc devices when ppn > 32,
+       this may result in erroneous result or hang problem because of mixture use of am_short_one
+       and am_short_max between sender and receiver. */
+    {"SHORT_MAX_TX_SIZE", "176", "Largest send operation to use short messages",
      ucs_offsetof(ucg_builtin_config_t, short_max_tx), UCS_CONFIG_TYPE_MEMUNITS},
 
     {"BCOPY_MAX_TX_SIZE", "32768", "Largest send operation to use buffer copy",

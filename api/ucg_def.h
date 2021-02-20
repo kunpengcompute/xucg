@@ -91,15 +91,6 @@ typedef uint16_t                         ucg_group_id_t;
 
 /**
  * @ingroup UCG_GROUP
- * @brief Hash index for each hash table.
- *
- * This type is used as index of hash array.
- */
-typedef uint16_t                         ucg_hash_index_t;
-
-
-/**
- * @ingroup UCG_GROUP
  * @brief UCG group member index.
  *
  * UCG groups have multiple peers: remote worker objects acting as group members.
@@ -109,6 +100,7 @@ typedef uint16_t                         ucg_hash_index_t;
  * in different groups, identifiers which are passed by user during creation.
  */
 typedef uint32_t                         ucg_group_member_index_t;
+
 
 /**
  * @ingroup UCG_GROUP
@@ -126,6 +118,7 @@ typedef uint32_t                         ucg_group_member_index_t;
  *                        returned.
  */
 typedef void (*ucg_collective_callback_t)(void *request, ucs_status_t status);
+
 
 /**
  * @ingroup UCG_GROUP

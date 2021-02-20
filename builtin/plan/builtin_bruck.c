@@ -42,6 +42,10 @@ ucs_status_t ucg_builtin_bruck_create(ucg_builtin_group_ctx_t *ctx,
     bruck->phs_cnt                  = step_idx;
     bruck->ep_cnt                   = 0;
 
+#if ENABLE_DEBUG_DATA
+    snprintf(bruck->plan_name, UCG_BUILTIN_PLANNER_NAME_MAX_LENGTH, "bruck");
+#endif
+
     /* Calculate the peers for each step */
     ucg_group_member_index_t my_index = group_params->member_index;
     int is_mock = coll_type->modifiers & UCG_GROUP_COLLECTIVE_MODIFIER_MOCK_EPS;

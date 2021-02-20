@@ -14,21 +14,15 @@
 /* Note: <ucs/api/...> not used because this header is not installed */
 #include "../api/ucg_plan_component.h"
 
-#define UCG_GROUP_MAX_IFACES (8)
+#define UCG_GROUP_CACHE_MODIFIER_MASK UCS_MASK(7)
 
-#define UCG_GROUP_MED_MSG_SIZE 16384
+#define UCG_GROUP_MED_MSG_SIZE 16384 // TODO: (alex) share with plugins!
 
 /* level number of categoried message size, 0 for short message size, 1 for mid-long message size */
 #define UCG_GROUP_MSG_SIZE_LEVEL 2
 
 /* max number of actual root rank used */
 #define UCG_GROUP_MAX_ROOT_PARAM 96
-
-/* max number of collective type in the plan cache. */
-#define UCG_GROUP_MAX_COLL_TYPE_BUCKETS 16
-
-#define UCG_FLAG_MASK(params) \
-    ((params)->type.modifiers & UCG_GROUP_COLLECTIVE_MODIFIER_MASK)
 
 #define UCG_ROOT_RANK(params) \
     ((params)->send.type.root)
@@ -69,13 +63,14 @@ typedef struct ucg_group {
      * collective types.
      */
     unsigned              cache_size;
-    ucg_plan_t           *cache[UCG_GROUP_MSG_SIZE_LEVEL][UCG_GROUP_MAX_ROOT_PARAM][UCG_GROUP_MAX_COLL_TYPE_BUCKETS];
+    ucg_plan_t           *cache_by_modifiers[UCG_GROUP_CACHE_MODIFIER_MASK];
+    ucg_plan_t           *cache_nonzero_root[UCG_GROUP_MSG_SIZE_LEVEL][UCG_GROUP_MAX_ROOT_PARAM];
 
     /*
      * for root collective operations(e.g. Bcast), the parameter of root should be
      * the criterion to decide whether plan has been found.
      */
-    unsigned           root_used[UCG_GROUP_MAX_ROOT_PARAM];
+    unsigned              root_used[UCG_GROUP_MAX_ROOT_PARAM];
 
     /* Below this point - the private per-planner data is allocated/stored */
 } ucg_group_t;
@@ -92,5 +87,9 @@ int ucg_is_segmented_allreduce(const ucg_collective_params_t *coll_params);
 
 int ucg_is_noncontig_allreduce(const ucg_group_params_t *group_params,
                                const ucg_collective_params_t *coll_params);
+
+ucs_status_t ucg_group_wireup_coll_ifaces(ucg_group_h group,
+                                          ucg_group_member_index_t root,
+                                          ucp_ep_h *ep_p);
 
 #endif /* UCG_GROUP_H_ */

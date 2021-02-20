@@ -5,31 +5,25 @@
 
 #include <ucp/core/ucp_request.inl> /* For @ref ucp_recv_desc_release */
 
-void static UCS_F_ALWAYS_INLINE
+/******************************************************************************
+ *                                                                            *
+ *                         Operation Step Completion                          *
+ *                                                                            *
+ ******************************************************************************/
+
+static void UCS_F_ALWAYS_INLINE
 ucg_builtin_comp_last_step_cb(ucg_builtin_request_t *req, ucs_status_t status)
 {
     ucg_builtin_op_t *op = req->op;
 
-    /* Finalize the collective operation (including user-defined callback) */
-    if (ucs_unlikely(op->fini_cb != NULL)) {
-        /*
-         * Note: the "COMPLETED" flag cannot be set until UCG's internal
-         *       callback finishes it's job. For example, barrier-release needs
-         *       to happen before we give the all-clear to the user. This also
-         *       means the function needs to run regardless of the status.
-         */
-        op->fini_cb(op);
-    }
-
-    /* Consider optimization, if this operation is used often enough */
-    if (ucs_likely(status == UCS_OK) && ucs_unlikely(--op->opt_cnt == 0)) {
-        status = op->optm_cb(op);
+    if (ucs_unlikely(op->flags & UCG_BUILTIN_OP_FLAG_FINALIZE_MASK)) {
+        ucg_builtin_op_finalize_by_flags(op);
     }
 
     /* Mark (per-group) slot as available */
     req->expecting.local_id = 0;
 
-    ucg_global_params.completion.coll_comp_cb_f(req->comp_req, status);
+    op->super.compreq_f(req->comp_req, status);
     ucs_assert(status != UCS_INPROGRESS);
 
     UCS_PROFILE_REQUEST_EVENT(req->comp_req, "complete_coll", 0);
@@ -61,6 +55,7 @@ ucs_status_t static UCS_F_ALWAYS_INLINE
 ucg_builtin_comp_step_cb(ucg_builtin_request_t *req)
 {
     /* Sanity checks */
+    ucs_assert((req->step->flags & UCG_BUILTIN_OP_STEP_FLAG_LAST_STEP) == 0);
     if (req->step->flags & UCG_BUILTIN_OP_STEP_FLAG_PIPELINED) {
         unsigned frag_idx;
         unsigned frag_per_ep = req->step->fragments_total / req->step->ep_cnt;
@@ -69,13 +64,6 @@ ucg_builtin_comp_step_cb(ucg_builtin_request_t *req)
         for (frag_idx = 0; frag_idx < frag_per_ep; frag_idx++) {
             ucs_assert(req->step->fragment_pending[frag_idx] == 0);
         }
-    }
-
-    /* Check if this is the last step */
-    if (req->step->flags & UCG_BUILTIN_OP_STEP_FLAG_LAST_STEP) {
-        ucg_builtin_comp_last_step_cb(req, UCS_OK);
-        ucg_builtin_comp_ft_end_step(req->step);
-        return UCS_OK;
     }
 
     /* Start on the next step for this collective operation */
@@ -173,18 +161,10 @@ ucg_builtin_comp_send_check_frag_by_offset(ucg_builtin_request_t *req,
     return step->iter_offset != UCG_BUILTIN_OFFSET_PIPELINE_READY;
 }
 
-static void UCS_F_ALWAYS_INLINE
-ucg_builtin_comp_unpack(ucg_builtin_op_t *op, uint64_t offset, void *data, size_t length)
-{
-    ucp_dt_generic_t *dt_gen = ucp_dt_to_generic(op->recv_dt);
-    dt_gen->ops.unpack(op->wstate.dt.generic.state, offset, data,
-                       length / op->super.params.recv.count);
-}
-
 static ucs_status_t UCS_F_ALWAYS_INLINE
 ucg_builtin_step_recv_handle_chunk(enum ucg_builtin_op_step_comp_aggregation ag,
                                    uint8_t *dst, uint8_t *src, size_t length,
-                                   size_t offset, int is_fragment,
+                                   size_t offset, int is_fragment, int is_swap,
                                    int is_dt_packed, ucg_builtin_request_t *req)
 {
     ucs_status_t status;
@@ -194,10 +174,22 @@ ucg_builtin_step_recv_handle_chunk(enum ucg_builtin_op_step_comp_aggregation ag,
     void *gen_state;
     ptrdiff_t dsize;
     ptrdiff_t gap;
+    uint8_t *tmp;
+    int ret;
 
     switch (ag) {
     case UCG_BUILTIN_OP_STEP_COMP_AGGREGATE_NOP:
         status = UCS_OK;
+        break;
+
+    case UCG_BUILTIN_OP_STEP_COMP_AGGREGATE_WRITE:
+        if (is_dt_packed) {
+            gen_dt = ucp_dt_to_generic(req->op->recv_dt);
+            status = gen_dt->ops.unpack(req->op->recv_unpack, offset, src, length);
+        } else {
+            memcpy(dst, src, length);
+            status = UCS_OK;
+        }
         break;
 
     case UCG_BUILTIN_OP_STEP_COMP_AGGREGATE_GATHER:
@@ -207,34 +199,38 @@ ucg_builtin_step_recv_handle_chunk(enum ucg_builtin_op_step_comp_aggregation ag,
         status = UCS_OK;
         break;
 
-    case UCG_BUILTIN_OP_STEP_COMP_AGGREGATE_WRITE:
-        if (is_dt_packed) {
-            ucg_builtin_comp_unpack(req->op, offset, src, length);
-        } else {
-            memcpy(dst, src, length);
-        }
-        status = UCS_OK;
-        break;
-
-    case UCG_BUILTIN_OP_STEP_COMP_AGGREGATE_REDUCE_UNPACKED:
-        params    = &req->op->super.params;
-        gen_dt    = ucp_dt_to_generic(req->op->recv_dt);
-        dsize     = ucg_global_params.datatype.get_span(params->recv.dtype,
-                                                        params->recv.count,
-                                                        &gap);
-
-        reduce_buf = (char *)ucs_alloca(dsize);
-        gen_state  = gen_dt->ops.start_unpack(gen_dt->context,
-                                              reduce_buf - gap,
-                                              params->recv.count);
-
-        gen_dt->ops.unpack(gen_state, 0, params->send.buffer, length);
-        gen_dt->ops.finish(gen_state);
-        src = reduce_buf - gap;
-        // TODO: (alex) offset = (offset / dt_len) * params->recv.dt_len;
-        /* no break - intentionally */
-
     case UCG_BUILTIN_OP_STEP_COMP_AGGREGATE_REDUCE:
+    case UCG_BUILTIN_OP_STEP_COMP_AGGREGATE_REDUCE_SWAP:
+        if (is_swap) {
+            tmp  = src;
+            src  = dst;
+            dst  = tmp;
+        }
+
+        if (is_dt_packed) {
+            params    = &req->op->super.params;
+            gen_dt    = ucp_dt_to_generic(req->op->recv_dt);
+            ret       = ucg_global_params.datatype.get_span_f(params->recv.dtype,
+                                                              params->recv.count,
+                                                              &dsize,
+                                                              &gap);
+
+            if (ret) {
+                ucs_error("failed to get the span of a datatype");
+                return UCS_ERR_INVALID_PARAM;
+            }
+
+            reduce_buf = (char *)ucs_alloca(dsize);
+            gen_state  = gen_dt->ops.start_unpack(gen_dt->context,
+                                                  reduce_buf - gap,
+                                                  params->recv.count);
+
+            gen_dt->ops.unpack(gen_state, 0, params->send.buffer, length);
+            gen_dt->ops.finish(gen_state);
+            src = reduce_buf - gap;
+            // TODO: (alex) offset = (offset / dt_len) * params->recv.dt_len;
+        }
+
         if (is_fragment) {
             ucg_builtin_mpi_reduce_fragment(dst, src, length,
                                             req->step->dtype_length,
@@ -242,6 +238,12 @@ ucg_builtin_step_recv_handle_chunk(enum ucg_builtin_op_step_comp_aggregation ag,
         } else {
             ucg_builtin_mpi_reduce_single(dst, src, &req->op->super.params);
         }
+
+        if (is_swap) {
+            memcpy(src, dst, is_fragment ? req->step->dtype_length :
+                                           req->step->buffer_length);
+        }
+
         status = UCS_OK;
         break;
 
@@ -263,47 +265,48 @@ ucg_builtin_step_recv_handle_chunk(enum ucg_builtin_op_step_comp_aggregation ag,
          (_is_dt_packed  ? UCG_BUILTIN_OP_STEP_COMP_FLAG_PACKED_DATATYPE : 0) |\
          (_is_buf_long   ? UCG_BUILTIN_OP_STEP_COMP_FLAG_LONG_BUFFERS    : 0)):\
                                                                                \
-        if (_is_batched) {                                                     \
-            uint8_t index;                                                     \
-            size_t chunk_size;                                                 \
-            if (_is_fragmented) {                                              \
-               if (_is_len_packed) {                                           \
-                   chunk_size =                                                \
-                       UCT_COLL_DTYPE_MODE_UNPACK_VALUE(step->fragment_length);\
-               } else {                                                        \
-                   chunk_size = step->fragment_length;                         \
-               }                                                               \
-            } else {                                                           \
-               if (_is_len_packed) {                                           \
-                   chunk_size =                                                \
-                       UCT_COLL_DTYPE_MODE_UNPACK_VALUE(step->buffer_length);  \
-               } else {                                                        \
-                   chunk_size = step->buffer_length;                           \
-               }                                                               \
-            }                                                                  \
-            if (_is_batched) {                                                 \
-                offset *= chunk_size;                                          \
-            }                                                                  \
+        is_swap = (aggregation ==                                              \
+                   UCG_BUILTIN_OP_STEP_COMP_AGGREGATE_REDUCE_SWAP);            \
+                                                                               \
+        if (_is_fragmented) {                                                  \
+           if (_is_len_packed) {                                               \
+               chunk_size =                                                    \
+                   UCT_COLL_DTYPE_MODE_UNPACK_VALUE(step->fragment_length);    \
+           } else {                                                            \
+               chunk_size = step->fragment_length;                             \
+           }                                                                   \
+        } else {                                                               \
+           if (_is_len_packed) {                                               \
+               chunk_size =                                                    \
+                   UCT_COLL_DTYPE_MODE_UNPACK_VALUE(step->buffer_length);      \
+           } else {                                                            \
+               chunk_size = step->buffer_length;                               \
+           }                                                                   \
+        }                                                                      \
+                                                                               \
+        if (_is_batched && is_debatched) {                                     \
+            offset *= chunk_size;                                              \
             length += sizeof(ucg_builtin_header_t);                            \
+                                                                               \
             for (index = 0; index < step->batch_cnt; index++, data += length) {\
                 status = ucg_builtin_step_recv_handle_chunk(aggregation,       \
                                                             dest_buffer, data, \
                                                             chunk_size, offset,\
                                                             _is_fragmented,    \
-                                                            _is_dt_packed, req);\
+                                                            is_swap,           \
+                                                            _is_dt_packed,     \
+                                                            req);              \
                 if (ucs_unlikely(status != UCS_OK)) {                          \
                     goto recv_handle_error;                                    \
                 }                                                              \
             }                                                                  \
         } else {                                                               \
-            if (_is_batched) {                                                 \
-                offset *= step->buffer_length;                                 \
-            }                                                                  \
             status = ucg_builtin_step_recv_handle_chunk(aggregation,           \
                                                         dest_buffer, data,     \
                                                         length, offset,        \
                                                         _is_fragmented,        \
-                                                        _is_dt_packed, req);   \
+                                                        is_swap, _is_dt_packed,\
+                                                        req);                  \
             if (ucs_unlikely(status != UCS_OK)) {                              \
                 goto recv_handle_error;                                        \
             }                                                                  \
@@ -329,7 +332,7 @@ ucg_builtin_step_recv_handle_chunk(enum ucg_builtin_op_step_comp_aggregation ag,
 
 #define case_recv(a) \
         case a: \
-            switch ((uint8_t)step->comp_flags) { \
+            switch (step->comp_flags & UCG_BUILTIN_OP_STEP_COMP_FLAG_MASK) { \
                 case_recv_buf_long(a, 1) \
                 case_recv_buf_long(a, 0) \
             } \
@@ -337,8 +340,11 @@ ucg_builtin_step_recv_handle_chunk(enum ucg_builtin_op_step_comp_aggregation ag,
 
 static void UCS_F_ALWAYS_INLINE
 ucg_builtin_step_recv_handle_data(ucg_builtin_request_t *req, uint64_t offset,
-                                  uint8_t *data, size_t length)
+                                  uint8_t *data, size_t length, int is_debatched)
 {
+    int is_swap;
+    uint8_t index;
+    size_t chunk_size;
     ucs_status_t status;
     ucg_builtin_op_step_t *step = req->step;
     uint8_t *dest_buffer        = step->recv_buffer + offset;
@@ -348,7 +354,7 @@ ucg_builtin_step_recv_handle_data(ucg_builtin_request_t *req, uint64_t offset,
         case_recv(UCG_BUILTIN_OP_STEP_COMP_AGGREGATE_WRITE)
         case_recv(UCG_BUILTIN_OP_STEP_COMP_AGGREGATE_GATHER)
         case_recv(UCG_BUILTIN_OP_STEP_COMP_AGGREGATE_REDUCE)
-        case_recv(UCG_BUILTIN_OP_STEP_COMP_AGGREGATE_REDUCE_UNPACKED)
+        case_recv(UCG_BUILTIN_OP_STEP_COMP_AGGREGATE_REDUCE_SWAP)
         case_recv(UCG_BUILTIN_OP_STEP_COMP_AGGREGATE_REMOTE_KEY)
     }
 
@@ -365,8 +371,7 @@ recv_handle_error:
     /* note: not really likely, but we optimize for the positive case */
 
 static int UCS_F_ALWAYS_INLINE
-ucg_builtin_step_recv_handle_comp(ucg_builtin_request_t *req, uint64_t offset,
-                                  void *data, size_t length)
+ucg_builtin_step_recv_handle_comp(ucg_builtin_request_t *req, uint64_t offset)
 {
     ucg_builtin_op_step_t *step = req->step;
 
@@ -418,11 +423,15 @@ ucg_builtin_step_recv_handle_comp(ucg_builtin_request_t *req, uint64_t offset,
 
 static int UCS_F_ALWAYS_INLINE
 ucg_builtin_step_recv_cb(ucg_builtin_request_t *req, uint64_t offset,
-                         void *data, size_t length)
+                         void *data, size_t length, int is_debatched)
 {
-    ucg_builtin_step_recv_handle_data(req, offset, data, length);
+    ucg_builtin_step_recv_handle_data(req, offset, data, length, is_debatched);
 
-    return ucg_builtin_step_recv_handle_comp(req, offset, data, length);
+    if (is_debatched) {
+        return 0; /* step is not done */
+    }
+
+    return ucg_builtin_step_recv_handle_comp(req, offset);
 }
 
 ucs_status_t static UCS_F_ALWAYS_INLINE
@@ -431,17 +440,23 @@ ucg_builtin_step_check_pending(ucg_builtin_comp_slot_t *slot,
                                ucg_builtin_header_t expected)
 {
     /* Check pending incoming messages - invoke the callback on each one */
+    int is_debatched;
+    int is_step_done;
     unsigned msg_index;
     ucp_recv_desc_t *rdesc;
     ucg_builtin_header_t *header;
-    uint16_t local_id = expected.msg.local_id;
+
+    uint16_t local_id            = expected.msg.local_id;
+    step->am_header.msg.local_id = local_id;
+    slot->req.expecting.local_id = local_id;
 
     ucs_assert(local_id != 0);
 
     if (ucs_ptr_array_is_empty(&slot->messages)) {
-        slot->req.expecting.local_id = local_id;
         return UCS_INPROGRESS;
     }
+
+    is_debatched = 0;
 
     ucs_ptr_array_for_each(rdesc, msg_index, &slot->messages) {
         header = (ucg_builtin_header_t*)(rdesc + 1);
@@ -460,9 +475,15 @@ ucg_builtin_step_check_pending(ucg_builtin_comp_slot_t *slot,
             slot->req.expecting.local_id = local_id;
 
             /* Handle this "waiting" packet, possibly completing the step */
-            int is_step_done = ucg_builtin_step_recv_cb(&slot->req,
+            is_debatched = (((rdesc->flags & UCT_CB_PARAM_FLAG_DESC) == 0) &&
+                            (step->comp_criteria <=
+                             UCG_BUILTIN_OP_STEP_COMP_CRITERIA_SINGLE_MESSAGE));
+                             /* can be UCG_BUILTIN_OP_STEP_COMP_CRITERIA_SEND */
+            // TODO: (alex) handle the "debatched" use-case more elegantly...
+            is_step_done = ucg_builtin_step_recv_cb(&slot->req,
                     header->remote_offset, header + 1,
-                    rdesc->length - sizeof(ucg_builtin_header_t));
+                    rdesc->length - sizeof(ucg_builtin_header_t),
+                    is_debatched);
 
             /* Dispose of the packet, according to its allocation */
             ucp_recv_desc_release(rdesc
@@ -475,13 +496,19 @@ ucg_builtin_step_check_pending(ucg_builtin_comp_slot_t *slot,
 
             /* If the step has indeed completed - check the entire operation */
             if (is_step_done) {
-                int is_last_step = (slot->req.expecting.local_id == 0);
-                return is_last_step ? UCS_OK : UCS_INPROGRESS;
+                goto step_done;
             }
         }
     }
 
-    slot->req.expecting.local_id = local_id;
+    if ((is_debatched) &&
+        (ucg_builtin_step_recv_handle_comp(&slot->req,
+                                           header->remote_offset))) {
+        goto step_done;
+    }
 
     return UCS_INPROGRESS;
+
+step_done:
+    return (slot->req.expecting.local_id == 0) ? UCS_OK : UCS_INPROGRESS;
 }

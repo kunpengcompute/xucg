@@ -14,12 +14,14 @@ noinst_HEADERS = \
 
 libucg_builtin_la_SOURCES = \
 	builtin.c \
+	ops/builtin_op.c \
 	ops/builtin_pack.c \
-	ops/builtin_data.c \
-	ops/builtin_control.c \
+	ops/builtin_step_create.c \
+	ops/builtin_step_execute.c \
 	plan/builtin_binomial_tree.c \
 	plan/builtin_bruck.c \
 	plan/builtin_pairwise.c \
 	plan/builtin_recursive.c \
+	plan/builtin_tree.c \
 	plan/builtin_ring.c \
 	plan/builtin_topo_info.c

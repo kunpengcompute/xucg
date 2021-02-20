@@ -9,9 +9,6 @@
 #include <ucp/core/ucp_context.h>
 #include <ucs/datastruct/mpool.inl>
 
-__KHASH_IMPL(ucg_ft_ep, static UCS_F_MAYBE_UNUSED inline, ucg_group_member_index_t,
-        uct_ep_h, 1, kh_int64_hash_func, kh_int64_hash_equal)
-
 #if ENABLE_FAULT_TOLERANCE
 #if ENABLE_STATS
 /**

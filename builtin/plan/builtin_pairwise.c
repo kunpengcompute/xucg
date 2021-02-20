@@ -38,12 +38,11 @@ ucs_status_t ucg_builtin_pairwise_create(ucg_builtin_group_ctx_t *ctx,
     phase->ep_cnt     = proc_count - 1;
     phase->step_index = 1;
 
-    ucg_group_member_index_t my_index = group_params->member_index;
-#if ENABLE_DEBUG_DATA || ENABLE_FAULT_TOLERANCE
-    phase->indexes = UCS_ALLOC_CHECK(phase->ep_cnt * sizeof(my_index),
-                                     "pairwise topology indexes");
+#if ENABLE_DEBUG_DATA
+    snprintf(pairwise->plan_name, UCG_BUILTIN_PLANNER_NAME_MAX_LENGTH, "pairwise");
 #endif
 
+    ucg_group_member_index_t my_index = group_params->member_index;
     int is_mock = coll_type->modifiers & UCG_GROUP_COLLECTIVE_MODIFIER_MOCK_EPS;
     for(proc_idx = 1; proc_idx < proc_count; proc_idx++) {
         /* Connect to receiver for second EP */

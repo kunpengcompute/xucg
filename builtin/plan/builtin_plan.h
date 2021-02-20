@@ -61,6 +61,8 @@ enum ucg_change_algo {
     NONCOMMUTATIVE_LARGEDATA_CASE = 2,
 };
 
+#define UCG_GROUP_MED_MSG_SIZE 16384
+
 /************** Algorithm selection related varibales **************/
 enum ucg_builtin_plan_topology_type {
     UCG_PLAN_RECURSIVE,
@@ -179,6 +181,7 @@ typedef struct ucg_builtin_plan_phase {
 #if ENABLE_DEBUG_DATA || ENABLE_FAULT_TOLERANCE
     ucg_group_member_index_t         *indexes;       /* array corresponding to EPs */
 #define UCG_GROUP_MEMBER_INDEX_UNSPECIFIED ((ucg_group_member_index_t)-1)
+    enum ucg_plan_connect_flags       coll_flags;    /* used during connection establishment */
 #endif
 } ucg_builtin_plan_phase_t;
 
@@ -196,6 +199,10 @@ typedef struct ucg_builtin_plan {
     uint16_t                 am_id;   /* active message ID */
     ucg_builtin_config_t    *config;  /* configured settings */
     size_t                   non_power_of_two; /* number of processes is power of two or not */
+#if ENABLE_DEBUG_DATA
+#define UCG_BUILTIN_PLANNER_NAME_MAX_LENGTH (10)
+    char                     plan_name[UCG_BUILTIN_PLANNER_NAME_MAX_LENGTH];
+#endif
     ucg_builtin_plan_phase_t phss[];  /* topology's phases */
 /*  uct_ep_h                 eps[];    * logically located here */
 } ucg_builtin_plan_t;
@@ -246,6 +253,7 @@ ucs_status_t ucg_builtin_recursive_connect(ucg_builtin_group_ctx_t *ctx,
                                            ucg_group_member_index_t member_cnt,
                                            unsigned factor,
                                            unsigned check_swap,
+                                           int is_mock,
                                            ucg_builtin_plan_t *recursive);
 
 ucs_status_t ucg_builtin_recursive_compute_steps(ucg_group_member_index_t my_index_local,
@@ -267,7 +275,33 @@ ucs_status_t ucg_builtin_ring_create(ucg_builtin_group_ctx_t *ctx,
                                      const ucg_collective_type_t *coll_type,
                                      ucg_builtin_plan_t **plan_p);
 
+typedef struct ucg_builtin_tree_config {
+    unsigned radix;
+#define UCG_BUILTIN_TREE_MAX_RADIX (128)
+    unsigned sock_thresh;
+    ucg_group_member_index_t my_index;
+} ucg_builtin_tree_config_t;
+
+typedef struct ucg_builtin_tree_params {
+    const ucg_group_params_t           *group_params;
+    const ucg_collective_type_t        *coll_type;
+    enum ucg_builtin_plan_topology_type plan_topo_type;
+    //const ucg_builtin_plan_topology_t  *topology;
+    const ucg_builtin_tree_config_t    *config;
+    ucg_group_member_index_t            root;
+    ucg_builtin_group_ctx_t            *ctx;
+} ucg_builtin_tree_params_t;
+
+ucs_status_t ucg_builtin_tree_create(ucg_builtin_group_ctx_t *ctx,
+        enum ucg_builtin_plan_topology_type plan_topo_type,
+        //const ucg_builtin_plan_topology_t *topology,
+        const ucg_builtin_config_t *config,
+        const ucg_group_params_t *group_params,
+        const ucg_collective_type_t *coll_type,
+        ucg_builtin_plan_t **plan_p);
+
 struct ucg_builtin_config {
+    ucg_builtin_tree_config_t          tree;
     ucg_builtin_binomial_tree_config_t bmtree;
     ucg_builtin_recursive_config_t     recursive;
 

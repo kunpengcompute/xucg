@@ -69,9 +69,9 @@ enum ucg_params_field {
     UCG_PARAM_FIELD_REDUCE_OP_CB  = UCS_BIT(3), /**< Callback for reduce ops */
     UCG_PARAM_FIELD_COMPLETION_CB = UCS_BIT(4), /**< Actions upon completion */
     UCG_PARAM_FIELD_MPI_IN_PLACE  = UCS_BIT(5), /**< MPI_IN_PLACE value */
-    UCG_PARAM_FIELD_HANDLE_FAULT  = UCS_BIT(6), /**< Fault-tolerance support */
-    UCG_PARAM_FIELD_JOB_INFO      = UCS_BIT(7), /**< Info about the MPI job */
-    UCG_PARAM_FIELD_GLOBAL_INDEX  = UCS_BIT(8)  /**< Callback for global index */
+    UCG_PARAM_FIELD_GLOBAL_INDEX  = UCS_BIT(6), /**< Callback for global index */
+    UCG_PARAM_FIELD_HANDLE_FAULT  = UCS_BIT(7), /**< Fault-tolerance support */
+    UCG_PARAM_FIELD_JOB_INFO      = UCS_BIT(8)  /**< Info about the MPI job */
 };
 
 enum ucg_fault_tolerance_mode {
@@ -84,8 +84,9 @@ enum ucg_fault_tolerance_mode {
 };
 
 enum ucg_topo_info_type {
-    UCG_TOPO_INFO_DISTANCE_TABLE = 0, /**< Info form is a 2-D distance table */
-    UCG_TOPO_INFO_PLACEMENT_TABLE     /**< Info form is placement per level */
+    UCG_TOPO_INFO_NONE = 0,       /**< No additional information available */
+    UCG_TOPO_INFO_DISTANCE_TABLE, /**< Info form is a 2-D distance table */
+    UCG_TOPO_INFO_PLACEMENT_TABLE /**< Info form is placement per level */
 };
 
 /**
@@ -95,6 +96,8 @@ enum ucg_topo_info_type {
  * During group creation, the caller can pass information about the distance of
  * each other member of the group. This information may be used to select the
  * best logical topology for collective operations inside UCG.
+ *
+ * Note: this list of options matches that of hwloc.
  */
 enum ucg_group_member_distance {
     UCG_GROUP_MEMBER_DISTANCE_NONE = 0,
@@ -106,10 +109,12 @@ enum ucg_group_member_distance {
     UCG_GROUP_MEMBER_DISTANCE_L2CACHE,
     UCG_GROUP_MEMBER_DISTANCE_L3CACHE,
     UCG_GROUP_MEMBER_DISTANCE_SOCKET,
+    UCG_GROUP_MEMBER_DISTANCE_NUMA,
+    UCG_GROUP_MEMBER_DISTANCE_BOARD,
     UCG_GROUP_MEMBER_DISTANCE_HOST,
 
     /* Over the network */
-    UCG_GROUP_MEMBER_DISTANCE_RACK,
+    UCG_GROUP_MEMBER_DISTANCE_CU,
     UCG_GROUP_MEMBER_DISTANCE_CLUSTER,
 
     UCG_GROUP_MEMBER_DISTANCE_UNKNOWN
@@ -159,10 +164,10 @@ typedef struct ucg_params {
     /* Information about datatypes */
     struct {
         /* Convert the opaque data-type into UCX's structure (should return 0) */
-        int (*convert)(void *datatype, ucp_datatype_t *ucp_datatype);
+        int (*convert_f)(void *datatype, ucp_datatype_t *ucp_datatype);
 
         /* Get the buffer size needed to unpack a (non-contiguous) data-type */
-        ptrdiff_t (*get_span)(void *datatype, int count, ptrdiff_t *gap);
+        int (*get_span_f)(void *datatype, int count, ptrdiff_t *span, ptrdiff_t *gap);
 
         /* Check if the data-type is an integer (of any length) */
         int (*is_integer_f)(void *datatype, int *is_signed);
@@ -217,9 +222,9 @@ typedef struct ucg_params {
      *       context of that group would be used for address resolution (see
      *       lookup_f above, which also accepts cb_group_context).
      */
-    int (*get_global_index)(void *cb_group_context,
-                            ucg_group_member_index_t group_index,
-                            ucg_group_member_index_t *global_index_p);
+    int (*get_global_index_f)(void *cb_group_context,
+                              ucg_group_member_index_t group_index,
+                              ucg_group_member_index_t *global_index_p);
 
     /* Fault-tolerance can be enabled by passing */
     struct {
@@ -291,10 +296,6 @@ enum ucg_collective_modifiers {
     UCG_GROUP_COLLECTIVE_MODIFIER_BARRIER            = UCS_BIT(12), /* prevent others from starting */
     UCG_GROUP_COLLECTIVE_MODIFIER_MOCK_EPS           = UCS_BIT(13), /* information gathering only */
 
-
-    UCG_GROUP_COLLECTIVE_MODIFIER_ALLTOALL           = UCS_BIT(14), /* MPI_ALLTOALL */
-    UCG_GROUP_COLLECTIVE_MODIFIER_ALLGATHER          = UCS_BIT(15), /* MPI_ALLGATHER */
-
     UCG_GROUP_COLLECTIVE_MODIFIER_MASK               = UCS_MASK(16)
 };
 
@@ -312,7 +313,7 @@ enum ucg_collective_modifiers {
 typedef struct ucg_collective_type {
     uint16_t                 modifiers;        /* Collective description, using
                                                   @ref ucg_collective_modifiers */
-    ucg_hash_index_t         plan_cache_index; /* the index of collective type in plan cache. */
+    uint16_t                 reserved;
     ucg_group_member_index_t root;             /* Root rank, if applicable */
 } UCS_S_PACKED ucg_collective_type_t;
 
@@ -328,8 +329,7 @@ enum ucg_group_params_field {
     UCG_GROUP_PARAM_FIELD_MEMBER_COUNT = UCS_BIT(1), /**< Number of members */
     UCG_GROUP_PARAM_FIELD_MEMBER_INDEX = UCS_BIT(2), /**< My member index */
     UCG_GROUP_PARAM_FIELD_CB_CONTEXT   = UCS_BIT(3), /**< context for callbacks */
-    UCG_GROUP_PARAM_FIELD_DISTANCES    = UCS_BIT(4), /**< Member distance array */
-    UCG_GROUP_PARAM_FIELD_RANK_MAP     = UCS_BIT(5)  /**< Map to global ranks */
+    UCG_GROUP_PARAM_FIELD_DISTANCES    = UCS_BIT(4)  /**< Member distance array */
 };
 
 /**
@@ -375,9 +375,6 @@ typedef struct ucg_group_params {
      *    ...
      */
     enum ucg_group_member_distance *distance;
-
-    ucg_group_member_index_t *rank_map; /* Maps from the index of each rank in
-                                           this group to the global job rank */
 } ucg_group_params_t;
 
 
@@ -402,7 +399,7 @@ typedef struct ucg_collective_params {
         };
         void                     *buffer;  /**< buffer location to use */
         union {
-            int64_t               count;   /**< item count (not int - for OSHMEM) */
+            uint64_t              count;   /**< item count */
             const int            *counts;  /**< item count array */
         };
         union {
@@ -421,6 +418,7 @@ typedef struct ucg_collective_params {
 } UCS_S_PACKED UCS_V_ALIGNED(64) ucg_collective_params_t;
 
 #define UCG_PARAM_TYPE(_params)   (_params)->send.type
+#define UCG_PARAM_ROOT(_params)   (_params)->send.type.root
 #define UCG_PARAM_OP(_params)     (_params)->recv.op
 #define UCG_PARAM_DISPLS(_params) (_params)->recv.displs
 

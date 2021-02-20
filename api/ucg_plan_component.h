@@ -123,12 +123,14 @@ typedef struct ucg_op ucg_op_t;
 typedef ucs_status_t (*ucg_op_trigger_f)(ucg_op_t *op,
                                          ucg_coll_id_t coll_id,
                                          void *request);
-
 typedef void         (*ucg_op_discard_f)(ucg_op_t *op);
+typedef void         (*ucg_op_compreq_f)(void *req, ucs_status_t status);
+
 struct ucg_op {
     /* Collective-specific request content */
     ucg_op_trigger_f          trigger_f;   /**< shortcut for the trigger call */
     ucg_op_discard_f          discard_f;   /**< shortcut for the discard call */
+    ucg_op_compreq_f          compreq_f;   /**< shortcut for request completion */
 
     union {
         ucs_list_link_t       list;        /**< cache list member */

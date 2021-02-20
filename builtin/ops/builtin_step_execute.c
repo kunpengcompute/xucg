@@ -12,7 +12,7 @@
 
 /******************************************************************************
  *                                                                            *
- *                            Operation Execution                             *
+ *                         Operation Step Execution                           *
  *                                                                            *
  ******************************************************************************/
 
@@ -94,9 +94,9 @@ ucg_builtin_step_am_short_max(ucg_builtin_request_t *req,
                                     != 0);
     frag_size                    = ((frag_size) >>
                                     (UCT_COLL_DTYPE_MODE_BITS * is_packed));
-    int8_t *sbuf                 = step->send_buffer;
-    int8_t *buffer_iter          = sbuf + step->iter_offset;
-    int8_t *buffer_iter_limit    = sbuf + step->buffer_length - frag_size;
+    uint8_t *sbuf                = step->send_buffer;
+    uint8_t *buffer_iter         = sbuf + step->iter_offset;
+    uint8_t *buffer_iter_limit   = sbuf + step->buffer_length - frag_size;
     am_iter.remote_offset        = (is_pipelined) ? step->iter_offset :
                                    am_iter.remote_offset + step->iter_offset;
 
@@ -154,7 +154,10 @@ ucg_builtin_step_am_bcopy_one(ucg_builtin_request_t *req,
 
     UCG_BUILTIN_ASSERT_SEND(step, AM_BCOPY);
 
+
     uct_ep_am_bcopy_func_t ep_am_bcopy = step->uct_send;
+    step->am_header                    = header;
+
     ssize_t len = ep_am_bcopy(ep, am_id, step->bcopy.pack_single_cb,
                               req, uct_flags);
 
@@ -172,6 +175,7 @@ ucg_builtin_step_am_bcopy_max(ucg_builtin_request_t *req,
     ucg_offset_t frag_size        = step->fragment_length;
     ucg_offset_t iter_limit       = step->buffer_length - frag_size;
     packed_send_t send_func       = step->uct_send;
+    step->am_header               = header;
     step->am_header.remote_offset = (is_pipelined) ? step->iter_offset :
                                     step->am_header.remote_offset;
 
@@ -354,7 +358,7 @@ ucg_builtin_step_am_zcopy_max(ucg_builtin_request_t *req,
 {
     ucs_status_t status;
     ucg_offset_t frag_size        = step->fragment_length;
-    int8_t *sbuf                  = step->send_buffer;
+    uint8_t *sbuf                 = step->send_buffer;
     void* iov_buffer_limit        = sbuf + step->buffer_length - frag_size;
     ucg_builtin_zcomp_t *zcomp    = &step->zcopy.zcomp;
     step->am_header.remote_offset = (is_pipelined) ? step->iter_offset :
@@ -386,11 +390,11 @@ ucg_builtin_step_am_zcopy_max(ucg_builtin_request_t *req,
             }
 
             header.remote_offset += frag_size;
-            iov.buffer = (void*)((int8_t*)iov.buffer + frag_size);
+            iov.buffer = (void*)((uint8_t*)iov.buffer + frag_size);
         } while ((status == UCS_INPROGRESS) && (iov.buffer < iov_buffer_limit));
 
         if (ucs_unlikely(status != UCS_INPROGRESS)) {
-            step->iter_offset = (int8_t*)iov.buffer - sbuf - frag_size;
+            step->iter_offset = (uint8_t*)iov.buffer - sbuf - frag_size;
             step->am_header = header;
             return status;
         }
@@ -398,11 +402,11 @@ ucg_builtin_step_am_zcopy_max(ucg_builtin_request_t *req,
 
     /* Send last fragment of the message */
     zcomp->req = req;
-    iov.length = sbuf + step->buffer_length - (int8_t*)iov.buffer;
+    iov.length = sbuf + step->buffer_length - (uint8_t*)iov.buffer;
     status     = ep_am_zcopy(ep, am_id, &header, sizeof(header),
                              &iov, 1, 0, &zcomp->comp);
     if (ucs_unlikely(status != UCS_INPROGRESS)) {
-        step->iter_offset = (int8_t*)iov.buffer - sbuf;
+        step->iter_offset = (uint8_t*)iov.buffer - sbuf;
         step->am_header = header;
         return status;
     }
@@ -645,8 +649,7 @@ UCS_PROFILE_FUNC(ucs_status_t, ucg_builtin_step_execute, (req, header),
               ucg_builtin_step_am_zcopy_max)
 
     default:
-        ucs_error("Invalid method for a collective operation step.");
-        ucg_builtin_print_flags(step);
+        ucs_error("Invalid collective operation step: %u", step->flags);
         status = UCS_ERR_INVALID_PARAM;
         goto step_execute_error;
     }
@@ -663,6 +666,9 @@ step_execute_error:
                     UCG_BUILTIN_FRAG_PENDING;
             step->iter_offset = UCG_BUILTIN_OFFSET_PIPELINE_PENDING;
         }
+
+        /* Set the collective operation ID */
+        step->am_header.msg.local_id = header.msg.local_id;
 
         /* Add this request to the resend-queue */
         ucg_builtin_req_enqueue_resend(req->op->gctx, req);

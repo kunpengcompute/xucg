@@ -9,9 +9,13 @@ libucg_base_la_CPPFLAGS = $(BASE_CPPFLAGS)
 
 noinst_HEADERS = \
 	ucg_plan.h \
-	ucg_group.h
+	ucg_group.h \
+	ucg_context.h \
+	ucg_ft.h
 
 libucg_base_la_SOURCES = \
 	ucg_plan.c \
 	ucg_group.c \
+	ucg_context.c \
+	ucg_ft.c \
 	ucg_version.c

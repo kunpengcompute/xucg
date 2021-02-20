@@ -31,16 +31,10 @@ int ucg_builtin_atomic_reduce_part(ucg_builtin_request_t *req,
     ucg_builtin_header_t *header = (ucg_builtin_header_t*)dest; \
     ucg_builtin_request_t *req   = (ucg_builtin_request_t*)arg; \
     ucg_builtin_op_step_t *step  = req->step; \
-    void *dt_state               = step->bcopy.pack_state.dt.generic.state; \
     size_t buffer_length         = (_length); \
     header->header               = step->am_header.header; \
     ucs_assert(((uintptr_t)arg & UCT_PACK_CALLBACK_REDUCE) == 0); \
-    if (dt_state != NULL) { \
-        ucp_dt_generic_t *generic_dt = ucp_dt_to_generic(req->op->send_dt); \
-        generic_dt->ops.pack(dt_state, 0, header + 1, buffer_length); \
-    } else { \
-        memcpy(header + 1, step->send_buffer + (_offset), buffer_length); \
-    } \
+    memcpy(header + 1, step->send_buffer + (_offset), buffer_length); \
     return sizeof(*header) + buffer_length; \
 }
 
@@ -158,7 +152,7 @@ UCG_BUILTIN_ATOMIC_MULTIPLE_PACK_CB(64)
     ucg_builtin_request_t *req   = (ucg_builtin_request_t*)arg; \
     ucg_builtin_op_t *op         = req->op; \
     ucp_dt_generic_t *dt_gen     = ucp_dt_to_generic(op->send_dt); \
-    void *dt_state               = op->rstate.dt.generic.state; \
+    void *dt_state               = op->send_pack; \
     ucg_builtin_op_step_t *step  = req->step; \
     size_t buffer_length         = (_length); \
     header->header               = step->am_header.header; \

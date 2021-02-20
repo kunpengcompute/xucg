@@ -118,6 +118,10 @@ ucs_status_t ucg_builtin_ring_create(ucg_builtin_group_ctx_t *ctx,
     ring->ep_cnt                   = step_idx * INDEX_DOUBLE;  /* the number of endpoints each step is always 2 for ring */
     ring->phs_cnt                  = step_idx;
 
+#if ENABLE_DEBUG_DATA
+    snprintf(ring->plan_name, UCG_BUILTIN_PLANNER_NAME_MAX_LENGTH, "ring");
+#endif
+
     /* Find my own index */
     ucg_group_member_index_t my_index = 0;
     ucg_builtin_ring_find_my_index(group_params, proc_count, &my_index);
@@ -126,7 +130,7 @@ ucs_status_t ucg_builtin_ring_create(ucg_builtin_group_ctx_t *ctx,
     /* builtin phase 0 */
     phase->method = UCG_PLAN_METHOD_REDUCE_SCATTER_RING;
 
-    phase->step_index = 0;
+    phase->step_index = 1;
 
     /* In each step, there are two peers */
     ucg_group_member_index_t peer_index_src;
@@ -164,7 +168,7 @@ ucs_status_t ucg_builtin_ring_create(ucg_builtin_group_ctx_t *ctx,
             phase->method = UCG_PLAN_METHOD_ALLGATHER_RING;
         }
 
-        phase->step_index = step_idx;
+        phase->step_index = step_idx + 1;
         ucs_info("%u's peer #%u(source) and #%u(destination) at (step #%u/%u)", my_index, (unsigned)peer_index_src,
                  (unsigned)peer_index_dst, (unsigned)(phase->step_index) + 1, ring->phs_cnt);
     }

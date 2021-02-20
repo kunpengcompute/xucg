@@ -56,6 +56,9 @@ unsigned ucg_builtin_calculate_ppx(const ucg_group_params_t *group_params,
 {
     unsigned member_idx;
     unsigned ppx = 0;
+
+    ucs_assert(group_params->field_mask & UCG_GROUP_PARAM_FIELD_DISTANCES);
+
     for (member_idx = 0; member_idx < group_params->member_count; member_idx++) {
         enum ucg_group_member_distance next_distance = group_params->distance[member_idx];
         ucs_assert(next_distance <= UCG_GROUP_MEMBER_DISTANCE_UNKNOWN);
@@ -63,6 +66,7 @@ unsigned ucg_builtin_calculate_ppx(const ucg_group_params_t *group_params,
             ppx++;
         }
     }
+
     return ppx;
 }
 
@@ -462,6 +466,8 @@ static inline ucs_status_t ucg_builtin_binomial_tree_connect_phase(ucg_builtin_p
 
     int is_mock = params->coll_type->modifiers & UCG_GROUP_COLLECTIVE_MODIFIER_MOCK_EPS;
 
+    step_index++; /* step index starts from 1 */
+
     ucs_assert(peer_cnt > 0);
 flagless_retry:
     if ((peer_cnt == 1) || coll_flags) {
@@ -563,14 +569,13 @@ static ucs_status_t ucg_builtin_tree_inter_fanin_connect(const ucg_builtin_binom
     if (up_fanin_cnt == 0) {
         /* Connect this phase to its peers */
         status = ucg_builtin_binomial_tree_connect_phase((*phase)++, params, tree->phs_cnt, eps, down_fanin,
-                                                         down_fanin_cnt, fanin_method, UCG_PLAN_CONNECT_FLAG_AM_ROOT |
-                                                                                       UCG_PLAN_CONNECT_FLAG_WANT_INCAST);
+                                                         down_fanin_cnt, fanin_method, 0);
     } else if (down_fanin_cnt == 0 && status == UCS_OK) {
         /* only send (send_terminal) */
         /* Send to parents */
         /* Connect this phase to its peers */
         status = ucg_builtin_binomial_tree_connect_phase((*phase)++, params, tree->phs_cnt, eps, up_fanin,
-                                                         up_fanin_cnt, fanin_method, UCG_PLAN_CONNECT_FLAG_WANT_INCAST);
+                                                         up_fanin_cnt, fanin_method, 0);
     } else if (up_fanin_cnt == 1 && down_fanin_cnt > 0 && status == UCS_OK) {
         /* first recv then send (waypoint) */
         /* Connect this phase to its peers */
@@ -580,8 +585,7 @@ static ucs_status_t ucg_builtin_tree_inter_fanin_connect(const ucg_builtin_binom
         }
         down_fanin_cnt = down_fanin_cnt + up_fanin_cnt;
         status = ucg_builtin_binomial_tree_connect_phase((*phase)++, params, tree->phs_cnt, eps, down_fanin,
-                                                         down_fanin_cnt, fanin_method, UCG_PLAN_CONNECT_FLAG_AM_ROOT |
-                                                                                       UCG_PLAN_CONNECT_FLAG_WANT_INCAST);
+                                                         down_fanin_cnt, fanin_method, 0);
     }
     return status;
 }
@@ -606,8 +610,7 @@ static ucs_status_t ucg_builtin_tree_inter_fanout_connect(const ucg_builtin_bino
         /* Connect this phase to its peers */
         ucs_assert(up_cnt == 1); /* sanity check: not multi-root */
         status = ucg_builtin_binomial_tree_connect_phase(phase, params, tree->phs_cnt + 1, eps, up, up_cnt,
-                                                         fanout_method, UCG_PLAN_CONNECT_FLAG_AM_ROOT |
-                                                                        UCG_PLAN_CONNECT_FLAG_WANT_BCAST);
+                                                         fanout_method, 0);
     }
 
     /* only send (send_terminal) */
@@ -615,7 +618,7 @@ static ucs_status_t ucg_builtin_tree_inter_fanout_connect(const ucg_builtin_bino
     if (up_cnt == 0 && down_cnt > 0 && status == UCS_OK) {
         /* Connect this phase to its peers */
         status = ucg_builtin_binomial_tree_connect_phase(phase, params, tree->phs_cnt + 1, eps, down, down_cnt,
-                                                         fanout_method, UCG_PLAN_CONNECT_FLAG_WANT_BCAST);
+                                                         fanout_method, 0);
     }
 
     /* first recv then send (waypoint) */
@@ -627,7 +630,7 @@ static ucs_status_t ucg_builtin_tree_inter_fanout_connect(const ucg_builtin_bino
         }
         up_cnt = up_cnt + down_cnt;
         status = ucg_builtin_binomial_tree_connect_phase(phase, params, tree->phs_cnt + 1, eps, up, up_cnt,
-                                                         fanout_method, UCG_PLAN_CONNECT_FLAG_WANT_BCAST);
+                                                         fanout_method, 0);
     }
 
     return status;
@@ -715,16 +718,14 @@ static ucs_status_t ucg_builtin_binomial_tree_inter_fanout_connect(const ucg_bui
     if (up_cnt == 1 && down_cnt == 0) {
         /* Connect this phase to its peers */
         ucs_assert(up_cnt == 1); /* sanity check: not multi-root */
-        status = ucg_builtin_binomial_tree_connect_phase(phase, params, 0, eps, up, up_cnt, fanout_method, UCG_PLAN_CONNECT_FLAG_AM_ROOT |
-                                                                                                           UCG_PLAN_CONNECT_FLAG_WANT_BCAST);
+        status = ucg_builtin_binomial_tree_connect_phase(phase, params, 0, eps, up, up_cnt, fanout_method, 0);
     }
 
     /* only send (send_terminal) */
     /* Send to children */
     if (up_cnt == 0 && down_cnt > 0 && status == UCS_OK) {
         /* Connect this phase to its peers */
-        status = ucg_builtin_binomial_tree_connect_phase(phase, params, 0, eps, down, down_cnt, fanout_method, UCG_PLAN_CONNECT_FLAG_AM_ROOT |
-                                                                                                               UCG_PLAN_CONNECT_FLAG_WANT_BCAST);
+        status = ucg_builtin_binomial_tree_connect_phase(phase, params, 0, eps, down, down_cnt, fanout_method, 0);
     }
 
     /* first recv then send (waypoint) */
@@ -735,8 +736,7 @@ static ucs_status_t ucg_builtin_binomial_tree_inter_fanout_connect(const ucg_bui
             up[member_idx] = down[member_idx - up_cnt];
         }
         up_cnt = up_cnt + down_cnt;
-        status = ucg_builtin_binomial_tree_connect_phase(phase, params, 0, eps, up, up_cnt, fanout_method, UCG_PLAN_CONNECT_FLAG_AM_ROOT |
-                                                                                                           UCG_PLAN_CONNECT_FLAG_WANT_BCAST);
+        status = ucg_builtin_binomial_tree_connect_phase(phase, params, 0, eps, up, up_cnt, fanout_method, 0);
     }
     return status;
 }
@@ -872,6 +872,7 @@ static ucs_status_t ucg_builtin_binomial_tree_inter_create(enum ucg_builtin_plan
                                                            unsigned *phs_inc_cnt,
                                                            unsigned *step_inc_cnt)
 {
+    int is_mock = params->coll_type->modifiers & UCG_GROUP_COLLECTIVE_MODIFIER_MOCK_EPS;
     ucs_status_t status = UCS_OK;
     unsigned factor = 2;
     switch (topo_type) {
@@ -883,7 +884,7 @@ static ucs_status_t ucg_builtin_binomial_tree_inter_create(enum ucg_builtin_plan
                 (void)ucg_builtin_get_node_leaders(ucg_global_params.job_info.placement[UCG_GROUP_MEMBER_DISTANCE_HOST],
                                                    params->group_params->member_count,
                                                    ucg_algo.topo_level, ppx, node_leaders);
-                ucg_builtin_recursive_connect(params->ctx, my_index, node_leaders, node_count, factor, 0, tree);
+                ucg_builtin_recursive_connect(params->ctx, my_index, node_leaders, node_count, factor, 0, is_mock, tree);
                 *phs_inc_cnt = tree->phs_cnt - phs_cnt;
                 ucs_free(node_leaders);
                 node_leaders = NULL;
@@ -944,13 +945,14 @@ static ucs_status_t ucg_builtin_binomial_tree_add_inter(
     enum ucg_collective_modifiers mod = params->coll_type->modifiers;
 
     unsigned node_idx;
+    unsigned member_idx;
     unsigned is_subroot =  0;
 
     /* node-aware: using subroot_array and node_cnt to support unblance ppn case */
     size_t alloc_size = sizeof(ucg_group_member_index_t) * topo_params->node_cnt;
     ucg_group_member_index_t *subroot_array = (ucg_group_member_index_t *)UCS_ALLOC_CHECK(alloc_size, "subroot array");
 
-    for (unsigned member_idx = 0; member_idx < topo_params->node_cnt; member_idx++) {
+    for (member_idx = 0; member_idx < topo_params->node_cnt; member_idx++) {
         subroot_array[member_idx] = topo_params->subroot_array[member_idx];
     }
 
@@ -1003,8 +1005,7 @@ static ucs_status_t ucg_builtin_binomial_tree_connect_fanin(ucg_builtin_plan_t *
     if (up_fanin_cnt == 0) {
         /* Connect this phase to its peers */
         status = ucg_builtin_binomial_tree_connect_phase(&tree->phss[tree->phs_cnt++], params, 0, eps, down_fanin,
-            down_fanin_cnt, fanin_method, UCG_PLAN_CONNECT_FLAG_AM_ROOT |
-                                          UCG_PLAN_CONNECT_FLAG_WANT_INCAST);
+            down_fanin_cnt, fanin_method, 0);
         if (status != UCS_OK) {
             return status;
         }
@@ -1015,7 +1016,7 @@ static ucs_status_t ucg_builtin_binomial_tree_connect_fanin(ucg_builtin_plan_t *
     if (down_fanin_cnt == 0) {
         /* Connect this phase to its peers */
         status = ucg_builtin_binomial_tree_connect_phase(&tree->phss[tree->phs_cnt++], params, 0, eps, up_fanin,
-            up_fanin_cnt, fanin_method, UCG_PLAN_CONNECT_FLAG_WANT_INCAST);
+            up_fanin_cnt, fanin_method, 0);
         if (status != UCS_OK) {
             return status;
         }
@@ -1030,8 +1031,7 @@ static ucs_status_t ucg_builtin_binomial_tree_connect_fanin(ucg_builtin_plan_t *
         }
         down_fanin_cnt = down_fanin_cnt + up_fanin_cnt;
         status = ucg_builtin_binomial_tree_connect_phase(&tree->phss[tree->phs_cnt++], params, 0, eps, down_fanin,
-            down_fanin_cnt, fanin_method, UCG_PLAN_CONNECT_FLAG_AM_ROOT |
-                                          UCG_PLAN_CONNECT_FLAG_WANT_INCAST);
+            down_fanin_cnt, fanin_method, 0);
     }
 
     return status;
@@ -1054,8 +1054,7 @@ static ucs_status_t ucg_builtin_tree_connect_fanout(unsigned step_inc_cnt,
         /* Connect this phase to its peers */
         ucs_assert(up_cnt == 1); /* sanity check: not multi-root */
         status = ucg_builtin_binomial_tree_connect_phase(&tree->phss[tree->phs_cnt++], params, step_inc_cnt, eps,
-            up, up_cnt, fanout_method, UCG_PLAN_CONNECT_FLAG_AM_ROOT |
-                                       UCG_PLAN_CONNECT_FLAG_WANT_BCAST);
+            up, up_cnt, fanout_method, 0);
         if (status != UCS_OK) {
             return status;
         }
@@ -1066,8 +1065,7 @@ static ucs_status_t ucg_builtin_tree_connect_fanout(unsigned step_inc_cnt,
     if (up_cnt == 0 && down_cnt > 0) {
         /* Connect this phase to its peers */
         status = ucg_builtin_binomial_tree_connect_phase(&tree->phss[tree->phs_cnt++], params, step_inc_cnt, eps,
-            down, down_cnt, fanout_method, UCG_PLAN_CONNECT_FLAG_AM_ROOT |
-                                           UCG_PLAN_CONNECT_FLAG_WANT_BCAST);
+            down, down_cnt, fanout_method, 0);
         if (status != UCS_OK) {
             return status;
         }
@@ -1082,8 +1080,7 @@ static ucs_status_t ucg_builtin_tree_connect_fanout(unsigned step_inc_cnt,
         }
         up_cnt = up_cnt + down_cnt;
         status = ucg_builtin_binomial_tree_connect_phase(&tree->phss[tree->phs_cnt++], params, step_inc_cnt, eps,
-            up, up_cnt, fanout_method, UCG_PLAN_CONNECT_FLAG_AM_ROOT |
-                                       UCG_PLAN_CONNECT_FLAG_WANT_BCAST);
+            up, up_cnt, fanout_method, 0);
     }
 
     return status;
@@ -1217,8 +1214,7 @@ static ucs_status_t ucg_builtin_non_topo_tree_connect_fanout(ucg_builtin_plan_t 
         for (member_idx = 0; member_idx < down_cnt; member_idx++) {
             down_another = down + member_idx;
             status = ucg_builtin_binomial_tree_connect_phase(&tree->phss[tree->phs_cnt++], params, step_inc_cnt,
-                eps, down_another, 1, fanout_method, UCG_PLAN_CONNECT_FLAG_AM_ROOT |
-                                                     UCG_PLAN_CONNECT_FLAG_WANT_BCAST);
+                eps, down_another, 1, fanout_method, 0);
             if (status != UCS_OK) {
                 return status;
             }
@@ -1229,8 +1225,7 @@ static ucs_status_t ucg_builtin_non_topo_tree_connect_fanout(ucg_builtin_plan_t 
     if (up_cnt == 1 && down_cnt > 0) {
         /* Connect this phase to its peers */
         status = ucg_builtin_binomial_tree_connect_phase(&tree->phss[tree->phs_cnt++], params, step_inc_cnt, eps,
-            up, up_cnt, UCG_PLAN_METHOD_RECV_TERMINAL, UCG_PLAN_CONNECT_FLAG_AM_ROOT |
-                                                       UCG_PLAN_CONNECT_FLAG_WANT_INCAST);
+            up, up_cnt, UCG_PLAN_METHOD_RECV_TERMINAL, 0);
         if (status != UCS_OK) {
             return status;
         }
@@ -1240,8 +1235,7 @@ static ucs_status_t ucg_builtin_non_topo_tree_connect_fanout(ucg_builtin_plan_t 
         for (member_idx = 0; member_idx < down_cnt; member_idx++) {
             down_another = down + member_idx;
             status = ucg_builtin_binomial_tree_connect_phase(&tree->phss[tree->phs_cnt++], params, step_inc_cnt,
-                eps, down_another, 1, UCG_PLAN_METHOD_SEND_TERMINAL, UCG_PLAN_CONNECT_FLAG_AM_ROOT |
-                                                                     UCG_PLAN_CONNECT_FLAG_WANT_BCAST);
+                eps, down_another, 1, UCG_PLAN_METHOD_SEND_TERMINAL, 0);
             if (status != UCS_OK) {
                 return status;
             }
@@ -1752,6 +1746,10 @@ ucs_status_t ucg_builtin_binomial_tree_create(ucg_builtin_group_ctx_t *ctx,
     ucg_builtin_plan_t *tree = (ucg_builtin_plan_t*)UCS_ALLOC_CHECK(alloc_size, "tree topology");
     memset(tree, 0, alloc_size);
     tree->phs_cnt = 0; /* will be incremented with usage */
+
+#if ENABLE_DEBUG_DATA
+    snprintf(tree->plan_name, UCG_BUILTIN_PLANNER_NAME_MAX_LENGTH, "binomial");
+#endif
 
     /* tree discovery and construction, by phase */
     ucg_builtin_binomial_tree_params_t params = {

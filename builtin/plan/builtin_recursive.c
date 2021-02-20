@@ -22,31 +22,32 @@ static ucs_status_t ucg_builtin_recursive_non_pow_two_pre(ucg_builtin_group_ctx_
                                                           ucg_step_idx_ext_t step_idx,
                                                           unsigned extra_indexs,
                                                           unsigned factor,
+                                                          int is_mock,
                                                           ucg_builtin_plan_t *recursive)
 {
     ucs_status_t status;
     if (my_index % NUM_TWO != 0) {       // add  pre- and after- processing steps;
         phase->method = UCG_PLAN_METHOD_REDUCE_TERMINAL;
         phase->ep_cnt = factor - 1;
-        phase->step_index = step_idx;
+        phase->step_index = step_idx + 1;
 #if ENABLE_DEBUG_DATA
         phase->indexes = UCS_ALLOC_CHECK((factor - 1) * sizeof(my_index), "recursive topology indexes");
 #endif
         ucg_group_member_index_t peer_index = my_index - 1;
         phase->multi_eps = next_ep;
         phase->is_swap = 0;
-        status = ucg_builtin_connect(ctx, member_list[peer_index], phase, UCG_BUILTIN_CONNECT_SINGLE_EP, 0, 0);
+        status = ucg_builtin_connect(ctx, member_list[peer_index], phase, UCG_BUILTIN_CONNECT_SINGLE_EP, 0, is_mock);
     } else { // only pre- and after- processing steps;
         phase->method = UCG_PLAN_METHOD_SEND_TERMINAL;
         phase->ep_cnt = factor - 1;
-        phase->step_index = step_idx;
+        phase->step_index = step_idx + 1;
 #if ENABLE_DEBUG_DATA
         phase->indexes = UCS_ALLOC_CHECK((factor - 1) * sizeof(my_index), "recursive topology indexes");
 #endif
         ucg_group_member_index_t peer_index = my_index + 1;
         phase->multi_eps = next_ep;
         phase->is_swap = 0;
-        status = ucg_builtin_connect(ctx, member_list[peer_index], phase, UCG_BUILTIN_CONNECT_SINGLE_EP, 0, 0);
+        status = ucg_builtin_connect(ctx, member_list[peer_index], phase, UCG_BUILTIN_CONNECT_SINGLE_EP, 0, is_mock);
     }
 
     return status;
@@ -61,31 +62,32 @@ static ucs_status_t ucg_builtin_recursive_non_pow_two_post(ucg_builtin_group_ctx
                                                            unsigned extra_indexs,
                                                            unsigned factor,
                                                            unsigned near_power_of_two_step,
+                                                           int is_mock,
                                                            ucg_builtin_plan_t *recursive)
 {
     ucs_status_t status;
     if (my_index % NUM_TWO != 0) {       /* add pre- and after- processing steps */
         phase->method = UCG_PLAN_METHOD_SEND_TERMINAL;
         phase->ep_cnt = factor - 1;
-        phase->step_index = step_idx;
+        phase->step_index = step_idx + 1;
 #if ENABLE_DEBUG_DATA
         phase->indexes = UCS_ALLOC_CHECK((factor - 1) * sizeof(my_index), "recursive topology indexes");
 #endif
         ucg_group_member_index_t peer_index = my_index - 1;
         phase->multi_eps = next_ep;
         phase->is_swap = 0;
-        status = ucg_builtin_connect(ctx, member_list[peer_index], phase, UCG_BUILTIN_CONNECT_SINGLE_EP, 0, 0);
+        status = ucg_builtin_connect(ctx, member_list[peer_index], phase, UCG_BUILTIN_CONNECT_SINGLE_EP, 0, is_mock);
     } else { // only pre- and after- processing steps;
         phase->method = UCG_PLAN_METHOD_RECV_TERMINAL;
         phase->ep_cnt = factor - 1;
-        phase->step_index = step_idx;
+        phase->step_index = step_idx + 1;
 #if ENABLE_DEBUG_DATA
         phase->indexes = UCS_ALLOC_CHECK((factor - 1) * sizeof(my_index), "recursive topology indexes");
 #endif
         ucg_group_member_index_t peer_index = my_index + 1;
         phase->multi_eps = next_ep;
         phase->is_swap = 0;
-        status = ucg_builtin_connect(ctx, member_list[peer_index], phase, UCG_BUILTIN_CONNECT_SINGLE_EP, 0, 0);
+        status = ucg_builtin_connect(ctx, member_list[peer_index], phase, UCG_BUILTIN_CONNECT_SINGLE_EP, 0, is_mock);
     }
     return status;
 }
@@ -119,6 +121,7 @@ static ucs_status_t ucg_builtin_recursive_non_pow_two_inter(ucg_builtin_group_ct
                                                             ucg_step_idx_ext_t step_idx,
                                                             ucg_builtin_plan_phase_t **phase,
                                                             uct_ep_h **next_ep,
+                                                            int is_mock,
                                                             ucg_builtin_plan_t *recursive)
 {
     ucs_status_t status = UCS_OK;
@@ -151,7 +154,7 @@ static ucs_status_t ucg_builtin_recursive_non_pow_two_inter(ucg_builtin_group_ct
                     recursive->phs_cnt, peer_index);
                 (*phase)->multi_eps = (*next_ep)++;
                 status = ucg_builtin_connect(ctx, member_list[peer_index], (*phase),
-                    (factor != NUM_TWO) ? (step_peer_idx - 1) : UCG_BUILTIN_CONNECT_SINGLE_EP, 0, 0);
+                    (factor != NUM_TWO) ? (step_peer_idx - 1) : UCG_BUILTIN_CONNECT_SINGLE_EP, 0, is_mock);
             }
             recursive->phs_cnt++;
             recursive->step_cnt++;
@@ -168,6 +171,7 @@ static ucs_status_t ucg_builtin_recursive_non_pow_two(ucg_builtin_group_ctx_t *c
                                                       unsigned step_size,
                                                       unsigned step_cnt,
                                                       unsigned check_swap,
+                                                      int is_mock,
                                                       ucg_builtin_plan_t *recursive)
 {
     ucg_builtin_plan_phase_t *phase = &recursive->phss[recursive->phs_cnt];
@@ -212,7 +216,7 @@ static ucs_status_t ucg_builtin_recursive_non_pow_two(ucg_builtin_group_ctx_t *c
     if (my_index < (NUM_TWO * extra_indexs)) {
         /* pre - processing steps for non power of two processes case */
         status = ucg_builtin_recursive_non_pow_two_pre(ctx, next_ep, phase, my_index, member_list,
-                                                       step_idx, extra_indexs, factor,
+                                                       step_idx, extra_indexs, factor, is_mock,
                                                        recursive);
         if (status != UCS_OK) {
             return status;
@@ -226,7 +230,7 @@ static ucs_status_t ucg_builtin_recursive_non_pow_two(ucg_builtin_group_ctx_t *c
 
     /* Calculate the peers for each step */
     status = ucg_builtin_recursive_non_pow_two_inter(ctx, new_my_index, member_list, step_size, near_power_of_two_step,
-                                                     factor, extra_indexs, check_swap, step_idx, &phase, &next_ep,
+                                                     factor, extra_indexs, check_swap, step_idx, &phase, &next_ep, is_mock,
                                                      recursive);
     if (status != UCS_OK) {
         return status;
@@ -236,7 +240,7 @@ static ucs_status_t ucg_builtin_recursive_non_pow_two(ucg_builtin_group_ctx_t *c
     if (my_index < (NUM_TWO * extra_indexs)) {
         /* after - processing steps for non power of two processes case */
         status = ucg_builtin_recursive_non_pow_two_post(ctx, next_ep, phase, my_index, member_list,
-                                                        step_idx, extra_indexs, factor, near_power_of_two_step,
+                                                        step_idx, extra_indexs, factor, near_power_of_two_step, is_mock,
                                                         recursive);
         if (status != UCS_OK) {
             return status;
@@ -258,6 +262,7 @@ static ucs_status_t ucg_builtin_recursive_pow_two(ucg_builtin_group_ctx_t *ctx,
                                                   unsigned factor,
                                                   unsigned step_cnt,
                                                   unsigned check_swap,
+                                                  int is_mock,
                                                   ucg_builtin_plan_t *recursive)
 {
     ucg_builtin_plan_phase_t *phase = &recursive->phss[recursive->phs_cnt];
@@ -271,7 +276,7 @@ static ucs_status_t ucg_builtin_recursive_pow_two(ucg_builtin_group_ctx_t *ctx,
 
         phase->method = UCG_PLAN_METHOD_REDUCE_RECURSIVE;
         phase->ep_cnt = factor - 1;
-        phase->step_index = recursive->step_cnt + step_idx; /* plus 1 to be consistent with no-power-of two process */
+        phase->step_index = recursive->step_cnt + step_idx + 1; /* plus 1 to be consistent with no-power-of two process */
 #if ENABLE_DEBUG_DATA
             phase->indexes = UCS_ALLOC_CHECK((factor - 1) * sizeof(my_index), "recursive topology indexes");
 #endif
@@ -290,7 +295,7 @@ static ucs_status_t ucg_builtin_recursive_pow_two(ucg_builtin_group_ctx_t *ctx,
             recursive->ep_cnt++;
 
             status = ucg_builtin_connect(ctx, member_list[peer_index], phase,
-                (factor != NUM_TWO) ? (step_peer_idx - 1) : UCG_BUILTIN_CONNECT_SINGLE_EP, 0, 0);
+                (factor != NUM_TWO) ? (step_peer_idx - 1) : UCG_BUILTIN_CONNECT_SINGLE_EP, 0, is_mock);
         }
         /* update the count of phase and step */
         recursive->phs_cnt++;
@@ -315,6 +320,7 @@ ucs_status_t ucg_builtin_recursive_connect(ucg_builtin_group_ctx_t *ctx,
                                            ucg_group_member_index_t member_cnt,
                                            unsigned factor,
                                            unsigned check_swap,
+                                           int is_mock,
                                            ucg_builtin_plan_t *recursive)
 {
     ucg_group_member_index_t my_index = (ucg_group_member_index_t)-1;
@@ -345,10 +351,10 @@ ucs_status_t ucg_builtin_recursive_connect(ucg_builtin_group_ctx_t *ctx,
         ucs_debug("not power of two, step index: %hhu", step_cnt);
         status = ucg_builtin_recursive_non_pow_two(ctx, my_index,
                                                    member_list, member_cnt, factor, step_size,
-                                                   step_cnt, check_swap, recursive);
+                                                   step_cnt, check_swap, is_mock, recursive);
     } else {
         status = ucg_builtin_recursive_pow_two(ctx, my_index, member_list, member_cnt, factor,
-                                               step_cnt, check_swap, recursive);
+                                               step_cnt, check_swap, is_mock, recursive);
     }
     ucg_builtin_recursive_log(recursive);
 
@@ -414,6 +420,7 @@ ucs_status_t ucg_builtin_recursive_create(ucg_builtin_group_ctx_t *ctx,
         my_rank++;
     }
 
+    int is_mock = coll_type->modifiers & UCG_GROUP_COLLECTIVE_MODIFIER_MOCK_EPS;
     ucg_group_member_index_t member_cnt = group_params->member_count;
     ucg_group_member_index_t *member_list = UCS_ALLOC_CHECK(member_cnt * sizeof(ucg_group_member_index_t), "member list");
     ucg_builtin_recursive_init_member_list(member_cnt, member_list);
@@ -439,10 +446,14 @@ ucs_status_t ucg_builtin_recursive_create(ucg_builtin_group_ctx_t *ctx,
         return UCS_ERR_NO_MEMORY;
     }
     memset(recursive, 0, alloc_size);
-    ucs_status_t status = ucg_builtin_recursive_connect(ctx, my_rank, member_list, member_cnt, factor, 1, recursive);
+    ucs_status_t status = ucg_builtin_recursive_connect(ctx, my_rank, member_list, member_cnt, factor, 1, is_mock, recursive);
     if (status != UCS_OK) {
         goto out;
     }
+
+#if ENABLE_DEBUG_DATA
+    snprintf(recursive->plan_name, UCG_BUILTIN_PLANNER_NAME_MAX_LENGTH, "recursive");
+#endif
 
     recursive->super.my_index = my_rank;
     recursive->super.support_non_commutative = 1;

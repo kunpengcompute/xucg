@@ -34,6 +34,10 @@ ucs_config_field_t ucg_config_table[] = {
    "How many members warrant the use of collective transports.\n",
    ucs_offsetof(ucg_context_config_t, coll_iface_member_thresh), UCS_CONFIG_TYPE_UINT},
 
+  {"VOLATILE_DATATYPES", "n",
+   "Should datatypes be treated as volatile and reloaded on each invocation.\n",
+   ucs_offsetof(ucg_context_config_t, is_volatile_datatype), UCS_CONFIG_TYPE_BOOL},
+
   {NULL}
 };
 
@@ -162,6 +166,8 @@ static ucs_status_t ucg_context_init(const ucg_params_t *params,
     ucg_context_t *ctx          = (ucg_context_t*)groups_ctx;
     ctx->next_group_id          = 0;
 
+    memcpy(&ctx->config, config, sizeof(*config));
+
     /* Query all the available planners, to find the total space they require */
     size_t planners_total_size;
     ucs_status_t status = ucg_plan_query(&ctx->planners, &ctx->num_planners,
@@ -181,6 +187,8 @@ static ucs_status_t ucg_context_init(const ucg_params_t *params,
     if (status != UCS_OK) {
         goto cleanup_pctx;
     }
+
+    ucp_context_dev_tl_bitmap(&ctx->ucp_ctx, "memory");
 
     ucs_list_head_init(&ctx->groups_head);
 
@@ -251,14 +259,14 @@ static void ucg_context_copy_used_ucp_params(ucp_params_t *dst,
             break;
 
         case UCP_PARAM_FIELD_ESTIMATED_NUM_PPN:
+            ucp_params_size = ucs_offsetof(ucp_params_t, name);
+            break;
+
+        case UCP_PARAM_FIELD_NAME:
             ucp_params_size = ucs_offsetof(ucp_params_t, context_headroom);
             break;
 
         case UCP_PARAM_FIELD_CONTEXT_HEADROOM:
-            ucp_params_size = ucs_offsetof(ucp_params_t, peer_info);
-            break;
-
-        case UCP_PARAM_FIELD_GROUP_PEER_INFO:
             ucp_params_size = sizeof(ucp_params_t);
             break;
         }
@@ -283,10 +291,6 @@ static void ucg_context_copy_used_ucg_params(ucg_params_t *dst,
         ucs_assert((msb_flag & src->field_mask) == msb_flag);
 
         switch (msb_flag) {
-        case UCG_PARAM_FIELD_JOB_UID:
-            ucg_params_size = ucs_offsetof(ucg_params_t, address);
-            break;
-
         case UCG_PARAM_FIELD_ADDRESS_CB:
             ucg_params_size = ucs_offsetof(ucg_params_t, neighbors);
             break;
@@ -308,10 +312,18 @@ static void ucg_context_copy_used_ucg_params(ucg_params_t *dst,
             break;
 
         case UCG_PARAM_FIELD_MPI_IN_PLACE:
+            ucg_params_size = ucs_offsetof(ucg_params_t, get_global_index_f);
+            break;
+
+        case UCG_PARAM_FIELD_GLOBAL_INDEX:
             ucg_params_size = ucs_offsetof(ucg_params_t, fault);
             break;
 
         case UCG_PARAM_FIELD_HANDLE_FAULT:
+            ucg_params_size = ucs_offsetof(ucg_params_t, job_info);
+            break;
+
+        case UCG_PARAM_FIELD_JOB_INFO:
             ucg_params_size = sizeof(ucg_params_t);
             break;
         }
@@ -431,14 +443,6 @@ ucs_status_t ucg_init_version(unsigned ucg_api_major_version,
     memmove(UCS_PTR_BYTE_OFFSET(tmp, headroom), tmp, sizeof(ucp_context_t));
 #endif
 
-#if ENABLE_ASSERT
-    /* Issue a warning to prevent measuring performance with a debug version */
-    if (ucp_params_arg->peer_info.global_idx == 0) {
-        printf("Note: UCG was built with some debugging enabled, and it should "
-               "not be used for performance measurement.\n");
-    }
-#endif
-
     *context_p = ucs_container_of(*context_p, ucg_context_t, ucp_ctx);
     status     = ucg_context_init(params, config, *context_p);
     if (status != UCS_OK) {
@@ -461,16 +465,9 @@ ucs_status_t ucg_init(const ucg_params_t *params,
                       const ucg_config_t *config,
                       ucg_context_h *context_p)
 {
-    ucs_status_t status = ucg_init_version(UCG_API_MAJOR, UCG_API_MINOR,
-                                           UCP_API_MAJOR, UCP_API_MINOR,
-                                           params, config, context_p);
-
-    if (status == UCS_OK) {
-        (*context_p)->address.lookup_f  = params->address.lookup_f;
-        (*context_p)->address.release_f = params->address.release_f;
-    }
-
-    return status;
+    return ucg_init_version(UCG_API_MAJOR, UCG_API_MINOR,
+                            UCP_API_MAJOR, UCP_API_MINOR,
+                            params, config, context_p);
 }
 
 void ucg_cleanup(ucg_context_h context)

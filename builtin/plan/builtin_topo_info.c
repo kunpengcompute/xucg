@@ -112,6 +112,25 @@ ucs_status_t ucg_builtin_topology_info_create(ucg_builtin_topology_info_params_t
     unsigned node_idx;
     unsigned ppn_idx = 0;
 
+    if (ucg_global_params.job_info.info_type != UCG_TOPO_INFO_PLACEMENT_TABLE) {
+        member_idx                  = group_params->member_count;
+
+        topo_params->node_cnt       = 1;
+        topo_params->subroot_array  = UCS_ALLOC_CHECK(sizeof(member_idx),
+                                                      "subroot_array_trivial");
+        *topo_params->subroot_array = 0;
+
+        topo_params->ppn_cnt        = member_idx;
+        topo_params->rank_same_node = UCS_ALLOC_CHECK(member_idx * sizeof(member_idx),
+                                                      "rank_same_node_trivial");
+
+        for (member_idx = 0; member_idx < group_params->member_count; member_idx++) {
+            topo_params->rank_same_node[member_idx] = member_idx;
+        }
+
+        return UCS_OK;
+    }
+
     uint16_t *node_index = ucg_global_params.job_info.placement[UCG_GROUP_MEMBER_DISTANCE_HOST];
 
     ucg_group_member_index_t myrank = 0;
@@ -167,6 +186,11 @@ ucs_status_t ucg_builtin_topology_info_create(ucg_builtin_topology_info_params_t
 ucs_status_t ucg_builtin_check_ppn(const ucg_group_params_t *group_params,
                                    unsigned *unequal_ppn)
 {
+    if (ucg_global_params.job_info.info_type != UCG_TOPO_INFO_PLACEMENT_TABLE) {
+        *unequal_ppn = 1; /* Actually, we just don't know in this case */
+        return UCS_OK;
+    }
+
     uint16_t *node_index = ucg_global_params.job_info.placement[UCG_GROUP_MEMBER_DISTANCE_HOST];
     ucg_group_member_index_t member_idx;
     volatile unsigned node_cnt = 0;

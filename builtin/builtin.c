@@ -9,11 +9,8 @@
 #include <ucp/core/ucp_request.inl>
 #include <ucg/api/ucg_plan_component.h>
 
-#include <ucg/base/ucg_group.h> // TODO: (alex) remove later
-
 #include "ops/builtin_ops.h"
-#include "ops/builtin_comp_step.inl"
-#include "plan/builtin_plan.h"
+#include "ops/builtin_comp_step.inl" /* ucg_builtin_step_recv_cb() in handler */
 
 /* Backport to UCX v1.6.0 */
 #ifndef UCS_MEMUNITS_INF
@@ -134,46 +131,6 @@ struct ucg_builtin_group_ctx {
 
 extern ucg_plan_component_t ucg_builtin_component;
 
-// TODO: (alex) salvage anything?
-//static ucs_status_t
-//ucg_builtin_choose_topology(enum ucg_collective_modifiers flags,
-//                            ucg_group_member_index_t group_size,
-//                            ucg_builtin_plan_topology_t *topology)
-//{
-//    if (flags & UCG_GROUP_COLLECTIVE_MODIFIER_SINGLE_SOURCE) {
-//        /* MPI_Bcast / MPI_Scatter */
-//        topology->type = UCG_PLAN_TREE_FANOUT;
-//        return UCS_OK;
-//    }
-//
-//    if (flags & UCG_GROUP_COLLECTIVE_MODIFIER_SINGLE_DESTINATION) {
-//        /* MPI_Reduce / MPI_Gather */
-//        // TODO: Alex - test operand/operator support
-//        topology->type = UCG_PLAN_TREE_FANIN;
-//        return UCS_OK;
-//    }
-//
-//    if (flags & UCG_GROUP_COLLECTIVE_MODIFIER_AGGREGATE) {
-//        /* MPI_Allreduce */
-//        if (ucs_popcount(group_size) > 1) {
-//            /* Not a power of two */
-//            topology->type = UCG_PLAN_TREE_FANIN_FANOUT;
-//        } else {
-//            topology->type = UCG_PLAN_RECURSIVE;
-//        }
-//        return UCS_OK;
-//    }
-//
-//    /* MPI_Alltoall */
-//    ucs_assert(flags == 0);
-//    if (ucs_popcount(group_size) == 1) {
-//        topology->type = UCG_PLAN_ALLTOALL_BRUCK;
-//    } else {
-//        topology->type = UCG_PLAN_PAIRWISE;
-//    }
-//    return UCS_OK;
-//}
-
 enum ucg_builtin_plan_topology_type ucg_builtin_choose_type(enum ucg_collective_modifiers flags)
 {
     if (flags & UCG_GROUP_COLLECTIVE_MODIFIER_SINGLE_SOURCE) {
@@ -185,20 +142,23 @@ enum ucg_builtin_plan_topology_type ucg_builtin_choose_type(enum ucg_collective_
     }
 
     if (flags & UCG_GROUP_COLLECTIVE_MODIFIER_AGGREGATE) {
-        if (ucg_algo.recursive) {
+        /*if (ucg_algo.recursive) {
             return UCG_PLAN_RECURSIVE;
         } else if (ucg_algo.ring) {
             return UCG_PLAN_RING;
-        } else {
+        } else */{
             return UCG_PLAN_TREE_FANIN_FANOUT;
         }
     }
 
-    if (flags == 0 /* ucg_predefined_modifiers[UCG_PRIMITIVE_ALLTOALL] */) {
+    if (flags == 0) {
+        /* ucg_predefined_modifiers[UCG_PRIMITIVE_ALLTOALL] */
         return UCG_PLAN_BRUCK;
     }
 
-    if (flags & UCG_GROUP_COLLECTIVE_MODIFIER_ALLGATHER) {
+    if (flags & (UCG_GROUP_COLLECTIVE_MODIFIER_CONCATENATE |
+                 UCG_GROUP_COLLECTIVE_MODIFIER_BROADCAST)) {
+        /* ucg_predefined_modifiers[UCG_PRIMITIVE_ALLGATHER] */
         if (ucg_algo.bruck) {
             return UCG_PLAN_BRUCK;
         } else {
@@ -208,38 +168,6 @@ enum ucg_builtin_plan_topology_type ucg_builtin_choose_type(enum ucg_collective_
 
     return UCG_PLAN_TREE_FANIN_FANOUT;
 }
-
-/*
-void ucg_builtin_swap_net_recv(char *netdata, size_t length, size_t offset,
-                               ucg_builtin_request_t *req)
-{
-    ucg_builtin_op_step_t *step = req->step;
-    ucp_dt_generic_t *gen_dt = req->op->recv_dt;
-    void *state_pack = step->bcopy.pack_state_recv.dt.generic.state;
-    void *state_unpack = step->bcopy.unpack_state.dt.generic.state;
-    char *recv_buffer = (char *)step->recv_buffer;
-    char *tmp_buffer = NULL;
-
-    ucs_debug("swap netdata:%p length:%lu and recv_buffer:%p offset:%lu",
-              netdata, length, recv_buffer, offset);
-
-    tmp_buffer = (char *)ucs_malloc(length, "temp swap buffer");
-    if (tmp_buffer == NULL) {
-        ucs_fatal("no memory for malloc, length:%lu", length);
-    }
-
-    memcpy(tmp_buffer, netdata, length);
-    if (gen_dt != NULL) {
-        gen_dt->ops.pack(state_pack, offset, netdata, length);
-        gen_dt->ops.unpack(state_unpack, offset, tmp_buffer, length);
-    } else {
-        memcpy(netdata, recv_buffer + offset, length);
-        memcpy(recv_buffer + offset, tmp_buffer, length);
-    }
-
-    free(tmp_buffer);
-}
-*/
 
 UCS_PROFILE_FUNC(ucs_status_t, ucg_builtin_am_handler,
                  (ctx, data, length, am_flags),
@@ -258,6 +186,8 @@ UCS_PROFILE_FUNC(ucs_status_t, ucg_builtin_am_handler,
     ucs_status_t status;
     ucp_recv_desc_t *rdesc;
     ucs_ptr_array_t *msg_array;
+    ucg_group_member_index_t idx;
+    ucg_group_member_index_t cnt;
     ucg_builtin_comp_slot_t *slot;
 
     ucg_builtin_group_ctx_t *gctx = (void*)bctx->group_by_id.start[group_id];
@@ -270,48 +200,6 @@ UCS_PROFILE_FUNC(ucs_status_t, ucg_builtin_am_handler,
 
         /* Consume the message if it fits the current collective and step index */
         if (ucs_likely(header->msg.local_id == slot->req.expecting.local_id)) {
-
-
-
-
-            // TODO: (alex) I want to move this to a different location in the code
-            /*
-            if ((slot->req.step->flags & UCG_BUILTIN_OP_STEP_FLAG_SEND_AM_ZCOPY) &&
-                (slot->req.step->flags & UCG_BUILTIN_OP_STEP_FLAG_RECV_AFTER_SEND)) {
-                // Zcopy recv before sending finished, store msg
-                if (slot->req.pending > slot->req.step->fragments_recv) {
-                    if (++slot->req.step->zcopy.num_store > slot->req.step->fragments_recv) {
-                        // recv msg from step - step index = step now index + 256, store msg without count
-                        slot->req.step->zcopy.num_store--;
-                    }
-                    goto am_handler_store;
-                }
-                if (slot->req.step->zcopy.num_store > 0) {
-                    slot->req.step->zcopy.num_store = 0;
-                    (void) ucg_builtin_msg_process(slot, &slot->req);
-                }
-            }
-
-            if ((slot->req.step->flags & UCG_BUILTIN_OP_STEP_FLAG_RECV1_BEFORE_SEND) &&
-                slot->req.recv_comp) {
-                goto am_handler_store;
-            }
-
-            size_t real_length = length - sizeof(ucg_builtin_header_t);
-            char *header_tmp = (char *)header;
-            char *recv_buffer_tmp = (char *)slot->req.step->recv_buffer;
-
-            if (slot->req.step->phase->is_swap) {
-                ucg_builtin_swap_net_recv(data + sizeof(ucg_builtin_header_t),
-                                          length - sizeof(ucg_builtin_header_t),
-                                          header->remote_offset, &slot->req);
-            } */
-
-
-
-
-
-
             /* Make sure the packet indeed belongs to the collective currently on */
             data    = header + 1;
             length -= sizeof(ucg_builtin_header_t);
@@ -319,7 +207,7 @@ UCS_PROFILE_FUNC(ucs_status_t, ucg_builtin_am_handler,
             ucs_trace_req("ucg_builtin_am_handler CB: coll_id %u step_idx %u pending %u",
                           header->msg.coll_id, header->msg.step_idx, slot->req.pending);
 
-            ucg_builtin_step_recv_cb(&slot->req, header->remote_offset, data, length);
+            ucg_builtin_step_recv_cb(&slot->req, header->remote_offset, data, length, 0);
 
             return UCS_OK;
         }
@@ -329,15 +217,6 @@ UCS_PROFILE_FUNC(ucs_status_t, ucg_builtin_am_handler,
                       "coll_id %u expected_id %u step_idx %u expected_idx %u",
                       header->group_id, header->msg.coll_id, slot->req.expecting.coll_id,
                       header->msg.step_idx, slot->req.expecting.step_idx);
-
-#ifdef HAVE_UCT_COLLECTIVES
-        /* In case of a stride - the stored length is actually longer */
-        if (am_flags & UCT_CB_PARAM_FLAG_STRIDE) {
-            length = sizeof(ucg_builtin_header_t) +
-                    (length - sizeof(ucg_builtin_header_t)) *
-                    (gctx->group_params->member_count - 1);
-        }
-#endif
     } else {
         if (!ucs_ptr_array_lookup(&bctx->unexpected, group_id, msg_array)) {
             msg_array = UCS_ALLOC_CHECK(sizeof(*msg_array), "unexpected group");
@@ -346,27 +225,48 @@ UCS_PROFILE_FUNC(ucs_status_t, ucg_builtin_am_handler,
         }
 
         /*
-         * Note: because this message arrived before the corresponding local
-         *       group has been created, we don't know what is the number
-         *       of processes in the group - so we don't know how many items
-         *       to expect in this vector (we only know the size of one item).
-         *       TODO: resolve this corner case... use elem->pending?
+         * Note: This message arrived before the corresponding local group has
+         *       been created, which means it must have used P2P transports.
          */
 #ifdef HAVE_UCT_COLLECTIVES
-        ucs_assert_always((am_flags & UCT_CB_PARAM_FLAG_STRIDE) == 0);
+        ucs_assert((am_flags & UCT_CB_PARAM_FLAG_STRIDE) == 0);
 #endif
     }
 
-    uint64_t data_offset = (ucs_unlikely(am_flags & UCT_CB_PARAM_FLAG_SHIFTED)) ?
-            ((uint64_t*)header)[-1] : 0;
-
-    status = ucp_recv_desc_init(bctx->worker, data, length, (int)data_offset,
-                                am_flags, 0, 0, 0, &rdesc);
-
-    /* Store the message (if the relevant step has not been reached) */
-    if (ucs_likely(!UCS_STATUS_IS_ERR(status))) {
-        (void) ucs_ptr_array_insert(msg_array, rdesc);
+    if (ucs_unlikely(am_flags & UCT_CB_PARAM_FLAG_SHIFTED)) {
+        header = data = UCS_PTR_BYTE_OFFSET(data, ((uint64_t*)data)[-1]);
     }
+
+#ifdef HAVE_UCT_COLLECTIVES
+    if (am_flags & UCT_CB_PARAM_FLAG_STRIDE) {
+        cnt = gctx->group_params->member_count - 1;
+    } else
+#endif
+    cnt = 1;
+    idx = 0;
+
+    do {
+        /* First is redundant, the next are needed to reassemble a batch */
+        ((ucg_builtin_header_t*)data)->header = header->header;
+
+        /* Store the incoming packet in the UCP Worker memory pool */
+        status = ucp_recv_desc_init(bctx->worker, data, length, 0,
+                                    am_flags, 0, 0, 0, &rdesc);
+        if (ucs_unlikely(UCS_STATUS_IS_ERR(status))) {
+            break;
+        }
+
+        /* Store the message pointer (the relevant step hasn't been reached) */
+        (void) ucs_ptr_array_insert(msg_array, rdesc);
+
+        /* The segment is stored completely, regardless of length */
+        if (ucs_unlikely(am_flags & UCT_CB_PARAM_FLAG_DESC)) {
+            break;
+        }
+
+        /* Skip to next chuck of data (STRIDE-only) */
+        data = UCS_PTR_BYTE_OFFSET(data, length);
+    } while (++idx < cnt);
 
     return status;
 }
@@ -545,13 +445,17 @@ static ucs_status_t ucg_builtin_init(ucg_plan_ctx_h pctx,
         return status;
     }
 
+    status = ucg_builtin_init_plan_config(&bctx->config);
+    if (status != UCS_OK) {
+        return status;
+    }
+
     ucs_ptr_array_init(&bctx->group_by_id, "builtin_group_table");
     ucs_ptr_array_init(&bctx->unexpected, "builtin_unexpected_table");
 
-    return ucg_builtin_init_plan_config(&bctx->config) &&
-            ucg_context_set_am_handler(pctx, bctx->am_id,
-                                       ucg_builtin_am_handler,
-                                       ucg_builtin_msg_dump);
+    return ucg_context_set_am_handler(pctx, bctx->am_id,
+                                      ucg_builtin_am_handler,
+                                      ucg_builtin_msg_dump);
 }
 
 static void ucg_builtin_finalize(ucg_plan_ctx_h pctx)
@@ -653,11 +557,11 @@ static void ucg_builtin_clean_phases(ucg_builtin_plan_t *plan)
         if (plan->phss[i].ucp_eps) {
             ucs_free(plan->phss[i].ucp_eps);
         }
-    }
 
-#if ENABLE_DEBUG_DATA
-    ucs_free((void **)&plan->phss[0].indexes);
+#if ENABLE_DEBUG_DATA || ENABLE_FAULT_TOLERANCE
+    ucs_free(plan->phss[i].indexes);
 #endif
+    }
 }
 
 static void ucg_builtin_destroy_plan(ucg_builtin_plan_t *plan)
@@ -666,13 +570,6 @@ static void ucg_builtin_destroy_plan(ucg_builtin_plan_t *plan)
     while (!ucs_list_is_empty(op_head)) {
         ucg_builtin_op_discard(ucs_list_extract_head(op_head, ucg_op_t, list));
     }
-
-#if ENABLE_DEBUG_DATA || ENABLE_FAULT_TOLERANCE
-    ucg_step_idx_t i;
-    for (i = 0; i < plan->phs_cnt; i++) {
-        ucs_free(plan->phss[i].indexes);
-    }
-#endif
 
 #if ENABLE_MT
     ucs_recursive_spinlock_destroy(&plan->super.lock);
@@ -848,11 +745,11 @@ void ucg_builtin_allreduce_decision_fixed(const size_t msg_size,
                                           enum ucg_builtin_allreduce_algorithm *allreduce_algo_decision)
 {
     ucp_datatype_t send_dt;
-    ucg_global_params.datatype.convert(coll_params->send.dtype, &send_dt); //TODO: check success
+    ucg_global_params.datatype.convert_f(coll_params->send.dtype, &send_dt); //TODO: check success
     unsigned is_large_datatype = (ucp_dt_length(send_dt, 1, NULL, NULL) >
                                   large_datatype_threshold);
-    unsigned is_non_commutative = coll_params->send.op
-        && !ucg_global_params.reduce_op.is_commutative_f(coll_params->send.op);
+    unsigned is_non_commutative = (UCG_PARAM_OP(coll_params) != NULL) &&
+            !ucg_global_params.reduce_op.is_commutative_f(UCG_PARAM_OP(coll_params));
     if (is_large_datatype || is_non_commutative) {
         ucg_builtin_plan_decision_in_noncommutative_largedata_case(msg_size, allreduce_algo_decision);
     } else if (msg_size >= UCG_GROUP_MED_MSG_SIZE) {
@@ -1166,8 +1063,8 @@ static void ucg_builtin_prepare_rank_same_unit(const ucg_group_params_t *group_p
 }
 
 ucs_status_t ucg_builtin_check_continuous_number_no_distance_table(const ucg_group_params_t *group_params,
-                                                             enum ucg_group_member_distance domain_distance,
-                                                             unsigned *discont_flag)
+                                                                   enum ucg_group_member_distance domain_distance,
+                                                                   unsigned *discont_flag)
 {
     unsigned ppx = ucg_builtin_calculate_ppx(group_params, domain_distance);
 
@@ -1186,20 +1083,24 @@ ucs_status_t ucg_builtin_check_continuous_number(const ucg_group_params_t *group
                                                  enum ucg_group_member_distance domain_distance,
                                                  unsigned *discont_flag)
 {
-    if ((ucg_global_params.job_info.distance_table == NULL) ||
-        (group_params->rank_map == NULL)) {
+    unsigned i,j;
+
+    if (ucg_global_params.job_info.info_type != UCG_TOPO_INFO_DISTANCE_TABLE) {
         return ucg_builtin_check_continuous_number_no_distance_table(group_params, domain_distance, discont_flag);
     }
 
-    char domain_distance_ch = (char)domain_distance;
     /* Check the topo distance in each line and find all ranks in the same node
        Make sure the ranks in the same node is continuous. */
-    for (unsigned i = 0; i < group_params->member_count; i++) {
-        ucg_group_member_index_t global_i = group_params->rank_map[i];
+    for (i = 0; i < group_params->member_count; i++) {
+        ucg_group_member_index_t global_i;
+        ucg_global_params.get_global_index_f(group_params->cb_context, i, &global_i);
+
         int last_same_unit_rank = -1;
-        for (unsigned j = 0; j < group_params->member_count; j++) {
-            ucg_group_member_index_t global_j = group_params->rank_map[j];
-            if (ucg_global_params.job_info.distance_table[global_i][global_j] > domain_distance_ch) {
+        for (j = 0; j < group_params->member_count; j++) {
+            ucg_group_member_index_t global_j;
+            ucg_global_params.get_global_index_f(group_params->cb_context, j, &global_j);
+
+            if (ucg_global_params.job_info.distance_table[global_i][global_j] > domain_distance) {
                 continue;
             }
 
@@ -1210,6 +1111,7 @@ ucs_status_t ucg_builtin_check_continuous_number(const ucg_group_params_t *group
             last_same_unit_rank = j;
         }
     }
+
     *discont_flag = 0;
     return UCS_OK;
 }
@@ -1257,7 +1159,7 @@ int ucg_builtin_op_can_reuse(const ucg_plan_t *plan, const ucg_op_t *op,
     }
 
     if (params->send.count > 0) {
-        ucg_global_params.datatype.convert(params->send.dtype, &send_dtype);
+        ucg_global_params.datatype.convert_f(params->send.dtype, &send_dtype);
         if (!UCP_DT_IS_CONTIG(send_dtype)) {
             return 0;
         }
@@ -1266,32 +1168,23 @@ int ucg_builtin_op_can_reuse(const ucg_plan_t *plan, const ucg_op_t *op,
     return 1;
 }
 
-/* TODO: (alex) place it elsewhere in the code...
 void ucg_builtin_update_op(const ucg_plan_t *plan, ucg_op_t *op,
                            const ucg_collective_params_t *params)
 {
-    ucp_datatype_t send_dtype = UCP_DATATYPE_CONTIG;
-    ucp_datatype_t recv_dtype = UCP_DATATYPE_CONTIG;
-    ucg_builtin_plan_t *builtin_plan = (ucg_builtin_plan_t *)plan;
     ucg_builtin_op_t *builtin_op = (ucg_builtin_op_t *)op;
 
-    builtin_op->send_dt = NULL;
-    builtin_op->recv_dt = NULL;
-    if (params->send.count > 0 && params->send.dt_len > 0) {
-        ucg_global_params.datatype.convert(params->send.dtype, &send_dtype);
-        if (!UCG_DT_IS_CONTIG(params, send_dtype)) {
-            builtin_op->send_dt = ucp_dt_generic(send_dtype);
-        }
+    builtin_op->send_dt = 0;
+    builtin_op->recv_dt = 0;
+    if (params->send.count > 0) {
+        ucg_global_params.datatype.convert_f(params->send.dtype,
+                                             &builtin_op->send_dt);
     }
 
-    if (params->recv.count > 0 && params->recv.dt_len > 0) {
-        ucg_global_params.datatype.convert(params->recv.dtype, &recv_dtype);
-        if (!UCG_DT_IS_CONTIG(params, recv_dtype)) {
-            builtin_op->recv_dt = ucp_dt_generic(recv_dtype);
-        }
+    if (params->recv.count > 0) {
+        ucg_global_params.datatype.convert_f(params->recv.dtype,
+                                             &builtin_op->recv_dt);
     }
 }
-*/
 
 int ucg_is_noncontig_allreduce(const ucg_group_params_t *group_params,
                                const ucg_collective_params_t *coll_params)
@@ -1300,7 +1193,7 @@ int ucg_is_noncontig_allreduce(const ucg_group_params_t *group_params,
 
     if ((coll_params->send.type.modifiers == ucg_predefined_modifiers[UCG_PRIMITIVE_ALLREDUCE]) &&
         (coll_params->send.count > 0)) {
-        ucg_global_params.datatype.convert(coll_params->send.dtype, &ucp_datatype);
+        ucg_global_params.datatype.convert_f(coll_params->send.dtype, &ucp_datatype);
         if (!UCP_DT_IS_CONTIG(ucp_datatype)) {
             ucs_debug("allreduce non-contiguous datatype");
             return 1;
@@ -1557,6 +1450,12 @@ static ucs_status_t ucg_builtin_plan(ucg_group_ctx_h ctx,
             break;
 
         default:
+#ifdef HAVE_UCT_COLLECTIVES
+            if (UCG_PARAM_ROOT(params) == 0) {
+                status = ucg_builtin_tree_create(builtin_ctx, plan_topo_type, config,
+                                                 builtin_ctx->group_params, coll_type, &plan);
+            } else
+#endif
             status = ucg_builtin_binomial_tree_create(builtin_ctx, plan_topo_type, config,
                                                       builtin_ctx->group_params, coll_type, &plan);
             break;
@@ -1615,10 +1514,12 @@ void  ucg_builtin_set_phase_thresh_max_short(ucg_builtin_group_ctx_t *ctx,
     phase->send_thresh.max_short_one -= phase->send_thresh.max_short_one % DATATYPE_ALIGN;
 }
 
-void ucg_builtin_print_flags(ucg_builtin_op_step_t *step)
+void ucg_builtin_print_flags(ucg_builtin_op_step_t *step, uint32_t op_flags)
 {
     int flag;
     size_t buffer_length = step->buffer_length;
+
+    // TODO: print op_flags (from
 
     flag = ((step->flags & UCG_BUILTIN_OP_STEP_FLAG_RECV_AFTER_SEND) != 0);
     if (flag) {
@@ -1709,8 +1610,8 @@ void ucg_builtin_print_flags(ucg_builtin_op_step_t *step)
         printf("reduce");
         break;
 
-    case UCG_BUILTIN_OP_STEP_COMP_AGGREGATE_REDUCE_UNPACKED:
-        printf("reduce unpacked");
+    case UCG_BUILTIN_OP_STEP_COMP_AGGREGATE_REDUCE_SWAP:
+        printf("reduce swapped");
         break;
 
     case UCG_BUILTIN_OP_STEP_COMP_AGGREGATE_REMOTE_KEY:
@@ -1766,7 +1667,11 @@ static void ucg_builtin_print(ucg_plan_t *plan,
 {
     ucs_status_t status;
     ucg_builtin_plan_t *builtin_plan = (ucg_builtin_plan_t*)plan;
+#if ENABLE_DEBUG_DATA
+    printf("Planner:       built-in - %s\n", builtin_plan->plan_name);
+#else
     printf("Planner:       %s\n", builtin_plan->super.planner->name);
+#endif
     printf("Phases:        %i\n", builtin_plan->phs_cnt);
     printf("P2P Endpoints: %i\n", builtin_plan->ep_cnt);
 
@@ -1843,6 +1748,20 @@ static void ucg_builtin_print(ucg_plan_t *plan,
 
 #if ENABLE_DEBUG_DATA || ENABLE_FAULT_TOLERANCE
         ucg_builtin_plan_phase_t *phase = &builtin_plan->phss[phase_idx];
+        if (phase->coll_flags != 0) {
+            if (phase->coll_flags & UCG_PLAN_CONNECT_FLAG_WANT_BCAST) {
+                printf("bcast");
+            } else if (phase->coll_flags & UCG_PLAN_CONNECT_FLAG_WANT_INCAST) {
+                printf("incast");
+            }
+
+            if (phase->coll_flags & UCG_PLAN_CONNECT_FLAG_AM_ROOT) {
+                printf("-root, ");
+            } else {
+                printf("-leaf, ");
+            }
+        }
+
 #ifdef HAVE_UCT_COLLECTIVES
         if ((phase->ep_cnt == 1) &&
             (phase->indexes[0] == UCG_GROUP_MEMBER_INDEX_UNSPECIFIED)) {
@@ -1873,18 +1792,16 @@ static void ucg_builtin_print(ucg_plan_t *plan,
             }
 
             int zcopy_step;
+            uint32_t op_flags;
             ucg_builtin_op_step_t step[2];
             int8_t *temp_buffer              = NULL;
-            ucg_builtin_op_init_cb_t init_cb = NULL;
-            ucg_builtin_op_fini_cb_t fini_cb = NULL;
 
             printf("Step #%i (actual index used: %u):", phase_idx,
                     builtin_plan->phss[phase_idx].step_index);
 
             status = ucg_builtin_step_create(builtin_plan,
                     &builtin_plan->phss[phase_idx], &flags, coll_params,
-                    &temp_buffer, 1, 1, 1, &init_cb, &fini_cb,
-                    &step[0], &zcopy_step);
+                    &temp_buffer, 1, 1, 1, 1, &op_flags, &step[0], &zcopy_step);
             if (status != UCS_OK) {
                 printf("failed to create, %s", ucs_status_string(status));
             }
@@ -1897,24 +1814,16 @@ static void ucg_builtin_print(ucg_plan_t *plan,
                 }
             }
 
-            if (phase_idx == 0) {
-                printf("\n\tOP initialization:\t");
-                ucg_builtin_print_init_cb_name(init_cb);
-
-                printf("\n\tOP finalization:\t");
-                ucg_builtin_print_fini_cb_name(fini_cb);
-            }
-
             ucg_builtin_step_select_packers(coll_params, 1, 1, &step[0]);
             printf("\n\tPacker (if used):\t");
             ucg_builtin_print_pack_cb_name(step[0].bcopy.pack_single_cb);
-            ucg_builtin_print_flags(&step[0]);
+            ucg_builtin_print_flags(&step[0], op_flags);
 
             if (zcopy_step) {
                 ucg_builtin_step_select_packers(coll_params, 1, 1, &step[1]);
                 printf("\nExtra step - RMA operation:\n\tPacker (if used):\t");
                 ucg_builtin_print_pack_cb_name(step[1].bcopy.pack_single_cb);
-                ucg_builtin_print_flags(&step[1]);
+                ucg_builtin_print_flags(&step[1], 0);
             }
         }
     }
@@ -1924,8 +1833,8 @@ static void ucg_builtin_print(ucg_plan_t *plan,
     }
 }
 
-static uct_iface_attr_t mock_ep_attr = {0};
-static uct_iface_t mock_iface = {0};
+static uct_iface_t mock_iface;
+static uct_iface_attr_t mock_ep_attr;
 static uct_ep_t mock_ep = { .iface = &mock_iface };
 
 
@@ -1982,6 +1891,7 @@ ucs_status_t ucg_builtin_connect(ucg_builtin_group_ctx_t *ctx,
                                  int is_mock)
 {
 #if ENABLE_FAULT_TOLERANCE || ENABLE_DEBUG_DATA
+    phase->coll_flags = flags;
     if (phase->indexes == NULL) {
         phase->indexes = UCS_ALLOC_CHECK(sizeof(ucg_group_member_index_t) *
                                          phase->ep_cnt, "ucg_phase_indexes");
@@ -2038,6 +1948,8 @@ ucs_status_t ucg_builtin_connect(ucg_builtin_group_ctx_t *ctx,
     phase->host_proc_cnt = ctx->host_proc_cnt;
     if (phase_ep_index == UCG_BUILTIN_CONNECT_SINGLE_EP) {
         phase->single_ep = ep;
+        phase->recv_thresh.initialized = 0;
+        ucs_assert(phase->ep_cnt == 1);
     } else {
         /*
          * Only avoid for case of Bruck plan because phase->ep_cnt = 1
@@ -2049,7 +1961,11 @@ ucs_status_t ucg_builtin_connect(ucg_builtin_group_ctx_t *ctx,
             phase->method != UCG_PLAN_METHOD_ALLGATHER_RING) {
             ucs_assert(phase_ep_index < phase->ep_cnt);
         }
+        if (phase_ep_index == 0) {
+            phase->recv_thresh.initialized = 0;
+        }
         phase->multi_eps[phase_ep_index] = ep;
+        ucs_assert(flags == 0);
     }
 
     /* Set the thresholds */

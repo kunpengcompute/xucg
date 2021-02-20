@@ -194,6 +194,8 @@ void ucg_plan_finalize(ucg_plan_desc_t *descs, unsigned desc_cnt,
 
 ucs_status_t ucg_plan_group_create(ucg_group_h group)
 {
+    kh_init_inplace(ucg_group_ep, &group->eps);
+
     ucg_group_foreach(group) {
         /* Create the per-planner per-group context */
         ucs_status_t status = comp->create(pctx, gctx, group, &group->params);
@@ -210,6 +212,8 @@ void ucg_plan_group_destroy(ucg_group_h group)
     ucg_group_foreach(group) {
         comp->destroy(gctx);
     }
+
+    kh_destroy_inplace(ucg_group_ep, &group->eps);
 }
 
 void ucg_plan_print_info(ucg_plan_desc_t *descs, unsigned desc_cnt, FILE *stream)
@@ -319,7 +323,9 @@ ucs_status_t ucg_plan_connect(ucg_group_h group,
                               uct_md_h *md_p, const uct_md_attr_t    **md_attr_p)
 {
     int ret;
+    ucp_ep_h ucp_ep;
     ucs_status_t status;
+    ucp_lane_index_t lane;
     size_t remote_addr_len;
     ucg_group_member_index_t idx;
 
@@ -327,8 +333,27 @@ ucs_status_t ucg_plan_connect(ucg_group_h group,
     void *group_cb_ctx         = group->params.cb_context;
     int is_root                = flags & UCG_PLAN_CONNECT_FLAG_AM_ROOT;
 
+    if (flags) {
+        if (group->root_ep == NULL) {
+            /* This is the broadcast during group creation - fallback to P2P */
+            return UCS_ERR_UNREACHABLE;
+        }
+
+        if ((group_idx != 0) && !(flags & UCG_PLAN_CONNECT_FLAG_AM_ROOT)) {
+            /* Connecting to a non-zero root - need address broadcast */
+            status = ucg_group_wireup_coll_ifaces(group, group_idx, &ucp_ep);
+            if (status != UCS_OK) {
+                return status;
+            }
+        } else {
+            ucp_ep = group->root_ep;
+        }
+
+        goto am_retry;
+    }
+
     if (ucg_global_params.field_mask & UCG_PARAM_FIELD_GLOBAL_INDEX) {
-        ret = ucg_global_params.get_global_index(group_cb_ctx, group_idx, &idx);
+        ret = ucg_global_params.get_global_index_f(group_cb_ctx, group_idx, &idx);
         if (ret) {
             ucs_error("Failed to get the global index for group #%u index #%u",
                       group->params.id, group_idx);
@@ -342,7 +367,6 @@ ucs_status_t ucg_plan_connect(ucg_group_h group,
     ucs_trace("connecting with flags=%u to remote peer #%u", flags, idx);
 
     /* Look-up the UCP endpoint based on the index */
-    ucp_ep_h ucp_ep;
     khiter_t iter = kh_get(ucg_group_ep, &group->eps, idx);
     if (iter != kh_end(&group->eps)) {
         /* Use the cached connection */
@@ -380,7 +404,6 @@ ucs_status_t ucg_plan_connect(ucg_group_h group,
     }
 
     /* Connect for point-to-point communication */
-    ucp_lane_index_t lane;
 am_retry:
 #ifdef HAVE_UCT_COLLECTIVES
     if (flags & UCG_PLAN_CONNECT_FLAG_WANT_INCAST) {
@@ -443,6 +466,25 @@ am_retry:
     *md_p      = ucp_ep_md(ucp_ep, lane);
     *md_attr_p = ucp_ep_md_attr(ucp_ep, lane);
     *ep_attr_p = ucp_ep_get_iface_attr(ucp_ep, lane);
+
+    /* Sanity checks */
+    ucs_assert((*md_p) != NULL);
+    ucs_assert((*md_attr_p) != NULL);
+    ucs_assert((*ep_attr_p) != NULL);
+    if (flags) {
+        ucs_assert(ucp_ep_get_incast_lane(ucp_ep) !=
+                   ucp_ep_get_bcast_lane(ucp_ep));
+        ucs_assert(ucp_ep_get_incast_uct_ep(ucp_ep) !=
+                   ucp_ep_get_bcast_uct_ep(ucp_ep));
+
+        if (flags & UCG_PLAN_CONNECT_FLAG_WANT_INCAST) {
+            ucs_assert(((*ep_attr_p)->cap.flags & UCT_IFACE_FLAG_INCAST) != 0);
+        }
+
+        if (flags & UCG_PLAN_CONNECT_FLAG_WANT_BCAST) {
+            ucs_assert(((*ep_attr_p)->cap.flags & UCT_IFACE_FLAG_BCAST) != 0);
+        }
+    }
 
     return UCS_OK;
 }

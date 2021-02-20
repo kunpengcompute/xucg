@@ -11,10 +11,10 @@
 #include <ucs/datastruct/list.h>
 #include <ucs/profile/profile.h>
 #include <ucs/debug/memtrack.h>
-#include <ucp/core/ucp_worker.h>
-#include <ucp/wireup/address.h>
 #include <ucg/api/ucg_mpi.h>
 
+#include <ucp/core/ucp_worker.h> /* for ucp_worker_add_resource_ifaces */
+#include <ucp/wireup/address.h> /* for ucp_address_pack/unpack */
 
 #define UCG_GROUP_PARAM_REQUIRED_MASK (UCG_GROUP_PARAM_FIELD_MEMBER_COUNT |\
                                        UCG_GROUP_PARAM_FIELD_MEMBER_INDEX |\
@@ -58,14 +58,9 @@ static ucs_stats_class_t ucg_group_stats_class = {
 
 void ucg_init_group_cache(struct ucg_group *new_group)
 {
-    unsigned idx, rank, algo_idx;
-    for (algo_idx = 0; algo_idx <  UCG_GROUP_MSG_SIZE_LEVEL; algo_idx++) {
-        for (rank = 0; rank < UCG_GROUP_MAX_ROOT_PARAM; rank++) {
-            for (idx = 0; idx < UCG_GROUP_MAX_COLL_TYPE_BUCKETS; idx++) {
-                new_group->cache[algo_idx][rank][idx] = NULL;
-            }
-        }
-     }
+    new_group->cache_size = 0;
+    memset(new_group->cache_by_modifiers, 0, sizeof(new_group->cache_by_modifiers));
+    memset(new_group->cache_nonzero_root, 0, sizeof(new_group->cache_nonzero_root));
 }
 
 void ucg_init_group_root_used(struct ucg_group *new_group)
@@ -124,95 +119,87 @@ static inline ucs_status_t ucg_group_plan(ucg_group_h group,
     return UCS_OK;
 }
 
+#if HAVE_UCP_EXTENSIONS
 static ucs_status_t
 ucg_group_wireup_coll_iface_calc(enum ucg_group_member_distance *distance,
                                  ucg_group_member_index_t member_count,
                                  uint32_t *proc_idx, uint32_t *proc_cnt)
 {
     ucs_status_t status = UCS_ERR_INVALID_PARAM;
-    ucg_group_member_index_t idx, cnt = 0;
+    ucg_group_member_index_t idx;
 
     for (idx = 0; idx < member_count; idx++) {
         if (distance[idx] == UCG_GROUP_MEMBER_DISTANCE_NONE) {
             *proc_idx = (uint32_t)idx;
             status    = UCS_OK;
-        } else if (distance[idx] <= UCG_GROUP_MEMBER_DISTANCE_HOST) {
+        }
+        if (distance[idx] <= UCG_GROUP_MEMBER_DISTANCE_HOST) {
             (*proc_cnt)++;
         }
     }
 
-    *proc_cnt = (uint32_t)cnt;
-
     return status;
 }
 
-static ucs_status_t ucg_group_wireup_coll_iface_create(ucg_group_h group,
-                                                       int is_bcast)
+static ucs_status_t
+ucg_group_wireup_coll_iface_create(ucg_group_h group,
+                                   unsigned *iface_id_base_p,
+                                   ucp_tl_bitmap_t *coll_tl_bitmap_p)
 {
     ucs_status_t status;
 
-    ucp_rsc_index_t tl_id = is_bcast ? group->context->bcast_id :
-                                       group->context->incast_id;
-
-    ucp_worker_iface_t **wiface = is_bcast ? &group->bcast_iface :
-                                             &group->incast_iface;
-
-    uct_iface_params_t iface_params = {
-            .field_mask           = UCT_IFACE_PARAM_FIELD_OPEN_MODE |
-                                    UCT_IFACE_PARAM_FIELD_DEVICE |
-                                    UCT_IFACE_PARAM_FIELD_COLL_INFO,
-
-            .open_mode            = UCT_IFACE_OPEN_MODE_DEVICE,
-
-            .mode = {
-                .device = {
-                        .tl_name  = NULL, // TODO: resource->tl_rsc.tl_name,
-                        .dev_name = NULL  // TODO: resource->tl_rsc.dev_name
-                }
-            },
-
-            .global_info = {
-                    .proc_cnt = group->params.member_count,
-                    .proc_idx = group->params.member_index
-            }
+    uct_iface_params_t params = {
+        .field_mask = UCT_IFACE_PARAM_FIELD_COLL_INFO,
+        // TODO: also support UCT_IFACE_PARAM_FIELD_INCAST_CB
+        .global_info = {
+            .proc_cnt = group->params.member_count,
+            .proc_idx = group->params.member_index
+        }
     };
-
-    // TODO: the interface will contain all the members - should be optimized...
 
     ucs_assert(group->params.field_mask & UCG_GROUP_PARAM_FIELD_DISTANCES);
     status = ucg_group_wireup_coll_iface_calc(group->params.distance,
                                               group->params.member_count,
-                                              &iface_params.host_info.proc_cnt,
-                                              &iface_params.host_info.proc_cnt);
+                                              &params.host_info.proc_idx,
+                                              &params.host_info.proc_cnt);
     if (status != UCS_OK) {
         return status;
     }
 
-    status = ucp_worker_iface_open(group->worker, tl_id, &iface_params, wiface);
-    if (status != UCS_OK) {
-        return status;
-    }
-
-    return ucp_worker_iface_init(group->worker, tl_id, *wiface);
+    return ucp_worker_add_resource_ifaces(group->worker, &params,
+                                          iface_id_base_p, coll_tl_bitmap_p);
 }
 
-static ucs_status_t ucg_group_wireup_coll_iface_bcast_addresses(ucg_group_h group,
-                                                                void *addrs,
-                                                                size_t addr_len)
+static void ucg_group_compreq_set1(void *req, ucs_status_t status)
 {
-    int is_done;
-    ucg_coll_h first_bcast;
+    *(int*)req = 1;
+}
+
+static ucs_status_t
+ucg_group_wireup_coll_iface_bcast_addresses(ucg_group_h group,
+                                            void *addrs,
+                                            size_t addr_len,
+                                            ucg_group_member_index_t root)
+{
+    int is_done = 0;
+    ucg_op_t *first_bcast = NULL;
 
     ucs_status_t status = ucg_coll_bcast_init(addrs, addrs, addr_len, NULL,
-                                              NULL, 0, 0, group, &first_bcast);
+                                              NULL, 0, 0, group,
+                                              (void**)&first_bcast);
     if (status != UCS_OK) {
         return status;
     }
 
-    status = ucg_collective_start(first_bcast, &is_done);
+    first_bcast->compreq_f = ucg_group_compreq_set1;
 
-    while (!is_done) {
-        ucp_worker_progress(group->worker);
+    status = ucg_collective_start(first_bcast, &is_done);
+    if (!UCS_STATUS_IS_ERR(status)) {
+        while (!is_done) {
+            ucp_worker_progress(group->worker);
+        }
+
+        status = UCS_OK;
     }
 
     ucg_collective_destroy(first_bcast);
@@ -220,43 +207,49 @@ static ucs_status_t ucg_group_wireup_coll_iface_bcast_addresses(ucg_group_h grou
     return status;
 }
 
-static ucs_status_t ucg_group_wireup_coll_ifaces(ucg_group_h group)
+ucs_status_t ucg_group_wireup_coll_ifaces(ucg_group_h group,
+                                          ucg_group_member_index_t root,
+                                          ucp_ep_h *ep_p)
 {
     void *addrs;
     size_t addr_len;
     ucs_status_t status;
+    unsigned iface_id_base;
+    ucp_tl_bitmap_t coll_tl_bitmap;
     ucp_unpacked_address_t unpacked;
 
     ucp_worker_h worker = group->worker;
-    uint64_t tl_bitmap  = group->context->bcast_id |
-                          group->context->incast_id;
     unsigned pack_flags = UCP_ADDRESS_PACK_FLAG_DEVICE_ADDR |
                           UCP_ADDRESS_PACK_FLAG_IFACE_ADDR;
-    unsigned init_flags = UCP_EP_INIT_CREATE_AM_LANE;
 
-    /* Create a broadcast interface for the new communicator */
-    status = ucg_group_wireup_coll_iface_create(group, 1);
+#if ENABLE_DEBUG_DATA
+    pack_flags |= UCP_ADDRESS_PACK_FLAG_WORKER_NAME;
+#endif
+
+    /* Create collective interfaces for the new communicator */
+    UCS_ASYNC_BLOCK(&worker->async);
+    status = ucg_group_wireup_coll_iface_create(group, &iface_id_base,
+                                                &coll_tl_bitmap);
+    UCS_ASYNC_UNBLOCK(&worker->async);
     if (status != UCS_OK) {
         return status;
     }
 
-    /* Create an incast interface for the new communicator */
-    status = ucg_group_wireup_coll_iface_create(group, 0);
-    if (status != UCS_OK) {
-        // TODO: cleanup
-        return status;
+    if (UCS_BITMAP_IS_ZERO_INPLACE(&coll_tl_bitmap)) {
+        return UCS_ERR_UNREACHABLE;
     }
 
     /* Root prepares the address (the rest will be overwritten...) */
-    status = ucp_address_pack(worker, NULL, tl_bitmap, pack_flags,
-                              NULL, &addr_len, &addrs);
+    status = ucp_address_pack(worker, NULL, &coll_tl_bitmap, iface_id_base,
+                              pack_flags, NULL, &addr_len, &addrs);
     if (status != UCS_OK) {
         // TODO: cleanup
         return status;
     }
 
     /* Broadcast the address */
-    status = ucg_group_wireup_coll_iface_bcast_addresses(group, addrs, addr_len);
+    status = ucg_group_wireup_coll_iface_bcast_addresses(group, addrs,
+                                                         addr_len, root);
     if (status != UCS_OK) {
         // TODO: cleanup
         return status;
@@ -269,17 +262,23 @@ static ucs_status_t ucg_group_wireup_coll_ifaces(ucg_group_h group)
     }
 
     /* Connect to the address (for root - loopback) */
-    ucp_ep_create_to_worker_addr(worker, tl_bitmap, &unpacked, init_flags,
-                                 "for incast/bcast", &group->root_ep);
-    if (status != UCS_OK) {
-        // TODO: cleanup
-        return status;
-    }
+    UCS_ASYNC_BLOCK(&worker->async);
+    status = ucp_ep_create_to_worker_addr(worker, &coll_tl_bitmap, iface_id_base,
+                                          &unpacked, 0, "collective ep", ep_p);
+    UCS_ASYNC_UNBLOCK(&worker->async);
 
     ucs_free(addrs);
 
+    return status;
+}
+#else
+ucs_status_t ucg_group_wireup_coll_ifaces(ucg_group_h group,
+                                          ucg_group_member_index_t root,
+                                          ucp_ep_h *ep_p)
+{
     return UCS_OK;
 }
+#endif
 
 ucs_status_t ucg_group_create(ucp_worker_h worker,
                               const ucg_group_params_t *params,
@@ -341,22 +340,16 @@ ucs_status_t ucg_group_create(ucp_worker_h worker,
         goto cleanup_stats;
     }
 
-    /* Clear the cache */
-    group->cache_size = 0;
-    memset(group->cache, 0, sizeof(group->cache));
-
-    ucs_list_add_tail(&ctx->groups_head, &group->list);
-
-    if (group->params.member_count >= ctx->config.coll_iface_member_thresh) {
-        status = ucg_group_wireup_coll_ifaces(group);
-        if (status != UCS_OK) {
-            ucg_group_destroy(group);
-            return status;
-        }
-    }
-
     ucg_init_group_cache(group);
     ucg_init_group_root_used(group);
+    ucs_list_add_tail(&ctx->groups_head, &group->list);
+
+    group->root_ep = NULL;
+    if ((group->params.member_count >= ctx->config.coll_iface_member_thresh) &&
+        (group->params.cb_context != NULL)) {
+        (void) ucg_group_wireup_coll_ifaces(group, 0, &group->root_ep);
+        /* May fail if no collective transports are present */
+    }
 
     *group_p = group;
     return UCS_OK;
@@ -432,11 +425,12 @@ static int ucg_chk_noncontig_allreduce_plan(const ucg_collective_params_t *coll_
 
 void ucg_get_cache_plan(unsigned int message_size_level, unsigned int coll_root,
                         ucg_group_h group, const ucg_collective_params_t *params,
-                        ucg_plan_t **cache_plan)
+                        ucg_plan_t ***cache_plan)
 {
     ucg_group_member_index_t root = params->send.type.root;
 
-    ucg_plan_t *plan = group->cache[message_size_level][coll_root][params->send.type.plan_cache_index];
+    ucg_plan_t **plan_p = &group->cache_nonzero_root[message_size_level][coll_root];
+    ucg_plan_t *plan = *plan_p;
     if (plan == NULL) {
         *cache_plan = NULL;
         return;
@@ -453,13 +447,12 @@ void ucg_get_cache_plan(unsigned int message_size_level, unsigned int coll_root,
         return;
     }
 
-    /* TODO: (alex) need to find a good way to keep the config private, but still filter by message size... maybe new component API?
-    ucg_builtin_config_t *config = (ucg_builtin_config_t *)plan->planner->config; // TODO: only available in (builtin-)bctx->config
+    /* TODO: fix problem - only works for builtin...
+    ucg_builtin_config_t *config = (ucg_builtin_config_t *)plan->planner->component->config;
     if (params->send.dtype > config->large_datatype_threshold && !plan->support_large_datatype) {
         *cache_plan = NULL;
         return;
-    }
-    */
+    }*/
 
     if (ucg_chk_noncontig_allreduce_plan(params, &group->params, plan)) {
         *cache_plan = NULL;
@@ -477,22 +470,7 @@ void ucg_get_cache_plan(unsigned int message_size_level, unsigned int coll_root,
     }
 
     ucs_debug("select plan from cache: %p", plan);
-    *cache_plan = plan;
-}
-
-void ucg_update_group_cache(ucg_group_h group,
-                            unsigned int message_size_level,
-                            unsigned int coll_root,
-                            const ucg_collective_params_t *params,
-                            ucg_plan_t *plan)
-{
-    if (group->cache[message_size_level][coll_root][params->send.type.plan_cache_index] != NULL) {
-        // TODO: (alex) need to avoid memory leak without using "buildin" specifically
-        // ucg_builtin_plan_t *builtin_plan = ucs_derived_of(group->cache[message_size_level][coll_root][params->plan_cache_index], ucg_builtin_plan_t);
-        // (void)ucg_builtin_destroy_plan(builtin_plan, group);
-        group->cache[message_size_level][coll_root][params->send.type.plan_cache_index] = NULL;
-    }
-    group->cache[message_size_level][coll_root][params->send.type.plan_cache_index] = plan;
+    *cache_plan = plan_p;
 }
 
 void ucg_collective_create_choose_algorithm(unsigned msg_size, unsigned *message_size_level)
@@ -513,49 +491,55 @@ UCS_PROFILE_FUNC(ucs_status_t, ucg_collective_create,
         (group, params, coll), ucg_group_h group,
         const ucg_collective_params_t *params, ucg_coll_h *coll)
 {
-    /* check the recycling/cache for this collective */
     int is_match;
-    ucg_op_t *op = NULL;
-    ucs_status_t status;
-    if (group == NULL || params == NULL || coll == NULL || params->send.count < 0) {
-        status = UCS_ERR_INVALID_PARAM;
-        goto out;
-    }
-
-    /* find the plan of current root whether has been established */
-    ucg_group_member_index_t root = UCG_ROOT_RANK(params);
+    ucg_op_t *op;
+    ucg_plan_t *plan;
+    ucg_plan_t **plan_p;
     unsigned coll_root;
-    ucp_datatype_t send_dt;
+    unsigned coll_mask;
     unsigned message_size_level;
-    unsigned is_coll_root_found = 1;
+    ucs_status_t status;
 
-    status = ucg_builtin_convert_datatype(params->send.dtype, &send_dt);
-    if (ucs_unlikely(status != UCS_OK)) {
-        return status;
-    }
-    unsigned msg_size = ucp_dt_length(send_dt, params->send.count, NULL, NULL);
-
-    if (root >= group->params.member_count) {
-        status = UCS_ERR_INVALID_PARAM;
-        ucs_error("Invalid root[%u] for communication group size[%u]", root, group->params.member_count);
-        goto out;
+    /* Sanity check */
+    if (ucs_unlikely((group == NULL) || (params == NULL) || (coll == NULL))) {
+        return UCS_ERR_INVALID_PARAM;
     }
 
-    /* root cache has been not found */
-    if (root != group->root_used[root % UCG_GROUP_MAX_ROOT_PARAM]) {
-        group->root_used[root % UCG_GROUP_MAX_ROOT_PARAM] = root;
-        is_coll_root_found = 0;
-    }
-    coll_root = root % UCG_GROUP_MAX_ROOT_PARAM;
+    ucg_group_member_index_t root = UCG_ROOT_RANK(params);
+    if (ucs_likely(root == 0)) {
+        uint16_t modifiers = UCG_PARAM_TYPE(params).modifiers;
+        coll_mask          = modifiers & UCG_GROUP_CACHE_MODIFIER_MASK;
+        plan_p             = &group->cache_by_modifiers[coll_mask];
+    } else {
+        /* find the plan of current root whether has been established */
+        ucp_datatype_t send_dt;
+        // TODO: unsigned is_coll_root_found = 1;
 
-    ucg_collective_create_choose_algorithm(msg_size, &message_size_level);
+        status = ucg_builtin_convert_datatype(params->send.dtype, &send_dt);
+        if (ucs_unlikely(status != UCS_OK)) {
+            return status;
+        }
+        unsigned msg_size = ucp_dt_length(send_dt, params->send.count, NULL, NULL);
 
-    ucg_plan_t *plan = NULL;
-    if (is_coll_root_found) {
-        ucg_get_cache_plan(message_size_level, coll_root, group, params, &plan);
+        if (root >= group->params.member_count) {
+            ucs_error("Invalid root[%u] for communication group size[%u]", root, group->params.member_count);
+            return UCS_ERR_INVALID_PARAM;
+        }
+
+        /* root cache has been not found */
+        if (root != group->root_used[root % UCG_GROUP_MAX_ROOT_PARAM]) {
+            group->root_used[root % UCG_GROUP_MAX_ROOT_PARAM] = root;
+            // TODO: is_coll_root_found = 0;
+        }
+
+        ucg_collective_create_choose_algorithm(msg_size, &message_size_level);
+
+        coll_root = root % UCG_GROUP_MAX_ROOT_PARAM;
+        ucg_get_cache_plan(message_size_level, coll_root, group, params, &plan_p);
     }
 
     /* check the recycling/cache for this collective */
+    plan = *plan_p;
     if (ucs_likely(plan != NULL)) {
         UCG_GROUP_THREAD_CS_ENTER(plan)
 
@@ -576,7 +560,7 @@ UCS_PROFILE_FUNC(ucs_status_t, ucg_collective_create,
             } else
 #endif
             is_match = (memcmp(params, &op->params, UCS_SYS_CACHE_LINE_SIZE) == 0);
-            if (is_match && ucg_builtin_op_can_reuse(plan, op, params)) {
+            if (is_match) { // TODO: && ucg_builtin_op_can_reuse(plan, op, params)) {
                 ucs_list_del(&op->list);
                 UCG_GROUP_THREAD_CS_EXIT(plan);
                 status = UCS_OK;
@@ -591,14 +575,14 @@ UCS_PROFILE_FUNC(ucs_status_t, ucg_collective_create,
                       (uint64_t)UCG_PARAM_TYPE(params).root);
 
         /* create the actual plan for the collective operation */
-        status = ucg_group_plan(group, params, &plan);
+        status = ucg_group_plan(group, params, plan_p);
         if (status != UCS_OK) {
             goto out;
         }
 
-        UCG_GROUP_THREAD_CS_ENTER(plan);
+        plan = *plan_p;
 
-        ucg_update_group_cache(group, msg_size, coll_root, params, plan);
+        UCG_GROUP_THREAD_CS_ENTER(plan);
 
         UCS_STATS_UPDATE_COUNTER(group->stats, UCG_GROUP_STAT_PLANS_CREATED, 1);
     }

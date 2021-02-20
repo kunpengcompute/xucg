@@ -102,7 +102,7 @@ enum ucg_builtin_op_step_comp_aggregation {
     UCG_BUILTIN_OP_STEP_COMP_AGGREGATE_WRITE,
     UCG_BUILTIN_OP_STEP_COMP_AGGREGATE_GATHER,
     UCG_BUILTIN_OP_STEP_COMP_AGGREGATE_REDUCE,
-    UCG_BUILTIN_OP_STEP_COMP_AGGREGATE_REDUCE_UNPACKED,
+    UCG_BUILTIN_OP_STEP_COMP_AGGREGATE_REDUCE_SWAP,
 
     /* Unpacking remote memory keys (for Rendezvous protocol) */
     UCG_BUILTIN_OP_STEP_COMP_AGGREGATE_REMOTE_KEY
@@ -113,7 +113,9 @@ enum ucg_builtin_op_step_comp_flags {
     UCG_BUILTIN_OP_STEP_COMP_FLAG_FRAGMENTED_DATA = UCS_BIT(1),
     UCG_BUILTIN_OP_STEP_COMP_FLAG_PACKED_LENGTH   = UCS_BIT(2),
     UCG_BUILTIN_OP_STEP_COMP_FLAG_PACKED_DATATYPE = UCS_BIT(3),
-    UCG_BUILTIN_OP_STEP_COMP_FLAG_LONG_BUFFERS    = UCS_BIT(4)
+    UCG_BUILTIN_OP_STEP_COMP_FLAG_LONG_BUFFERS    = UCS_BIT(4),
+
+    UCG_BUILTIN_OP_STEP_COMP_FLAG_MASK            = UCS_MASK(5)
 }; /* Note: only 4 bits are allocated for this field in ucg_builtin_op_step_t */
 
 enum ucg_builtin_op_step_comp_criteria {
@@ -164,7 +166,7 @@ typedef struct ucg_builtin_op_step {
     /* --- 8 bytes --- */
 
     ucg_builtin_plan_phase_t  *phase;
-    int8_t                    *send_buffer;
+    uint8_t                   *send_buffer;
     union {
         size_t                 buffer_length;
         size_t                 dtype_length;
@@ -190,7 +192,7 @@ typedef struct ucg_builtin_op_step {
 #define UCG_BUILTIN_FRAG_PENDING ((uint8_t)-1)
     volatile uint8_t          *fragment_pending;
 
-    int8_t                    *recv_buffer;
+    uint8_t                   *recv_buffer;
     int                       *var_counts;
     int                       *var_displs;
     uct_md_h                   uct_md;
@@ -201,9 +203,6 @@ typedef struct ucg_builtin_op_step {
             uct_pack_callback_t  pack_full_cb;
             uct_pack_callback_t  pack_part_cb;
             uct_pack_callback_t  pack_single_cb;
-            ucp_dt_state_t       pack_state;
-            ucp_dt_state_t       unpack_state;
-            ucp_dt_state_t       pack_state_recv;
         } bcopy;
         struct {
             uct_mem_h            memh;   /* Data buffer memory handle */
@@ -215,19 +214,48 @@ typedef struct ucg_builtin_op_step {
     };
 } UCS_S_PACKED UCS_V_ALIGNED(UCS_SYS_CACHE_LINE_SIZE) ucg_builtin_op_step_t;
 
+enum ucg_builtin_op_flags {
+    UCG_BUILTIN_OP_FLAG_BARRIER         = UCS_BIT(0),
+    UCG_BUILTIN_OP_FLAG_REDUCE          = UCS_BIT(1),
+    UCG_BUILTIN_OP_FLAG_ALLTOALL        = UCS_BIT(2),
+    UCG_BUILTIN_OP_FLAG_SCATTER         = UCS_BIT(3),
+    UCG_BUILTIN_OP_FLAG_GATHER_TERMINAL = UCS_BIT(4),
+    UCG_BUILTIN_OP_FLAG_GATHER_WAYPOINT = UCS_BIT(5),
+    UCG_BUILTIN_OP_FLAG_OPTIMIZE_CB     = UCS_BIT(6),
+    UCG_BUILTIN_OP_FLAG_NON_CONTIGUOUS  = UCS_BIT(7),
+
+    UCG_BUILTIN_OP_FLAG_SWITCH_MASK     = UCS_MASK(8),
+
+    /* Various flags - only for non-contiguous cases */
+    UCG_BUILTIN_OP_FLAG_VOLATILE_DT     = UCS_BIT(8),
+    UCG_BUILTIN_OP_FLAG_SEND_PACK       = UCS_BIT(9),
+    UCG_BUILTIN_OP_FLAG_SEND_UNPACK     = UCS_BIT(10),
+    UCG_BUILTIN_OP_FLAG_RECV_PACK       = UCS_BIT(11),
+    UCG_BUILTIN_OP_FLAG_RECV_UNPACK     = UCS_BIT(12)
+};
+
+/* Below are the flags relevant for step completion, a.k.a. op finalize stage */
+#define UCG_BUILTIN_OP_FLAG_FINALIZE_MASK (UCG_BUILTIN_OP_FLAG_BARRIER     | \
+                                           UCG_BUILTIN_OP_FLAG_ALLTOALL    | \
+                                           UCG_BUILTIN_OP_FLAG_OPTIMIZE_CB | \
+                                           UCG_BUILTIN_OP_FLAG_NON_CONTIGUOUS)
+
 struct ucg_builtin_op {
     ucg_op_t                 super;
-    ucg_builtin_op_step_t  **current; /**< points to the current step executed */
-    unsigned                 opt_cnt; /**< optimization count-down */
-    ucg_builtin_op_optm_cb_t optm_cb; /**< optimization function for the operation */
-    ucg_builtin_op_init_cb_t init_cb; /**< Initialization function for the operation */
-    ucg_builtin_op_fini_cb_t fini_cb; /**< Finalization function for the operation */
-    ucp_datatype_t           send_dt; /**< Generic send datatype (if non-contig) */
-    ucp_datatype_t           recv_dt; /**< Generic receive datatype (if non-contig) */
-    ucp_dt_state_t           rstate;  /**< read (send) state - for datatype packing */
-    ucp_dt_state_t           wstate;  /**< write (recieve) state - for datatype unpacking */
-    ucg_builtin_group_ctx_t *gctx;    /**< builtin-group context pointer */
-    ucg_builtin_op_step_t    steps[]; /**< steps required to complete the operation */
+    ucg_builtin_op_step_t  **current;     /**< current step executed (for progress) */
+    uint32_t                 flags;       /**< Flags for the op's init/finalize flows */
+    uint32_t                 opt_cnt;     /**< optimization count-down */
+    ucg_builtin_op_optm_cb_t optm_cb;     /**< optimization function for the operation */
+
+    ucp_datatype_t           send_dt;     /**< Generic send datatype (if non-contig) */
+    ucp_datatype_t           recv_dt;     /**< Generic receive datatype (if non-contig) */
+    ucp_dt_state_t          *send_pack;   /**< send datatype - pack state */
+    ucp_dt_state_t          *send_unpack; /**< send datatype - unpack state */
+    ucp_dt_state_t          *recv_pack;   /**< recv datatype - pack state */
+    ucp_dt_state_t          *recv_unpack; /**< recv datatype - unpack state */
+
+    ucg_builtin_group_ctx_t *gctx;        /**< builtin-group context pointer */
+    ucg_builtin_op_step_t    steps[];     /**< steps required to complete the operation */
 } UCS_V_ALIGNED(UCS_SYS_CACHE_LINE_SIZE);
 
 /*
@@ -276,8 +304,8 @@ ucs_status_t ucg_builtin_step_create(ucg_builtin_plan_t *plan,
                                      int is_send_dt_contig,
                                      int is_recv_dt_contig,
                                      size_t send_dt_len,
-                                     ucg_builtin_op_init_cb_t *init_cb,
-                                     ucg_builtin_op_fini_cb_t *fini_cb,
+                                     size_t recv_dt_len,
+                                     uint32_t *op_flags,
                                      ucg_builtin_op_step_t *step,
                                      int *zcopy_step_skip);
 
@@ -314,6 +342,8 @@ ucs_status_t ucg_builtin_op_trigger(ucg_op_t *op,
                                     ucg_coll_id_t coll_id,
                                     void *request);
 
+void ucg_builtin_op_finalize_by_flags(ucg_builtin_op_t *op);
+
 void         ucg_builtin_req_enqueue_resend(ucg_builtin_group_ctx_t *gctx,
                                             ucg_builtin_request_t *req);
 
@@ -321,13 +351,9 @@ int ucg_is_noncontig_allreduce(const ucg_group_params_t *group_params,
                                const ucg_collective_params_t *coll_params);
 
 /* Callback functions exported for debugging */
-void ucg_builtin_print_init_cb_name(ucg_builtin_op_init_cb_t init_cb);
-
-void ucg_builtin_print_fini_cb_name(ucg_builtin_op_fini_cb_t fini_cb);
-
 void ucg_builtin_print_pack_cb_name(uct_pack_callback_t pack_single_cb);
 
-void ucg_builtin_print_flags(ucg_builtin_op_step_t *step);
+void ucg_builtin_print_flags(ucg_builtin_op_step_t *step, uint32_t op_flags);
 
 /*
  * Macros to generate the headers of all bcopy packing callback functions.

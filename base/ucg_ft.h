@@ -25,7 +25,7 @@ typedef struct ucg_ft_config {
     double                   timeout_between_keepalives;
 } ucg_ft_config_t;
 
-__KHASH_TYPE(ucg_ft_ep, ucg_group_member_index_t, uct_ep_h)
+KHASH_MAP_INIT_INT(ucg_ft_ep, uct_ep_h)
 
 typedef ucs_status_t (*ucg_ft_fault_cb_t)(void *arg, ucg_group_member_index_t index);
 

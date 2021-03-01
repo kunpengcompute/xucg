@@ -350,6 +350,8 @@ ucs_status_t ucg_builtin_op_create(ucg_plan_t *plan,
     op->flags                            = 0;
     op->send_dt                          = 0;
     op->recv_dt                          = 0;
+    op->super.reduce_full_f              = NULL;
+    op->super.reduce_frag_f              = NULL;
 
     /* obtain UCX datatypes corresponding to the extenral datatypes passed */
     if (params->send.count > 0) {
@@ -391,6 +393,8 @@ ucs_status_t ucg_builtin_op_create(ucg_plan_t *plan,
         flags = UCG_BUILTIN_OP_STEP_FLAG_LAST_STEP;
         status = ucg_builtin_step_create(builtin_plan, next_phase, &flags,
                                          params, &current_data_buffer,
+                                         &op->super.reduce_full_f,
+                                         &op->super.reduce_frag_f,
                                          is_send_dt_contig, is_recv_dt_contig,
                                          send_dt_len, recv_dt_len, &op->flags,
                                          next_step, &zcopy_step_skip);
@@ -404,6 +408,8 @@ ucs_status_t ucg_builtin_op_create(ucg_plan_t *plan,
         /* First step of many */
         status = ucg_builtin_step_create(builtin_plan, next_phase, &flags,
                                          params, &current_data_buffer,
+                                         &op->super.reduce_full_f,
+                                         &op->super.reduce_frag_f,
                                          is_send_dt_contig, is_recv_dt_contig,
                                          send_dt_len, recv_dt_len, &op->flags,
                                          next_step, &zcopy_step_skip);
@@ -427,6 +433,8 @@ ucs_status_t ucg_builtin_op_create(ucg_plan_t *plan,
         for (step_cnt = 1; step_cnt < phase_count - 1; step_cnt++) {
             status = ucg_builtin_step_create(builtin_plan, ++next_phase, &flags,
                                              params, &current_data_buffer,
+                                             &op->super.reduce_full_f,
+                                             &op->super.reduce_frag_f,
                                              is_send_dt_contig, is_recv_dt_contig,
                                              send_dt_len, recv_dt_len, &op->flags,
                                              ++next_step, &zcopy_step_skip);
@@ -451,6 +459,8 @@ ucs_status_t ucg_builtin_op_create(ucg_plan_t *plan,
         flags |= UCG_BUILTIN_OP_STEP_FLAG_LAST_STEP;
         status = ucg_builtin_step_create(builtin_plan, ++next_phase, &flags,
                                          params, &current_data_buffer,
+                                         &op->super.reduce_full_f,
+                                         &op->super.reduce_frag_f,
                                          is_send_dt_contig, is_recv_dt_contig,
                                          send_dt_len, recv_dt_len, &op->flags,
                                          ++next_step, &zcopy_step_skip);

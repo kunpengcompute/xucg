@@ -296,11 +296,16 @@ typedef struct ucg_builtin_ctx {
     ucg_builtin_config_t config;
 } ucg_builtin_ctx_t;
 
+
 ucs_status_t ucg_builtin_step_create(ucg_builtin_plan_t *plan,
                                      ucg_builtin_plan_phase_t *phase,
                                      enum ucg_builtin_op_step_flags *flags,
                                      const ucg_collective_params_t *params,
                                      int8_t **current_data_buffer,
+                                     ucg_op_reduce_full_f
+                                     *selected_reduce_full_f,
+                                     ucg_op_reduce_frag_f
+                                     *selected_reduce_frag_f,
                                      int is_send_dt_contig,
                                      int is_recv_dt_contig,
                                      size_t send_dt_len,
@@ -318,39 +323,48 @@ ucs_status_t ucg_builtin_step_execute(ucg_builtin_request_t *req,
 
 ucs_status_t ucg_builtin_step_zcopy_prep(ucg_builtin_op_step_t *step);
 
-ucs_status_t ucg_builtin_op_select_callback(ucg_builtin_plan_t *plan,
-                                            ucg_builtin_op_init_cb_t *init_cb);
-
-ucs_status_t ucg_builtin_op_consider_optimization(ucg_builtin_op_t *op,
-                                                  ucg_builtin_config_t *config);
-
 ucs_status_t ucg_builtin_step_select_packers(const ucg_collective_params_t *params,
                                              size_t send_dt_len,
                                              int is_send_dt_contig,
                                              ucg_builtin_op_step_t *step);
 
-ucs_status_t ucg_builtin_am_handler(void *worker, void *data, size_t length,
-                                    unsigned am_flags);
+ucs_status_t ucg_builtin_step_select_reducers(void *dtype, void *reduce_op,
+                                              int is_contig, size_t dtype_len,
+                                              int64_t dtype_cnt,
+                                              ucg_builtin_config_t *config,
+                                              ucg_op_reduce_full_f
+                                              *selected_reduce_full_f,
+                                              ucg_op_reduce_frag_f
+                                              *selected_reduce_frag_f);
+
 
 ucs_status_t ucg_builtin_op_create (ucg_plan_t *plan,
                                     const ucg_collective_params_t *params,
                                     ucg_op_t **op);
 
-void         ucg_builtin_op_discard(ucg_op_t *op);
+ucs_status_t ucg_builtin_op_consider_optimization(ucg_builtin_op_t *op,
+                                                  ucg_builtin_config_t *config);
 
 ucs_status_t ucg_builtin_op_trigger(ucg_op_t *op,
                                     ucg_coll_id_t coll_id,
                                     void *request);
 
+void ucg_builtin_op_discard(ucg_op_t *op);
+
 void ucg_builtin_op_finalize_by_flags(ucg_builtin_op_t *op);
 
-void         ucg_builtin_req_enqueue_resend(ucg_builtin_group_ctx_t *gctx,
-                                            ucg_builtin_request_t *req);
+
+void ucg_builtin_req_enqueue_resend(ucg_builtin_group_ctx_t *gctx,
+                                    ucg_builtin_request_t *req);
 
 int ucg_is_noncontig_allreduce(const ucg_group_params_t *group_params,
                                const ucg_collective_params_t *coll_params);
 
-/* Callback functions exported for debugging */
+/*
+ * Callback functions exported for debugging
+ */
+void ucg_builtin_print_reduce_cb_name(ucg_op_reduce_full_f reduce_cb);
+
 void ucg_builtin_print_pack_cb_name(uct_pack_callback_t pack_single_cb);
 
 void ucg_builtin_print_flags(ucg_builtin_op_step_t *step, uint32_t op_flags);
@@ -359,33 +373,6 @@ void ucg_builtin_print_flags(ucg_builtin_op_step_t *step, uint32_t op_flags);
  * Macros to generate the headers of all bcopy packing callback functions.
  */
 typedef ssize_t (*packed_send_t)(uct_ep_h, uint8_t, uct_pack_callback_t, void*, unsigned);
-
-#define UCG_BUILTIN_PACKER_NAME(_modifier, _mode) \
-    ucg_builtin_step_am_bcopy_pack ## _modifier ## _mode
-
-#define UCG_BUILTIN_PACKER_DECLARE(_modifier, _mode) \
-    size_t UCG_BUILTIN_PACKER_NAME(_modifier, _mode) (void *dest, void *arg)
-
-UCG_BUILTIN_PACKER_DECLARE(_, single);
-UCG_BUILTIN_PACKER_DECLARE(_, full);
-UCG_BUILTIN_PACKER_DECLARE(_, part);
-UCG_BUILTIN_PACKER_DECLARE(_reducing_, single);
-UCG_BUILTIN_PACKER_DECLARE(_reducing_, full);
-UCG_BUILTIN_PACKER_DECLARE(_reducing_, part);
-UCG_BUILTIN_PACKER_DECLARE(_variadic_, single);
-UCG_BUILTIN_PACKER_DECLARE(_variadic_, full);
-UCG_BUILTIN_PACKER_DECLARE(_variadic_, part);
-UCG_BUILTIN_PACKER_DECLARE(_datatype_, single);
-UCG_BUILTIN_PACKER_DECLARE(_datatype_, full);
-UCG_BUILTIN_PACKER_DECLARE(_datatype_, part);
-UCG_BUILTIN_PACKER_DECLARE(_atomic_single_, 8);
-UCG_BUILTIN_PACKER_DECLARE(_atomic_single_, 16);
-UCG_BUILTIN_PACKER_DECLARE(_atomic_single_, 32);
-UCG_BUILTIN_PACKER_DECLARE(_atomic_single_, 64);
-UCG_BUILTIN_PACKER_DECLARE(_atomic_multiple_, 8);
-UCG_BUILTIN_PACKER_DECLARE(_atomic_multiple_, 16);
-UCG_BUILTIN_PACKER_DECLARE(_atomic_multiple_, 32);
-UCG_BUILTIN_PACKER_DECLARE(_atomic_multiple_, 64);
 
 static UCS_F_ALWAYS_INLINE void
 ucg_builtin_step_get_local_address(ucg_builtin_op_step_t *step, int var_stride,

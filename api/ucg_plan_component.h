@@ -125,24 +125,29 @@ typedef ucs_status_t (*ucg_op_trigger_f)(ucg_op_t *op,
                                          void *request);
 typedef void         (*ucg_op_discard_f)(ucg_op_t *op);
 typedef void         (*ucg_op_compreq_f)(void *req, ucs_status_t status);
-
+typedef void         (*ucg_op_reduce_full_f)(uint8_t *dst, uint8_t *src,
+                                             ucg_op_t *op);
+typedef void         (*ucg_op_reduce_frag_f)(uint8_t *dst, uint8_t *src,
+                                             size_t frag_len, ucg_op_t *op);
 struct ucg_op {
     /* Collective-specific request content */
-    ucg_op_trigger_f          trigger_f;   /**< shortcut for the trigger call */
-    ucg_op_discard_f          discard_f;   /**< shortcut for the discard call */
-    ucg_op_compreq_f          compreq_f;   /**< shortcut for request completion */
+    ucg_op_trigger_f          trigger_f;     /**< shortcut for the trigger call */
+    ucg_op_discard_f          discard_f;     /**< shortcut for the discard call */
+    ucg_op_compreq_f          compreq_f;     /**< request completion callback */
+    ucg_op_reduce_full_f      reduce_full_f; /**< reduce a full message */
+    ucg_op_reduce_frag_f      reduce_frag_f; /**< reduce a message fragment */
 
     union {
-        ucs_list_link_t       list;        /**< cache list member */
+        ucs_list_link_t       list;          /**< cache list member */
         struct {
-            ucs_queue_elem_t  queue;       /**< pending queue member */
-            void             *pending_req; /**< original invocation request */
+            ucs_queue_elem_t  queue;         /**< pending queue member */
+            void             *pending_req;   /**< original invocation request */
         };
     };
 
-    ucg_plan_t               *plan;        /**< The group this belongs to */
+    ucg_plan_t               *plan;          /**< The group this belongs to */
 
-    ucg_collective_params_t   params;      /**< original parameters for it */
+    ucg_collective_params_t   params;        /**< original parameters for it */
     /* Note: the params field must be 64-byte-aligned, for 512-bit SIMD ISA */
 
     /* Component-specific request content */

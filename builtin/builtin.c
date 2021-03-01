@@ -375,7 +375,6 @@ static void ucg_builtin_async_check(int id, ucs_event_set_types_t events, void *
 #if ENABLE_FAULT_TOLERANCE
 static void ucg_builtin_async_ft(int id, ucs_event_set_types_t events, void *arg)
 {
-<<<<<<< HEAD
     if ((status == UCS_INPROGRESS) &&
             !(req->step->flags & UCG_BUILTIN_OP_STEP_FLAG_FT_ONGOING)) {
         ucg_builtin_plan_phase_t *phase = req->step->phase;
@@ -387,12 +386,6 @@ static void ucg_builtin_async_ft(int id, ucs_event_set_types_t events, void *arg
                 ucg_ft_start(group, phase->indexes[peer_idx],
                         phase->multi_eps[peer_idx], &phase->handles[peer_idx]);
                 peer_idx++;
-=======
-    for (unsigned i = 0; i < plan->phs_cnt; i++) {
-        if (plan->phss[i].ucp_eps != NULL) {
-            for (unsigned j = 0; j < plan->phss[i].ep_cnt; j++) {
-                plan->phss[i].ucp_eps[j] = NULL;
->>>>>>> Fix the bug in vasp application
             }
         }
 
@@ -1215,8 +1208,7 @@ int ucg_is_noncommutative_allreduce(const ucg_group_params_t *group_params,
 int ucg_is_segmented_allreduce(const ucg_collective_params_t *coll_params)
 {
     ucp_datatype_t send_dt;
-    ucs_status_t status = ucg_builtin_convert_datatype(coll_params->send.dtype, &send_dt);
-    ucs_assert(status == UCS_OK);
+    (void) ucg_builtin_convert_datatype(coll_params->send.dtype, &send_dt);
     size_t dt_len = ucp_dt_length(send_dt, coll_params->send.count, NULL, NULL);
     int count = coll_params->send.count;
 
@@ -1794,6 +1786,8 @@ static void ucg_builtin_print(ucg_plan_t *plan,
             int zcopy_step;
             uint32_t op_flags;
             ucg_builtin_op_step_t step[2];
+            ucg_op_reduce_full_f selected_reduce_full_f;
+            ucg_op_reduce_frag_f selected_reduce_frag_f;
             int8_t *temp_buffer              = NULL;
 
             printf("Step #%i (actual index used: %u):", phase_idx,
@@ -1801,7 +1795,9 @@ static void ucg_builtin_print(ucg_plan_t *plan,
 
             status = ucg_builtin_step_create(builtin_plan,
                     &builtin_plan->phss[phase_idx], &flags, coll_params,
-                    &temp_buffer, 1, 1, 1, 1, &op_flags, &step[0], &zcopy_step);
+                    &temp_buffer, &selected_reduce_full_f,
+                    &selected_reduce_frag_f, 1, 1, 1, 1, &op_flags, &step[0],
+                    &zcopy_step);
             if (status != UCS_OK) {
                 printf("failed to create, %s", ucs_status_string(status));
             }

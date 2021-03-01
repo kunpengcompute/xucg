@@ -81,31 +81,6 @@ ucg_builtin_comp_step_cb(ucg_builtin_request_t *req)
 
     return ucg_builtin_step_execute(req, header);
 }
-static void UCS_F_ALWAYS_INLINE
-ucg_builtin_mpi_reduce(void *mpi_op, void *src, void *dst,
-                       int dcount, void* mpi_datatype)
-{
-    UCS_PROFILE_CALL_VOID(ucg_global_params.reduce_op.reduce_cb_f, mpi_op,
-                          (char*)src, (char*)dst, (unsigned)dcount, mpi_datatype);
-}
-
-static void UCS_F_ALWAYS_INLINE
-ucg_builtin_mpi_reduce_single(uint8_t *dst, uint8_t *src,
-                              const ucg_collective_params_t *params)
-{
-    ucg_builtin_mpi_reduce(UCG_PARAM_OP(params), src, dst,
-                           params->recv.count, params->recv.dtype);
-}
-
-static void UCS_F_ALWAYS_INLINE
-ucg_builtin_mpi_reduce_fragment(uint8_t *dst, uint8_t *src,
-                                size_t length, size_t dtype_length,
-                                const ucg_collective_params_t *params)
-{
-    ucg_builtin_mpi_reduce(UCG_PARAM_OP(params), src, dst,
-                           length / dtype_length,
-                           params->recv.dtype);
-}
 
 static void UCS_F_ALWAYS_INLINE
 ucg_builtin_comp_gather(uint8_t *recv_buffer, uint64_t offset, uint8_t *data,
@@ -168,6 +143,7 @@ ucg_builtin_step_recv_handle_chunk(enum ucg_builtin_op_step_comp_aggregation ag,
                                    int is_dt_packed, ucg_builtin_request_t *req)
 {
     ucs_status_t status;
+    ucg_builtin_op_t *op;
     ucg_collective_params_t *params;
     ucp_dt_generic_t *gen_dt;
     char *reduce_buf;
@@ -183,9 +159,10 @@ ucg_builtin_step_recv_handle_chunk(enum ucg_builtin_op_step_comp_aggregation ag,
         break;
 
     case UCG_BUILTIN_OP_STEP_COMP_AGGREGATE_WRITE:
+        op = req->op;
         if (is_dt_packed) {
-            gen_dt = ucp_dt_to_generic(req->op->recv_dt);
-            status = gen_dt->ops.unpack(req->op->recv_unpack, offset, src, length);
+            gen_dt = ucp_dt_to_generic(op->recv_dt);
+            status = gen_dt->ops.unpack(op->recv_unpack, offset, src, length);
         } else {
             memcpy(dst, src, length);
             status = UCS_OK;
@@ -201,6 +178,8 @@ ucg_builtin_step_recv_handle_chunk(enum ucg_builtin_op_step_comp_aggregation ag,
 
     case UCG_BUILTIN_OP_STEP_COMP_AGGREGATE_REDUCE:
     case UCG_BUILTIN_OP_STEP_COMP_AGGREGATE_REDUCE_SWAP:
+        op = req->op;
+
         if (is_swap) {
             tmp  = src;
             src  = dst;
@@ -208,8 +187,8 @@ ucg_builtin_step_recv_handle_chunk(enum ucg_builtin_op_step_comp_aggregation ag,
         }
 
         if (is_dt_packed) {
-            params    = &req->op->super.params;
-            gen_dt    = ucp_dt_to_generic(req->op->recv_dt);
+            params    = &op->super.params;
+            gen_dt    = ucp_dt_to_generic(op->recv_dt);
             ret       = ucg_global_params.datatype.get_span_f(params->recv.dtype,
                                                               params->recv.count,
                                                               &dsize,
@@ -232,11 +211,9 @@ ucg_builtin_step_recv_handle_chunk(enum ucg_builtin_op_step_comp_aggregation ag,
         }
 
         if (is_fragment) {
-            ucg_builtin_mpi_reduce_fragment(dst, src, length,
-                                            req->step->dtype_length,
-                                            &req->op->super.params);
+            op->super.reduce_frag_f(dst, src, length, &op->super);
         } else {
-            ucg_builtin_mpi_reduce_single(dst, src, &req->op->super.params);
+            op->super.reduce_full_f(dst, src, &op->super);
         }
 
         if (is_swap) {

@@ -70,45 +70,6 @@ static void ucg_group_calc_cache_index(ucg_collective_params_t *params,
     return;
 }
 
-
-static void ucg_group_free_topo_map(char** topo_map, int member_count)
-{
-    int i;
-    for (i = 0; i < member_count; ++i) {
-        if (topo_map[i] == NULL) {
-            break;
-        }
-        ucs_free(topo_map[i]);
-    }
-    ucs_free(topo_map);
-
-    return;
-}
-
-static char** ucg_group_dup_topo_map(char** topo_map, int member_count)
-{
-    int malloc_size = sizeof(char*) * member_count;
-    char** dup_topo_map = ucs_calloc(1, malloc_size, "topo map");
-    if (dup_topo_map == NULL) {
-        return NULL;
-    }
-
-    int i;
-    for (i = 0; i < member_count; ++i) {
-        char* one_row = ucs_malloc(malloc_size, "topo map one row");
-        if (one_row == NULL) {
-            goto err_free_topo_map;
-        }
-        memcpy(one_row, topo_map[i], malloc_size);
-        dup_topo_map[i] = one_row;
-    }
-
-    return dup_topo_map;
-err_free_topo_map:
-    ucg_group_free_topo_map(dup_topo_map, i);
-    return NULL;
-}
-
 static void* ucg_dup_one_dim_array(const void* array,
                                    int member_size,
                                    int member_count,
@@ -152,15 +113,6 @@ static ucs_status_t ucg_group_apply_params(ucg_group_h group_p,
     UCG_CHECK_REQUIRED_FIELD(field_mask, UCG_GROUP_PARAM_FIELD_MEMBER_COUNT, err);
     group_p->params.member_count = params->member_count;
 
-    if (field_mask & UCG_GROUP_PARAM_FIELD_TOPO_MAP) {
-        group_p->params.topo_map = ucg_group_dup_topo_map(params->topo_map,
-                                                          params->member_count);
-        if (group_p->params.topo_map == NULL) {
-            status = UCS_ERR_NO_MEMORY;
-            goto err;
-        }
-    }
-
     UCG_CHECK_REQUIRED_FIELD(field_mask, UCG_GROUP_PARAM_FIELD_DISTANCE, err_free_topo_map);
     group_p->params.distance = ucg_group_dup_distance(params->distance, params->member_count);
     if (group_p->params.distance == NULL) {
@@ -192,8 +144,6 @@ err_free_distance:
     ucs_free(group_p->params.distance);
     group_p->params.distance = NULL;
 err_free_topo_map:
-    ucg_group_free_topo_map(group_p->params.topo_map, group_p->params.member_count);
-    group_p->params.topo_map = NULL;
 err:
     return status;
 }
@@ -219,11 +169,6 @@ static int ucg_chk_noncontig_allreduce_plan(const ucg_collective_params_t *coll_
 static void ucg_group_release_params(ucg_group_h group_p)
 {
     ucg_group_params_t *params = &group_p->params;
-
-    if (params->topo_map != NULL) {
-        ucg_group_free_topo_map(params->topo_map, params->member_count);
-        params->topo_map = NULL;
-    }
 
     if (params->distance != NULL) {
         ucs_free(params->distance);

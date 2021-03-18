@@ -708,88 +708,16 @@ enum choose_ops_mask ucg_builtin_plan_choose_ops(ucg_builtin_config_t *config,
     return result;
 }
 
-void ucg_builtin_check_continuous_number_by_sort(ucg_group_member_index_t *array,
-                                                 unsigned array_len,
-                                                 unsigned *discont_flag)
-{
-    ucg_group_member_index_t member_idx;
-    unsigned idx, idx2;
-    /* bubble sort */
-    for (idx = 0; idx < array_len - 1; idx++) {
-        for (idx2 = 0; idx2 < array_len - 1 - idx; idx2++) {
-            if (array[idx2] > array[idx2 + 1]) {
-                member_idx =  array[idx2 + 1];
-                array[idx2 + 1] = array[idx2];
-                array[idx2] = member_idx;
-            }
-        }
-    }
-    /* discontinous or not */
-    for (idx = 0; idx < array_len - 1; idx++) {
-        if (array[idx + 1] - array[idx] != 1) {
-            *discont_flag = 1;
-            break;
-        }
-    }
-}
-
-static void ucg_builtin_prepare_rank_same_unit(const ucg_group_params_t *group_params,
-                                               enum ucg_group_member_distance domain_distance,
-                                               ucg_group_member_index_t *rank_same_unit)
-{
-    unsigned idx, member_idx;
-    enum ucg_group_member_distance next_distance;
-    for (idx = 0, member_idx = 0; member_idx < group_params->member_count; member_idx++) {
-        next_distance = group_params->distance[member_idx];
-        if (ucs_likely(next_distance <= domain_distance)) {
-            rank_same_unit[idx++] = member_idx;
-        }
-    }
-}
-
-ucs_status_t ucg_builtin_check_continuous_number_no_topo_map(const ucg_group_params_t *group_params,
-                                                             enum ucg_group_member_distance domain_distance,
-                                                             unsigned *discont_flag)
-{
-    unsigned ppx = ucg_builtin_calculate_ppx(group_params, domain_distance);
-
-    /* store rank number in same unit */
-    size_t alloc_size = ppx * sizeof(ucg_group_member_index_t);
-    ucg_group_member_index_t *rank_same_unit = (ucg_group_member_index_t*)UCG_ALLOC_CHECK(alloc_size, "rank number");
-    memset(rank_same_unit, 0, alloc_size);
-    ucg_builtin_prepare_rank_same_unit(group_params, domain_distance, rank_same_unit);
-
-    ucg_builtin_check_continuous_number_by_sort(rank_same_unit, ppx, discont_flag);
-    ucg_builtin_free((void **)&rank_same_unit);
-    return UCS_OK;
-}
-
 ucs_status_t ucg_builtin_check_continuous_number(const ucg_group_params_t *group_params,
                                                  enum ucg_group_member_distance domain_distance,
                                                  unsigned *discont_flag)
 {
-    if (group_params->topo_map == NULL) {
-        return ucg_builtin_check_continuous_number_no_topo_map(group_params, domain_distance, discont_flag);
+    if (domain_distance == UCG_GROUP_MEMBER_DISTANCE_SOCKET) {
+        *discont_flag = !group_params->topo_args.rank_continuous_in_sock;
+    } else {
+        *discont_flag = !group_params->topo_args.rank_continuous_in_node;
     }
 
-    char domain_distance_ch = (char)domain_distance;
-    /* Check the topo distance in each line and find all ranks in the same node
-       Make sure the ranks in the same node is continuous. */
-    for (unsigned i = 0; i < group_params->member_count; i++) {
-        int last_same_unit_rank = -1;
-        for (unsigned j = 0; j < group_params->member_count; j++) {
-            if (group_params->topo_map[i][j] > domain_distance_ch) {
-                continue;
-            }
-
-            if (last_same_unit_rank != -1 && j - last_same_unit_rank != 1) {
-                *discont_flag = 1;
-                return UCS_OK;
-            }
-            last_same_unit_rank = j;
-        }
-    }
-    *discont_flag = 0;
     return UCS_OK;
 }
 

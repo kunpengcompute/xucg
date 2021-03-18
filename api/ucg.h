@@ -144,6 +144,13 @@ enum ucg_group_params_field {
     UCG_GROUP_PARAM_FIELD_IS_SOCKET_BALANCE = UCS_BIT(10),
 };
 
+typedef struct {
+    uint32_t rank_continuous_in_node : 1;
+    uint32_t rank_continuous_in_sock : 1;
+    uint32_t rank_balance_in_node    : 1;
+    uint32_t rank_balance_in_sock    : 1;
+} ucg_topo_args_t;
+
 typedef struct ucg_group_params {
     /**
      * Mask of valid fields in this structure, using bits from @ref ucg_group_params_field.
@@ -161,7 +168,7 @@ typedef struct ucg_group_params {
     /* number of group members */
     int member_count;
 
-    char **topo_map; /* Global topology map, topo_map[i][j] means Distance between rank i and rank j. */
+    ucg_topo_args_t topo_args;
 
     /*
      * This array contains information about the process placement of different

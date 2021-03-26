@@ -48,7 +48,7 @@ ucs_status_t ucg_builtin_pairwise_create(ucg_builtin_group_ctx_t *ctx,
         /* Connect to receiver for second EP */
         ucg_group_member_index_t next_peer = (my_index + proc_idx) % proc_count;
         ucs_status_t status = ucg_builtin_connect(ctx, next_peer, phase,
-                                                  proc_idx - 1, 0, is_mock);
+                                                  proc_idx - 1, 0, NULL, is_mock);
         if (status != UCS_OK) {
             return status;
         }

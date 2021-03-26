@@ -143,6 +143,7 @@ ucg_group_wireup_coll_iface_calc(enum ucg_group_member_distance *distance,
 
 static ucs_status_t
 ucg_group_wireup_coll_iface_create(ucg_group_h group,
+                                   uct_incast_cb_t incast_cb,
                                    unsigned *iface_id_base_p,
                                    ucp_tl_bitmap_t *coll_tl_bitmap_p)
 {
@@ -150,12 +151,16 @@ ucg_group_wireup_coll_iface_create(ucg_group_h group,
 
     uct_iface_params_t params = {
         .field_mask = UCT_IFACE_PARAM_FIELD_COLL_INFO,
-        // TODO: also support UCT_IFACE_PARAM_FIELD_INCAST_CB
         .global_info = {
             .proc_cnt = group->params.member_count,
             .proc_idx = group->params.member_index
         }
     };
+
+    if (incast_cb) {
+        params.field_mask |= UCT_IFACE_PARAM_FIELD_INCAST_CB;
+        params.incast_cb   = incast_cb;
+    }
 
     ucs_assert(group->params.field_mask & UCG_GROUP_PARAM_FIELD_DISTANCES);
     status = ucg_group_wireup_coll_iface_calc(group->params.distance,
@@ -209,6 +214,7 @@ ucg_group_wireup_coll_iface_bcast_addresses(ucg_group_h group,
 
 ucs_status_t ucg_group_wireup_coll_ifaces(ucg_group_h group,
                                           ucg_group_member_index_t root,
+                                          uct_incast_cb_t incast_cb,
                                           ucp_ep_h *ep_p)
 {
     void *addrs;
@@ -228,7 +234,8 @@ ucs_status_t ucg_group_wireup_coll_ifaces(ucg_group_h group,
 
     /* Create collective interfaces for the new communicator */
     UCS_ASYNC_BLOCK(&worker->async);
-    status = ucg_group_wireup_coll_iface_create(group, &iface_id_base,
+    status = ucg_group_wireup_coll_iface_create(group, incast_cb,
+                                                &iface_id_base,
                                                 &coll_tl_bitmap);
     UCS_ASYNC_UNBLOCK(&worker->async);
     if (status != UCS_OK) {
@@ -308,6 +315,7 @@ ucs_status_t ucg_group_create(ucp_worker_h worker,
 #if ENABLE_MT
     ucs_recursive_spinlock_init(&group->lock, 0);
 #endif
+
     ucs_queue_head_init(&group->pending);
     memcpy((ucg_group_params_t*)&group->params, params, sizeof(*params));
     // TODO: replace memcpy with per-field copy to improve ABI compatibility
@@ -344,13 +352,6 @@ ucs_status_t ucg_group_create(ucp_worker_h worker,
     ucg_init_group_root_used(group);
     ucs_list_add_tail(&ctx->groups_head, &group->list);
 
-    group->root_ep = NULL;
-    if ((group->params.member_count >= ctx->config.coll_iface_member_thresh) &&
-        (group->params.cb_context != NULL)) {
-        (void) ucg_group_wireup_coll_ifaces(group, 0, &group->root_ep);
-        /* May fail if no collective transports are present */
-    }
-
     *group_p = group;
     return UCS_OK;
 
@@ -382,8 +383,10 @@ void ucg_group_destroy(ucg_group_h group)
 
     UCG_GROUP_THREAD_CS_ENTER(group)
 
-    ucg_plan_group_destroy(group);
     UCS_STATS_NODE_FREE(group->stats);
+
+    ucg_plan_group_destroy(group);
+
     ucs_list_del(&group->list);
 
     UCG_GROUP_THREAD_CS_EXIT(group)

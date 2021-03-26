@@ -13,6 +13,7 @@
 
 #include <ucs/debug/debug.h>
 #include <ucg/api/ucg_version.h>
+#include <ucs/debug/debug_int.h>
 
 #define UCG_CONFIG_ALL "all"
 
@@ -368,12 +369,11 @@ ucs_status_t ucg_init_version(unsigned ucg_api_major_version,
         ((ucg_api_major_version == major_version) &&
          (ucg_api_minor_version > minor_version))) {
         ucs_debug_address_info_t addr_info;
-        status = ucs_debug_lookup_address(ucg_init_version, &addr_info);
-        ucs_warn("UCG version is incompatible, required: %d.%d, actual: %d.%d "
-                 "(release %d %s)",
-                 ucg_api_major_version, ucg_api_minor_version,
-                 major_version, minor_version, release_number,
-                 status == UCS_OK ? addr_info.file.path : "");
+        status = ucs_debug_lookup_address(ucp_init_version, &addr_info);
+        ucs_warn("UCG version is incompatible, required: %d.%d, actual: %d.%d (release %d %s)",
+                  ucg_api_major_version, ucg_api_minor_version,
+                  major_version, minor_version, release_number,
+                  status == UCS_OK ? addr_info.file.path : "");
     }
 
     ucg_config_t *dfl_config = NULL;

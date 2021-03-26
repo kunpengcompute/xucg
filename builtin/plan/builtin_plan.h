@@ -211,12 +211,14 @@ typedef struct ucg_builtin_plan {
 
 ucs_status_t ucg_builtin_connect(ucg_builtin_group_ctx_t *ctx,
         ucg_group_member_index_t idx, ucg_builtin_plan_phase_t *phase,
-        unsigned phase_ep_index, unsigned sm_coll_flags, int is_mock);
+        unsigned phase_ep_index, unsigned sm_coll_flags,
+        uct_incast_cb_t incast_cb, int is_mock);
 
 ucs_status_t ucg_builtin_single_connection_phase(ucg_builtin_group_ctx_t *ctx,
         ucg_group_member_index_t idx, ucg_step_idx_t step_index,
         enum ucg_builtin_plan_method_type method,
         enum ucg_plan_connect_flags flags,
+        uct_incast_cb_t incast_cb,
         ucg_builtin_plan_phase_t *phase,
         int is_mock);
 
@@ -290,6 +292,7 @@ typedef struct ucg_builtin_tree_params {
     const ucg_builtin_tree_config_t    *config;
     ucg_group_member_index_t            root;
     ucg_builtin_group_ctx_t            *ctx;
+    uct_incast_cb_t                     incast_cb;
 } ucg_builtin_tree_params_t;
 
 ucs_status_t ucg_builtin_tree_create(ucg_builtin_group_ctx_t *ctx,
@@ -298,6 +301,7 @@ ucs_status_t ucg_builtin_tree_create(ucg_builtin_group_ctx_t *ctx,
         const ucg_builtin_config_t *config,
         const ucg_group_params_t *group_params,
         const ucg_collective_type_t *coll_type,
+        uct_incast_cb_t incast_cb,
         ucg_builtin_plan_t **plan_p);
 
 struct ucg_builtin_config {

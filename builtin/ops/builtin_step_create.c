@@ -98,12 +98,6 @@ static ucs_status_t ucg_builtin_no_optimization(ucg_builtin_op_t *op)
     return UCS_OK;
 }
 
-/*
- * While some buffers are large enough to be registered (as in memory
- * registration) upon first send, others are "buffer-copied" (BCOPY) - unless
- * it is used repeatedly. If an operation is used this many times - its buffers
- * will also be registered, turning it into a zero-copy (ZCOPY) send henceforth.
- */
 ucs_status_t ucg_builtin_op_consider_optimization(ucg_builtin_op_t *op,
                                                   ucg_builtin_config_t *config)
 {
@@ -112,6 +106,13 @@ ucs_status_t ucg_builtin_op_consider_optimization(ucg_builtin_op_t *op,
 
     do {
         step = &op->steps[step_idx++];
+
+        /*
+         * While some buffers are large enough to be registered (as in memory
+         * registration) upon first send, others are "buffer-copied" (BCOPY) - unless
+         * it is used repeatedly. If an operation is used this many times - its buffers
+         * will also be registered, turning it into a zero-copy (ZCOPY) send henceforth.
+         */
         if ((config->bcopy_to_zcopy_opt) &&
             (!op->send_dt) &&
             (step->flags & UCG_BUILTIN_OP_STEP_FLAG_SEND_AM_BCOPY) &&

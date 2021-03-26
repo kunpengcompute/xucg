@@ -96,7 +96,7 @@ ucs_status_t ucg_builtin_step_select_reducers(void *dtype, void *reduce_op,
         }
     }
 
-    // TODO: implement more specific reducers...
+    // TODO: implement more specific reducers... maybe use uct_mm_incast_ep_am_short_func_arr?
 
     *selected_reduce_full_f = reduce_full_chosen;
     *selected_reduce_frag_f = reduce_frag_chosen;

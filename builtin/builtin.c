@@ -1400,6 +1400,77 @@ ucs_mpool_ops_t ucg_builtin_plan_mpool_ops = {
     .obj_cleanup   = ucs_empty_function
 };
 
+static ucs_status_t ucg_builtin_choose_incast_cb(const ucg_collective_params_t *params,
+                                                 size_t dt_size, uint64_t dt_count,
+                                                 uct_incast_cb_t *incast_cb)
+{
+    uct_incast_operator_t operator;
+    uct_incast_operand_t operand;
+    int is_integer;
+    int is_signed;
+    int is_float;
+    int is_sum;
+
+    void *external_op = UCG_PARAM_OP(params);
+    void *external_dt = params->recv.dtype;
+
+    is_sum = ucg_global_params.reduce_op.is_sum_f(external_op);
+    if (is_sum) {
+        is_float = ucg_global_params.datatype.is_floating_point_f(external_dt);
+        if (!is_float) {
+            is_integer = ucg_global_params.datatype.is_integer_f(external_dt,
+                                                                 &is_signed);
+        } else {
+            is_integer = 0;
+        }
+    }
+
+    if (is_sum && (is_float || is_integer)) {
+        operator = UCT_INCAST_OPERATOR_SUM;
+
+        if (is_float) {
+            switch (dt_size) {
+            case sizeof(float):
+                operand = UCT_INCAST_OPERAND_FLOAT;
+                break;
+            case sizeof(double):
+                operand = UCT_INCAST_OPERAND_DOUBLE;
+                break;
+            default:
+                operator = UCT_INCAST_OPERATOR_NONE;
+            }
+        } else {
+            switch (dt_size) {
+            case sizeof(uint8_t):
+                operand = is_signed ? UCT_INCAST_OPERAND_INT8_T :
+                                      UCT_INCAST_OPERAND_UINT8_T;
+                break;
+            case sizeof(uint16_t):
+                operand = is_signed ? UCT_INCAST_OPERAND_INT16_T :
+                                      UCT_INCAST_OPERAND_UINT16_T;
+                break;
+            case sizeof(uint32_t):
+                operand = is_signed ? UCT_INCAST_OPERAND_INT32_T :
+                                      UCT_INCAST_OPERAND_UINT32_T;
+                break;
+            case sizeof(uint64_t):
+                operand = is_signed ? UCT_INCAST_OPERAND_INT64_T :
+                                      UCT_INCAST_OPERAND_UINT64_T;
+                break;
+            default:
+                operator = UCT_INCAST_OPERATOR_NONE;
+            }
+        }
+    } else {
+        operator = UCT_INCAST_OPERATOR_NONE;
+    }
+
+    *incast_cb = (operator == UCT_INCAST_OPERATOR_NONE) ? NULL :
+        (uct_incast_cb_t)UCT_INCAST_CALLBACK_PACK(operator, operand, dt_count);
+
+    return UCS_OK;
+}
+
 static ucs_status_t ucg_builtin_plan(ucg_group_ctx_h ctx,
                                      const ucg_collective_params_t *params,
                                      ucg_plan_t **plan_p)
@@ -1409,6 +1480,7 @@ static ucs_status_t ucg_builtin_plan(ucg_group_ctx_h ctx,
     ucg_builtin_group_ctx_t *builtin_ctx = ctx;
     ucg_builtin_config_t *config = &builtin_ctx->bctx->config;
     const ucg_collective_type_t *coll_type = &UCG_PARAM_TYPE(params);
+    size_t dt_size, msg_size;
     ucp_datatype_t send_dt;
 
     status = ucg_builtin_init_algo(&ucg_algo);
@@ -1417,7 +1489,13 @@ static ucs_status_t ucg_builtin_plan(ucg_group_ctx_h ctx,
     if (ucs_unlikely(status != UCS_OK)) {
         return status;
     }
-    unsigned msg_size = ucp_dt_length(send_dt, params->send.count, NULL, NULL);
+
+    if (UCP_DT_IS_CONTIG(send_dt)) {
+        dt_size  = ucp_dt_length(send_dt, 1, NULL, NULL);
+        msg_size = dt_size * params->send.count;
+    } else {
+        dt_size = msg_size = (size_t)-1;
+    }
 
     status = ucg_builtin_algorithm_decision(coll_type, msg_size, builtin_ctx->group_params, params, config);
 
@@ -1444,8 +1522,17 @@ static ucs_status_t ucg_builtin_plan(ucg_group_ctx_h ctx,
         default:
 #ifdef HAVE_UCT_COLLECTIVES
             if (UCG_PARAM_ROOT(params) == 0) {
+                uct_incast_cb_t incast_cb;
+                status = ucg_builtin_choose_incast_cb(params, dt_size,
+                                                      params->send.count,
+                                                      &incast_cb);
+                if (status != UCS_OK) {
+                    return status;
+                }
+
                 status = ucg_builtin_tree_create(builtin_ctx, plan_topo_type, config,
-                                                 builtin_ctx->group_params, coll_type, &plan);
+                                                 builtin_ctx->group_params, coll_type,
+                                                 incast_cb, &plan);
             } else
 #endif
             status = ucg_builtin_binomial_tree_create(builtin_ctx, plan_topo_type, config,
@@ -1884,6 +1971,7 @@ ucs_status_t ucg_builtin_connect(ucg_builtin_group_ctx_t *ctx,
                                  ucg_builtin_plan_phase_t *phase,
                                  unsigned phase_ep_index,
                                  enum ucg_plan_connect_flags flags,
+                                 uct_incast_cb_t incast_cb,
                                  int is_mock)
 {
 #if ENABLE_FAULT_TOLERANCE || ENABLE_DEBUG_DATA
@@ -1926,7 +2014,7 @@ ucs_status_t ucg_builtin_connect(ucg_builtin_group_ctx_t *ctx,
     }
 
     uct_ep_h ep;
-    ucs_status_t status = ucg_plan_connect(ctx->group, idx, flags,
+    ucs_status_t status = ucg_plan_connect(ctx->group, idx, flags, incast_cb,
             &ep, &phase->iface_attr, &phase->md, &phase->md_attr);
     if (ucs_unlikely(status != UCS_OK)) {
         return status;
@@ -1976,6 +2064,7 @@ ucs_status_t ucg_builtin_single_connection_phase(ucg_builtin_group_ctx_t *ctx,
                                                  ucg_step_idx_t step_index,
                                                  enum ucg_builtin_plan_method_type method,
                                                  enum ucg_plan_connect_flags flags,
+                                                 uct_incast_cb_t incast_cb,
                                                  ucg_builtin_plan_phase_t *phase,
                                                  int is_mock)
 {
@@ -1988,7 +2077,7 @@ ucs_status_t ucg_builtin_single_connection_phase(ucg_builtin_group_ctx_t *ctx,
 #endif
 
     return ucg_builtin_connect(ctx, idx, phase, UCG_BUILTIN_CONNECT_SINGLE_EP,
-                               flags, is_mock);
+                               flags, incast_cb, is_mock);
 }
 
 static ucs_status_t ucg_builtin_handle_fault(ucg_group_ctx_h gctx,

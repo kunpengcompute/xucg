@@ -280,6 +280,7 @@ typedef ucs_status_t (*ucg_plan_reg_handler_cb)(uct_iface_h iface, void *arg);
 ucs_status_t ucg_plan_connect(ucg_group_h group,
                               ucg_group_member_index_t group_idx,
                               enum ucg_plan_connect_flags flags,
+                              uct_incast_cb_t incast_cb,
                               uct_ep_h *ep_p, const uct_iface_attr_t **ep_attr_p,
                               uct_md_h *md_p, const uct_md_attr_t    **md_attr_p);
 

@@ -40,7 +40,7 @@ ucs_status_t ucg_builtin_ring_connect(ucg_builtin_group_ctx_t *ctx,
         phase->multi_eps = next_ep++;
 
         /* connected to src process for second EP, recv */
-        status = ucg_builtin_connect(ctx, peer_index_src, phase, phase_ep_index, 0, is_mock);
+        status = ucg_builtin_connect(ctx, peer_index_src, phase, phase_ep_index, 0, NULL, is_mock);
         if (status != UCS_OK) {
             return status;
         }
@@ -53,7 +53,7 @@ ucs_status_t ucg_builtin_ring_connect(ucg_builtin_group_ctx_t *ctx,
         ucg_builtin_ring_assign_recv_thresh(phase);
 
         /* connected to dst process for first EP, send */
-        status = ucg_builtin_connect(ctx, peer_index_dst, phase, phase_ep_index, 0, is_mock);
+        status = ucg_builtin_connect(ctx, peer_index_dst, phase, phase_ep_index, 0, NULL, is_mock);
         if (status != UCS_OK) {
             return status;
         }
@@ -67,7 +67,7 @@ ucs_status_t ucg_builtin_ring_connect(ucg_builtin_group_ctx_t *ctx,
         phase->ep_cnt  = 1;
         ring->ep_cnt -= 1;
         phase->multi_eps = next_ep++;
-        status = ucg_builtin_connect(ctx, peer_index_src, phase, UCG_BUILTIN_CONNECT_SINGLE_EP, 0, is_mock);
+        status = ucg_builtin_connect(ctx, peer_index_src, phase, UCG_BUILTIN_CONNECT_SINGLE_EP, 0, NULL, is_mock);
         if (status != UCS_OK) {
             return status;
         }

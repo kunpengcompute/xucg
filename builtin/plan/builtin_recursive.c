@@ -36,7 +36,7 @@ static ucs_status_t ucg_builtin_recursive_non_pow_two_pre(ucg_builtin_group_ctx_
         ucg_group_member_index_t peer_index = my_index - 1;
         phase->multi_eps = next_ep;
         phase->is_swap = 0;
-        status = ucg_builtin_connect(ctx, member_list[peer_index], phase, UCG_BUILTIN_CONNECT_SINGLE_EP, 0, is_mock);
+        status = ucg_builtin_connect(ctx, member_list[peer_index], phase, UCG_BUILTIN_CONNECT_SINGLE_EP, 0, NULL, is_mock);
     } else { // only pre- and after- processing steps;
         phase->method = UCG_PLAN_METHOD_SEND_TERMINAL;
         phase->ep_cnt = factor - 1;
@@ -47,7 +47,7 @@ static ucs_status_t ucg_builtin_recursive_non_pow_two_pre(ucg_builtin_group_ctx_
         ucg_group_member_index_t peer_index = my_index + 1;
         phase->multi_eps = next_ep;
         phase->is_swap = 0;
-        status = ucg_builtin_connect(ctx, member_list[peer_index], phase, UCG_BUILTIN_CONNECT_SINGLE_EP, 0, is_mock);
+        status = ucg_builtin_connect(ctx, member_list[peer_index], phase, UCG_BUILTIN_CONNECT_SINGLE_EP, 0, NULL, is_mock);
     }
 
     return status;
@@ -76,7 +76,7 @@ static ucs_status_t ucg_builtin_recursive_non_pow_two_post(ucg_builtin_group_ctx
         ucg_group_member_index_t peer_index = my_index - 1;
         phase->multi_eps = next_ep;
         phase->is_swap = 0;
-        status = ucg_builtin_connect(ctx, member_list[peer_index], phase, UCG_BUILTIN_CONNECT_SINGLE_EP, 0, is_mock);
+        status = ucg_builtin_connect(ctx, member_list[peer_index], phase, UCG_BUILTIN_CONNECT_SINGLE_EP, 0, NULL, is_mock);
     } else { // only pre- and after- processing steps;
         phase->method = UCG_PLAN_METHOD_RECV_TERMINAL;
         phase->ep_cnt = factor - 1;
@@ -87,7 +87,7 @@ static ucs_status_t ucg_builtin_recursive_non_pow_two_post(ucg_builtin_group_ctx
         ucg_group_member_index_t peer_index = my_index + 1;
         phase->multi_eps = next_ep;
         phase->is_swap = 0;
-        status = ucg_builtin_connect(ctx, member_list[peer_index], phase, UCG_BUILTIN_CONNECT_SINGLE_EP, 0, is_mock);
+        status = ucg_builtin_connect(ctx, member_list[peer_index], phase, UCG_BUILTIN_CONNECT_SINGLE_EP, 0, NULL, is_mock);
     }
     return status;
 }
@@ -154,7 +154,7 @@ static ucs_status_t ucg_builtin_recursive_non_pow_two_inter(ucg_builtin_group_ct
                     recursive->phs_cnt, peer_index);
                 (*phase)->multi_eps = (*next_ep)++;
                 status = ucg_builtin_connect(ctx, member_list[peer_index], (*phase),
-                    (factor != NUM_TWO) ? (step_peer_idx - 1) : UCG_BUILTIN_CONNECT_SINGLE_EP, 0, is_mock);
+                    (factor != NUM_TWO) ? (step_peer_idx - 1) : UCG_BUILTIN_CONNECT_SINGLE_EP, 0, NULL, is_mock);
             }
             recursive->phs_cnt++;
             recursive->step_cnt++;
@@ -295,7 +295,7 @@ static ucs_status_t ucg_builtin_recursive_pow_two(ucg_builtin_group_ctx_t *ctx,
             recursive->ep_cnt++;
 
             status = ucg_builtin_connect(ctx, member_list[peer_index], phase,
-                (factor != NUM_TWO) ? (step_peer_idx - 1) : UCG_BUILTIN_CONNECT_SINGLE_EP, 0, is_mock);
+                (factor != NUM_TWO) ? (step_peer_idx - 1) : UCG_BUILTIN_CONNECT_SINGLE_EP, 0, NULL, is_mock);
         }
         /* update the count of phase and step */
         recursive->phs_cnt++;

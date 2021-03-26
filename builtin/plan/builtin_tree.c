@@ -46,7 +46,8 @@ static inline ucs_status_t ucg_builtin_tree_connect_phase(ucg_builtin_plan_phase
 flagless_retry:
     if ((peer_cnt == 1) || coll_flags) {
         status = ucg_builtin_single_connection_phase(params->ctx,
-                peers[0], step_index, method, coll_flags, phase, is_mock);
+                peers[0], step_index, method, coll_flags, params->incast_cb,
+                phase, is_mock);
 
 #if ENABLE_DEBUG_DATA || ENABLE_FAULT_TOLERANCE
         if (status == UCS_OK) {
@@ -78,7 +79,7 @@ flagless_retry:
 
     /* connect every endpoint, by group member index */
     for (idx = 0, status = UCS_OK; (idx < peer_cnt) && (status == UCS_OK); idx++, peers++) {
-        status = ucg_builtin_connect(params->ctx, *peers, phase, idx, 0, is_mock);
+        status = ucg_builtin_connect(params->ctx, *peers, phase, idx, 0, NULL, is_mock);
     }
     return status;
 }
@@ -526,6 +527,7 @@ ucs_status_t ucg_builtin_tree_create(ucg_builtin_group_ctx_t *ctx,
         const ucg_builtin_config_t *config,
         const ucg_group_params_t *group_params,
         const ucg_collective_type_t *coll_type,
+        uct_incast_cb_t incast_cb,
         ucg_builtin_plan_t **plan_p)
 {
     /* Allocate worst-case memory footprint, resized down later */
@@ -547,6 +549,7 @@ ucs_status_t ucg_builtin_tree_create(ucg_builtin_group_ctx_t *ctx,
             .coll_type      = coll_type,
             .group_params   = group_params,
             .config         = &config->tree,
+            .incast_cb      = incast_cb,
             .root           = 0
     };
 

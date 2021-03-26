@@ -472,7 +472,7 @@ static inline ucs_status_t ucg_builtin_binomial_tree_connect_phase(ucg_builtin_p
 flagless_retry:
     if ((peer_cnt == 1) || coll_flags) {
         status = ucg_builtin_single_connection_phase(params->ctx,
-                peers[0], step_index, method, coll_flags, phase, is_mock);
+                peers[0], step_index, method, coll_flags, NULL, phase, is_mock);
 
 #if ENABLE_DEBUG_DATA || ENABLE_FAULT_TOLERANCE
         if (status == UCS_OK) {
@@ -504,7 +504,7 @@ flagless_retry:
 
     /* connect every endpoint, by group member index */
     for (idx = 0, status = UCS_OK; (idx < peer_cnt) && (status == UCS_OK); idx++, peers++) {
-        status = ucg_builtin_connect(params->ctx, *peers, phase, idx, 0, is_mock);
+        status = ucg_builtin_connect(params->ctx, *peers, phase, idx, 0, NULL, is_mock);
     }
     return status;
 }

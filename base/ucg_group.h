@@ -48,10 +48,9 @@ typedef struct ucg_group {
     ucg_group_params_t    params;       /**< parameters, for future connections */
     ucs_list_link_t       list;         /**< worker's group list */
     ucg_plan_resources_t *resources;    /**< resources available to this group */
-    khash_t(ucg_group_ep) eps;          /**< endpoints created for this group */
-    ucp_worker_iface_t   *bcast_iface;  /**< broadcast interface on this group */
-    ucp_worker_iface_t   *incast_iface; /**< incast interface on this group */
-    ucp_ep_h              root_ep;
+    khash_t(ucg_group_ep) p2p_eps;      /**< P2P endpoints, by member index */
+    khash_t(ucg_group_ep) incast_eps;   /**< incast endpoints, by member index */
+    khash_t(ucg_group_ep) bcast_eps;   /**< bcast endpoints, by member index */
 
     UCS_STATS_NODE_DECLARE(stats);
 
@@ -90,6 +89,7 @@ int ucg_is_noncontig_allreduce(const ucg_group_params_t *group_params,
 
 ucs_status_t ucg_group_wireup_coll_ifaces(ucg_group_h group,
                                           ucg_group_member_index_t root,
+                                          uct_incast_cb_t incast_cb,
                                           ucp_ep_h *ep_p);
 
 #endif /* UCG_GROUP_H_ */

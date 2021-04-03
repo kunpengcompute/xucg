@@ -495,17 +495,11 @@ ucs_status_t ucg_collective_create(ucg_group_h group,
  * @param [in]  req         Request handle, allocated by the user.
  *
  * @return UCS_OK           - The collective operation was completed immediately.
-<<<<<<< HEAD
- * @return UCS_INPROGRESS   - The collective was not completed and is in progress.
- *
- * @return Error code as defined by @ref ucs_status_t
-=======
- * @return UCS_PTR_IS_ERR(_ptr) - The collective operation failed.
- * @return otherwise        - Operation was scheduled for send and can be
- *                          completed in any point in time. The request handle
- *                          is returned to the application in order to track
- *                          progress of the message.
->>>>>>> Fix the bug in vasp application
+ * @return UCS_INPROGRESS   - Operation was scheduled for send and can be
+ *                            completed in any point in time. The request handle
+ *                            is returned to the application in order to track
+ *                            progress of the message.
+ * @return otherwise        - The collective operation failed.
  */
 ucs_status_t ucg_collective_start(ucg_coll_h coll, void *req);
 
@@ -538,7 +532,7 @@ ucg_collective_progress_t ucg_request_get_progress(ucg_coll_h coll);
  * called with the @a status argument of the callback set to UCS_OK, and in a
  * case it is canceled the @a status argument is set to UCS_ERR_CANCELED.
  */
-void ucg_request_cancel(ucg_coll_h coll);
+ucs_status_t ucg_request_cancel(ucg_coll_h coll);
 
 
 /**

@@ -360,6 +360,9 @@ ucs_status_t ucg_builtin_check_continuous_number(const ucg_group_params_t *group
                                                  enum ucg_group_member_distance domain_distance,
                                                  unsigned *discont_flag);
 
+enum choose_ops_mask ucg_builtin_plan_choose_ops(ucg_builtin_config_t *config,
+        enum ucg_collective_modifiers ops_type_choose);
+
 enum ucg_builtin_plan_topology_type ucg_builtin_choose_type(enum ucg_collective_modifiers flags);
 
 void ucg_builtin_plan_decision_in_discontinuous_case(const size_t msg_size,
@@ -376,6 +379,12 @@ void plan_decision_fixed(const size_t msg_size,
                          enum ucg_builtin_bcast_algorithm *bcast_algo_decision,
                          enum ucg_builtin_allreduce_algorithm *allreduce_algo_decision,
                          enum ucg_builtin_barrier_algorithm *barrier_algo_decision);
+
+ucs_status_t ucg_builtin_algorithm_decision(const ucg_collective_type_t *coll_type,
+                                            const size_t msg_size,
+                                            const ucg_group_params_t *group_params,
+                                            const ucg_collective_params_t *coll_params,
+                                            ucg_builtin_config_t *config);
 
 unsigned ucg_builtin_calculate_ppx(const ucg_group_params_t *group_params,
                                    enum ucg_group_member_distance domain_distance);

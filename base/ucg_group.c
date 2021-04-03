@@ -403,9 +403,10 @@ ucg_collective_progress_t ucg_request_get_progress(ucg_coll_h coll)
     return ((ucg_op_t*)coll)->plan->planner->component->progress;
 }
 
-void ucg_request_cancel(ucg_coll_h coll)
+ucs_status_t ucg_request_cancel(ucg_coll_h coll)
 {
     // TODO: implement
+    return UCS_ERR_UNSUPPORTED;
 }
 
 static int ucg_chk_noncontig_allreduce_plan(const ucg_collective_params_t *coll_params,

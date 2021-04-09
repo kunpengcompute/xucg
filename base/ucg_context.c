@@ -164,8 +164,8 @@ static ucs_status_t ucg_context_init(const ucg_params_t *params,
                                      const ucg_config_t *config,
                                      void *groups_ctx)
 {
-    ucg_context_t *ctx          = (ucg_context_t*)groups_ctx;
-    ctx->next_group_id          = 0;
+    ucg_context_t *ctx = (ucg_context_t*)groups_ctx;
+    ctx->next_group_id = UCG_GROUP_FIRST_GROUP_ID;
 
     memcpy(&ctx->config, config, sizeof(*config));
 
@@ -188,8 +188,6 @@ static ucs_status_t ucg_context_init(const ucg_params_t *params,
     if (status != UCS_OK) {
         goto cleanup_pctx;
     }
-
-    ucp_context_dev_tl_bitmap(&ctx->ucp_ctx, "memory");
 
     ucs_list_head_init(&ctx->groups_head);
 

@@ -21,6 +21,9 @@
 #include <ucs/datastruct/list.h>
 #include <ucs/type/spinlock.h>
 
+#define UCG_GROUP_FIRST_GROUP_ID (1)
+#define UCG_GROUP_FIRST_STEP_IDX (1)
+
 BEGIN_C_DECLS
 
 typedef uint8_t                   ucg_coll_id_t;  /* cyclic */
@@ -97,11 +100,17 @@ typedef struct ucg_plan_params {
     uint8_t *am_id;      /**< Active-message ID dispenser */
 } ucg_plan_params_t;
 
-typedef struct ucg_plan {
+#define UCG_PLAN_INCAST_UNUSED ((uct_incast_cb_t)-1)
+typedef struct ucg_plan ucg_plan_t;
+struct ucg_plan {
     /* Plan lookup - caching mechanism */
     ucg_collective_type_t    type;
     ucs_recursive_spinlock_t lock;
     ucs_list_link_t          op_head;   /**< List of requests following this plan */
+
+    /* For plans involving incast */
+    uct_incast_cb_t          incast_cb;
+    ucg_plan_t              *next_cb;
 
     /*  Attribute */
     int                      support_non_contiguous;
@@ -117,7 +126,7 @@ typedef struct ucg_plan {
     ucg_group_member_index_t my_index;
     ucg_group_h              group;
     char                     priv[0];
-} ucg_plan_t;
+};
 
 typedef struct ucg_op ucg_op_t;
 typedef ucs_status_t (*ucg_op_trigger_f)(ucg_op_t *op,
@@ -306,6 +315,11 @@ typedef struct ucg_plan_resources {
 
 /* Helper function to obtain the worker which the given group is using */
 ucp_worker_h ucg_plan_get_group_worker(ucg_group_h group);
+
+/* Helper function to choose one of the supported incast callback functions */
+ucs_status_t ucg_plan_choose_incast_cb(const ucg_collective_params_t *params,
+                                       size_t dt_size, uint64_t dt_count,
+                                       uct_incast_cb_t *incast_cb);
 
 /* Helper function for detecting the group's (network-related) resources */
 ucs_status_t ucg_plan_query_resources(ucg_group_h group,

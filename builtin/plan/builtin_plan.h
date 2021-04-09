@@ -171,13 +171,6 @@ typedef struct ucg_builtin_plan_phase {
     const uct_md_attr_t              *md_attr;       /* memory domain attributes */
     const uct_iface_attr_t           *iface_attr;    /* interface attributes */
 
-    /* flag for swap recv buffer and data when op is non commutative */
-    unsigned                          is_swap;
-    int                               segmented;     /* 1: message to receive is segmented;0: message to receive is not segmented. */
-    int8_t                           *recv_cache_buffer; /* temp buffer to receive segmented messages. */
-
-    ucp_ep_h                         *ucp_eps;       /* ucp_ep related with this phase(used for release) */
-
 #if ENABLE_DEBUG_DATA || ENABLE_FAULT_TOLERANCE
     ucg_group_member_index_t         *indexes;       /* array corresponding to EPs */
 #define UCG_GROUP_MEMBER_INDEX_UNSPECIFIED ((ucg_group_member_index_t)-1)

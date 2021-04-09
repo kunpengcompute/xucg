@@ -341,8 +341,8 @@ ucs_status_t ucg_builtin_step_create(ucg_builtin_plan_t *plan,
     enum ucg_collective_modifiers modifiers = UCG_PARAM_TYPE(params).modifiers;
 
     /* Make sure local_id is always nonzero ( @ref ucg_builtin_header_step_t )*/
-    ucs_assert_always(phase->step_index    != 0);
-    ucs_assert_always(plan->super.group_id != 0);
+    ucs_assert_always(phase->step_index    >= UCG_GROUP_FIRST_STEP_IDX);
+    ucs_assert_always(plan->super.group_id >= UCG_GROUP_FIRST_GROUP_ID);
     ucs_assert_always(phase->host_proc_cnt < (typeof(step->batch_cnt))-1);
 
     /* See note after ucg_builtin_step_send_flags() call */
@@ -427,6 +427,9 @@ zcopy_redo:
 #ifdef HAVE_UCT_COLLECTIVES
     if (phase->iface_attr->cap.flags & UCT_IFACE_FLAG_INCAST) {
         step->comp_flags |= UCG_BUILTIN_OP_STEP_COMP_FLAG_BATCHED_DATA;
+        if (plan->super.incast_cb != NULL) {
+            step->batch_cnt = 1;
+        }
     }
 #endif
 
@@ -669,7 +672,11 @@ zcopy_redo:
         if (is_fragmented) {
             step->dtype_length = send_dt_len;
         }
-        step->comp_aggregation = UCG_BUILTIN_OP_STEP_COMP_AGGREGATE_REDUCE;
+        if (plan->super.incast_cb != NULL) {
+            step->comp_aggregation = UCG_BUILTIN_OP_STEP_COMP_AGGREGATE_WRITE;
+        } else {
+            step->comp_aggregation = UCG_BUILTIN_OP_STEP_COMP_AGGREGATE_REDUCE;
+        }
         ucs_assert(params->recv.count > 0);
     } else {
         step->comp_aggregation = UCG_BUILTIN_OP_STEP_COMP_AGGREGATE_WRITE;

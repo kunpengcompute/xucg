@@ -173,41 +173,44 @@ UCS_PROFILE_FUNC(ucs_status_t, ucg_builtin_am_handler,
                  (ctx, data, length, am_flags),
                  void *ctx, void *data, size_t length, unsigned am_flags)
 {
-    ucg_builtin_ctx_t *bctx      = ctx;
-    ucg_builtin_header_t* header = data;
-    ucs_assert(length >= sizeof(header));
-    ucs_assert(header != 0); /* since group_id >= UCG_GROUP_FIRST_GROUP_ID */
-
-    /* Find the Group context, based on the ID received in the header */
-    ucg_group_id_t group_id = header->group_id;
-    ucs_assert(group_id != 0);
-    ucs_assert(bctx->group_by_id.size > group_id);
-
+    int is_shifted;
+    int data_offset;
     ucs_status_t status;
     ucp_recv_desc_t *rdesc;
     ucs_ptr_array_t *msg_array;
     ucg_group_member_index_t idx;
     ucg_group_member_index_t cnt;
     ucg_builtin_comp_slot_t *slot;
+    ucg_builtin_group_ctx_t *gctx;
+    ucg_builtin_header_t header;
+    ucg_builtin_ctx_t *bctx = ctx;
 
-    ucg_builtin_group_ctx_t *gctx = (void*)bctx->group_by_id.start[group_id];
-    if (ucs_likely(!__ucs_ptr_array_is_free(gctx))) {
+    ucs_assert(length >= sizeof(header));
+    header.header = ((ucg_builtin_header_t*)data)->header;
+    ucs_assert(header.header != 0); /* group_id >= UCG_GROUP_FIRST_GROUP_ID */
+
+    /* Find the Group context, based on the ID received in the header */
+    ucg_group_id_t group_id = header.group_id;
+    ucs_assert(group_id >= UCG_GROUP_FIRST_GROUP_ID);
+
+    if (ucs_likely(ucs_ptr_array_lookup(&bctx->group_by_id, group_id, gctx))) {
         /* Find the slot to be used, based on the ID received in the header */
-        ucg_coll_id_t coll_id = header->msg.coll_id;
+        ucg_coll_id_t coll_id = header.msg.coll_id;
         slot = &gctx->slots[coll_id % UCG_BUILTIN_MAX_CONCURRENT_OPS];
         ucs_assert((slot->req.expecting.coll_id != coll_id) ||
-                   (slot->req.expecting.step_idx <= header->msg.step_idx));
+                   (slot->req.expecting.step_idx <= header.msg.step_idx));
 
         /* Consume the message if it fits the current collective and step index */
-        if (ucs_likely(header->msg.local_id == slot->req.expecting.local_id)) {
+        if (ucs_likely(header.msg.local_id == slot->req.expecting.local_id)) {
             /* Make sure the packet indeed belongs to the collective currently on */
-            data    = header + 1;
+            data    = ((ucg_builtin_header_t*)data) + 1;
             length -= sizeof(ucg_builtin_header_t);
 
             ucs_trace_req("ucg_builtin_am_handler CB: coll_id %u step_idx %u pending %u",
-                          header->msg.coll_id, header->msg.step_idx, slot->req.pending);
+                          header.msg.coll_id, header.msg.step_idx, slot->req.pending);
 
-            ucg_builtin_step_recv_cb(&slot->req, header->remote_offset, data, length, 0);
+            ucg_builtin_step_recv_cb(&slot->req, header.remote_offset, data,
+                                     length, am_flags);
 
             return UCS_OK;
         }
@@ -215,8 +218,8 @@ UCS_PROFILE_FUNC(ucs_status_t, ucg_builtin_am_handler,
         msg_array = &slot->messages;
         ucs_trace_req("ucg_builtin_am_handler STORE: group_id %u "
                       "coll_id %u expected_id %u step_idx %u expected_idx %u",
-                      header->group_id, header->msg.coll_id, slot->req.expecting.coll_id,
-                      header->msg.step_idx, slot->req.expecting.step_idx);
+                      header.group_id, header.msg.coll_id, slot->req.expecting.coll_id,
+                      header.msg.step_idx, slot->req.expecting.step_idx);
     } else {
         if (!ucs_ptr_array_lookup(&bctx->unexpected, group_id, msg_array)) {
             msg_array = UCS_ALLOC_CHECK(sizeof(*msg_array), "unexpected group");
@@ -230,39 +233,42 @@ UCS_PROFILE_FUNC(ucs_status_t, ucg_builtin_am_handler,
          */
 #ifdef HAVE_UCT_COLLECTIVES
         ucs_assert((am_flags & UCT_CB_PARAM_FLAG_STRIDE) == 0);
-#endif
     }
 
-    if (ucs_unlikely(am_flags & UCT_CB_PARAM_FLAG_SHIFTED)) {
-        header = data = UCS_PTR_BYTE_OFFSET(data, ((uint64_t*)data)[-1]);
+    if (ucs_unlikely((is_shifted = (am_flags & UCT_CB_PARAM_FLAG_SHIFTED) != 0))) {
+        data = UCS_PTR_BYTE_OFFSET(data, ((uint64_t*)data)[-1]);
+        am_flags &= ~UCT_CB_PARAM_FLAG_DESC; /* avoid storing entire segments */
     }
 
-#ifdef HAVE_UCT_COLLECTIVES
     if (am_flags & UCT_CB_PARAM_FLAG_STRIDE) {
-        cnt = gctx->group_params->member_count - 1;
+        cnt = (is_shifted || (am_flags & UCT_CB_PARAM_FLAG_DESC)) ? 1 :
+                (gctx->group_params->member_count - 1);
+        /* slot->req.step->batch_cnt cannot be used here - no request yet... */
     } else
+#else
+    }
 #endif
     cnt = 1;
     idx = 0;
 
-    do {
-        /* First is redundant, the next are needed to reassemble a batch */
-        ((ucg_builtin_header_t*)data)->header = header->header;
+    /* Strided short messages might come with the header set only in item #0 */
+    data_offset = (am_flags & UCT_CB_PARAM_FLAG_DESC) ? 0 : sizeof(header);
+    length     -= data_offset;
 
+    do {
         /* Store the incoming packet in the UCP Worker memory pool */
-        status = ucp_recv_desc_init(bctx->worker, data, length, 0,
+        status = ucp_recv_desc_init(bctx->worker, data, length, data_offset,
                                     am_flags, 0, 0, 0, &rdesc);
         if (ucs_unlikely(UCS_STATUS_IS_ERR(status))) {
             break;
         }
 
+        if (data_offset) {
+            ((ucg_builtin_header_t*)(rdesc + 1))->header = header.header;
+        }
+
         /* Store the message pointer (the relevant step hasn't been reached) */
         (void) ucs_ptr_array_insert(msg_array, rdesc);
-
-        /* The segment is stored completely, regardless of length */
-        if (ucs_unlikely(am_flags & UCT_CB_PARAM_FLAG_DESC)) {
-            break;
-        }
 
         /* Skip to next chuck of data (STRIDE-only) */
         data = UCS_PTR_BYTE_OFFSET(data, length);
@@ -273,8 +279,7 @@ UCS_PROFILE_FUNC(ucs_status_t, ucg_builtin_am_handler,
 
 static void ucg_builtin_msg_dump(void *arg, uct_am_trace_type_t type,
                                  uint8_t id, const void *data, size_t length,
-                                 char *buffer,
-                          size_t max)
+                                 char *buffer, size_t max)
 {
     const ucg_builtin_header_t *header = (const ucg_builtin_header_t*)data;
     snprintf(buffer, max, "COLLECTIVE [coll_id %u step_idx %u offset %lu length %lu]",
@@ -543,16 +548,8 @@ static void ucg_builtin_clean_phases(ucg_builtin_plan_t *plan)
 {
     int i;
     for (i = 0; i < plan->phs_cnt; i++) {
-        if (plan->phss[i].recv_cache_buffer) {
-            ucs_free(plan->phss[i].recv_cache_buffer);
-        }
-
-        if (plan->phss[i].ucp_eps) {
-            ucs_free(plan->phss[i].ucp_eps);
-        }
-
 #if ENABLE_DEBUG_DATA || ENABLE_FAULT_TOLERANCE
-    ucs_free(plan->phss[i].indexes);
+        ucs_free(plan->phss[i].indexes);
 #endif
     }
 }
@@ -1256,7 +1253,7 @@ ucs_status_t ucg_builtin_change_unsupport_algo(struct ucg_builtin_algorithm *alg
     if (!(algo->feature_flag & UCG_ALGORITHM_SUPPORT_BIND_TO_NONE) &&
         (ucg_global_params.job_info.bind_to == UCG_GROUP_MEMBER_DISTANCE_NONE)) {
         ucg_builtin_plan_decision_in_unsupport_case(msg_size, group_params, ops_type_choose, coll_params);
-        ucs_warn("Current algorithm don't support bind-to none case, switch to default algorithm");
+        ucs_info("Current algorithm don't support bind-to none case, switch to default algorithm");
     }
 
     /* Special Case 2 : unbalance ppn */
@@ -1268,7 +1265,7 @@ ucs_status_t ucg_builtin_change_unsupport_algo(struct ucg_builtin_algorithm *alg
 
     if (is_ppn_unbalance && (!(algo->feature_flag & UCG_ALGORITHM_SUPPORT_UNBALANCE_PPN))) {
         ucg_builtin_plan_decision_in_unsupport_case(msg_size, group_params, ops_type_choose, coll_params);
-        ucs_warn("Current algorithm don't support ppn unbalance case, switch to default algorithm");
+        ucs_info("Current algorithm don't support ppn unbalance case, switch to default algorithm");
     }
 
     /* Special Case 3 : discontinuous rank */
@@ -1285,7 +1282,7 @@ ucs_status_t ucg_builtin_change_unsupport_algo(struct ucg_builtin_algorithm *alg
 
     if (is_discontinuous_rank && (!(algo->feature_flag & UCG_ALGORITHM_SUPPORT_DISCONTINOUS_RANK))) {
         ucg_builtin_plan_decision_in_unsupport_case(msg_size, group_params, ops_type_choose, coll_params);
-        ucs_warn("Current algorithm demand rank number is continous. Switch default algorithm whose performance may be not the best");
+        ucs_info("Current algorithm demand rank number is continous. Switch default algorithm whose performance may be not the best");
     }
 
 
@@ -1301,7 +1298,7 @@ ucs_status_t ucg_builtin_change_unsupport_algo(struct ucg_builtin_algorithm *alg
         if (dt_len > config->large_datatype_threshold &&
             !(algo->feature_flag & UCG_ALGORITHM_SUPPORT_LARGE_DATATYPE)) {
                 ucg_builtin_plan_decision_in_noncommutative_largedata_case(msg_size, NULL);
-                ucs_warn("Current algorithm does not support large datatype, and switch to Recursive doubling or Ring Algorithm which may have unexpected performance");
+                ucs_info("Current algorithm does not support large datatype, and switch to Recursive doubling or Ring Algorithm which may have unexpected performance");
         }
     }
 
@@ -1400,77 +1397,6 @@ ucs_mpool_ops_t ucg_builtin_plan_mpool_ops = {
     .obj_cleanup   = ucs_empty_function
 };
 
-static ucs_status_t ucg_builtin_choose_incast_cb(const ucg_collective_params_t *params,
-                                                 size_t dt_size, uint64_t dt_count,
-                                                 uct_incast_cb_t *incast_cb)
-{
-    uct_incast_operator_t operator;
-    uct_incast_operand_t operand;
-    int is_integer;
-    int is_signed;
-    int is_float;
-    int is_sum;
-
-    void *external_op = UCG_PARAM_OP(params);
-    void *external_dt = params->recv.dtype;
-
-    is_sum = ucg_global_params.reduce_op.is_sum_f(external_op);
-    if (is_sum) {
-        is_float = ucg_global_params.datatype.is_floating_point_f(external_dt);
-        if (!is_float) {
-            is_integer = ucg_global_params.datatype.is_integer_f(external_dt,
-                                                                 &is_signed);
-        } else {
-            is_integer = 0;
-        }
-    }
-
-    if (is_sum && (is_float || is_integer)) {
-        operator = UCT_INCAST_OPERATOR_SUM;
-
-        if (is_float) {
-            switch (dt_size) {
-            case sizeof(float):
-                operand = UCT_INCAST_OPERAND_FLOAT;
-                break;
-            case sizeof(double):
-                operand = UCT_INCAST_OPERAND_DOUBLE;
-                break;
-            default:
-                operator = UCT_INCAST_OPERATOR_NONE;
-            }
-        } else {
-            switch (dt_size) {
-            case sizeof(uint8_t):
-                operand = is_signed ? UCT_INCAST_OPERAND_INT8_T :
-                                      UCT_INCAST_OPERAND_UINT8_T;
-                break;
-            case sizeof(uint16_t):
-                operand = is_signed ? UCT_INCAST_OPERAND_INT16_T :
-                                      UCT_INCAST_OPERAND_UINT16_T;
-                break;
-            case sizeof(uint32_t):
-                operand = is_signed ? UCT_INCAST_OPERAND_INT32_T :
-                                      UCT_INCAST_OPERAND_UINT32_T;
-                break;
-            case sizeof(uint64_t):
-                operand = is_signed ? UCT_INCAST_OPERAND_INT64_T :
-                                      UCT_INCAST_OPERAND_UINT64_T;
-                break;
-            default:
-                operator = UCT_INCAST_OPERATOR_NONE;
-            }
-        }
-    } else {
-        operator = UCT_INCAST_OPERATOR_NONE;
-    }
-
-    *incast_cb = (operator == UCT_INCAST_OPERATOR_NONE) ? NULL :
-        (uct_incast_cb_t)UCT_INCAST_CALLBACK_PACK(operator, operand, dt_count);
-
-    return UCS_OK;
-}
-
 static ucs_status_t ucg_builtin_plan(ucg_group_ctx_h ctx,
                                      const ucg_collective_params_t *params,
                                      ucg_plan_t **plan_p)
@@ -1480,6 +1406,7 @@ static ucs_status_t ucg_builtin_plan(ucg_group_ctx_h ctx,
     ucg_builtin_group_ctx_t *builtin_ctx = ctx;
     ucg_builtin_config_t *config = &builtin_ctx->bctx->config;
     const ucg_collective_type_t *coll_type = &UCG_PARAM_TYPE(params);
+    uct_incast_cb_t incast_cb;
     size_t dt_size, msg_size;
     ucp_datatype_t send_dt;
 
@@ -1522,10 +1449,9 @@ static ucs_status_t ucg_builtin_plan(ucg_group_ctx_h ctx,
         default:
 #ifdef HAVE_UCT_COLLECTIVES
             if (UCG_PARAM_ROOT(params) == 0) {
-                uct_incast_cb_t incast_cb;
-                status = ucg_builtin_choose_incast_cb(params, dt_size,
-                                                      params->send.count,
-                                                      &incast_cb);
+                status = ucg_plan_choose_incast_cb(params, dt_size,
+                                                   params->send.count,
+                                                   &incast_cb);
                 if (status != UCS_OK) {
                     return status;
                 }
@@ -1537,12 +1463,16 @@ static ucs_status_t ucg_builtin_plan(ucg_group_ctx_h ctx,
 #endif
             status = ucg_builtin_binomial_tree_create(builtin_ctx, plan_topo_type, config,
                                                       builtin_ctx->group_params, coll_type, &plan);
+            plan->super.incast_cb = UCG_PLAN_INCAST_UNUSED;
             break;
     }
 
     if (status != UCS_OK) {
         return status;
     }
+
+    plan->super.incast_cb = incast_cb;
+    plan->super.next_cb   = NULL;
 
     ucs_list_head_init(&plan->super.op_head);
 

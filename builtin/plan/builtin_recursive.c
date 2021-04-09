@@ -35,7 +35,7 @@ static ucs_status_t ucg_builtin_recursive_non_pow_two_pre(ucg_builtin_group_ctx_
 #endif
         ucg_group_member_index_t peer_index = my_index - 1;
         phase->multi_eps = next_ep;
-        phase->is_swap = 0;
+        //phase->is_swap = 0;
         status = ucg_builtin_connect(ctx, member_list[peer_index], phase, UCG_BUILTIN_CONNECT_SINGLE_EP, 0, NULL, is_mock);
     } else { // only pre- and after- processing steps;
         phase->method = UCG_PLAN_METHOD_SEND_TERMINAL;
@@ -46,7 +46,7 @@ static ucs_status_t ucg_builtin_recursive_non_pow_two_pre(ucg_builtin_group_ctx_
 #endif
         ucg_group_member_index_t peer_index = my_index + 1;
         phase->multi_eps = next_ep;
-        phase->is_swap = 0;
+        //phase->is_swap = 0;
         status = ucg_builtin_connect(ctx, member_list[peer_index], phase, UCG_BUILTIN_CONNECT_SINGLE_EP, 0, NULL, is_mock);
     }
 
@@ -75,7 +75,7 @@ static ucs_status_t ucg_builtin_recursive_non_pow_two_post(ucg_builtin_group_ctx
 #endif
         ucg_group_member_index_t peer_index = my_index - 1;
         phase->multi_eps = next_ep;
-        phase->is_swap = 0;
+        //phase->is_swap = 0;
         status = ucg_builtin_connect(ctx, member_list[peer_index], phase, UCG_BUILTIN_CONNECT_SINGLE_EP, 0, NULL, is_mock);
     } else { // only pre- and after- processing steps;
         phase->method = UCG_PLAN_METHOD_RECV_TERMINAL;
@@ -86,7 +86,7 @@ static ucs_status_t ucg_builtin_recursive_non_pow_two_post(ucg_builtin_group_ctx
 #endif
         ucg_group_member_index_t peer_index = my_index + 1;
         phase->multi_eps = next_ep;
-        phase->is_swap = 0;
+        //phase->is_swap = 0;
         status = ucg_builtin_connect(ctx, member_list[peer_index], phase, UCG_BUILTIN_CONNECT_SINGLE_EP, 0, NULL, is_mock);
     }
     return status;
@@ -101,12 +101,14 @@ static ucs_status_t ucg_builtin_check_swap(unsigned factor, ucg_step_idx_t step_
     for (i = 0; i < step_idx + 1; i++) {
         current_scale *= factor;
     }
+    // TODO: use UCG_BUILTIN_OP_STEP_COMP_AGGREGATE_REDUCE_SWAP
+    /*
     if ((my_index % current_scale) < (current_scale / factor)) {
         phase->is_swap = 1;
     } else {
         phase->is_swap = 0;
     }
-
+    */
     return UCS_OK;
 }
 

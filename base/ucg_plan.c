@@ -195,8 +195,8 @@ void ucg_plan_finalize(ucg_plan_desc_t *descs, unsigned desc_cnt,
 ucs_status_t ucg_plan_group_create(ucg_group_h group)
 {
     kh_init_inplace(ucg_group_ep, &group->p2p_eps);
-    kh_init_inplace(ucg_group_ep, &group->incast_eps);
     kh_init_inplace(ucg_group_ep, &group->bcast_eps);
+    ucs_ptr_array_init(&group->incast_eps, "ucg incast hash");
 
     ucg_group_foreach(group) {
         /* Create the per-planner per-group context */
@@ -211,12 +211,19 @@ ucs_status_t ucg_plan_group_create(ucg_group_h group)
 
 void ucg_plan_group_destroy(ucg_group_h group)
 {
+    unsigned index;
+    ucg_incast_ep_hash_by_cb_t *iter;
+
     ucg_group_foreach(group) {
         comp->destroy(gctx);
     }
 
+    ucs_ptr_array_for_each(iter, index, &group->incast_eps) {
+        kh_destroy_inplace(ucg_group_ep, &iter->incast_eps);
+        ucs_free(iter);
+    }
+
     kh_destroy_inplace(ucg_group_ep, &group->bcast_eps);
-    kh_destroy_inplace(ucg_group_ep, &group->incast_eps);
     kh_destroy_inplace(ucg_group_ep, &group->p2p_eps);
 }
 
@@ -257,6 +264,102 @@ ucs_status_t ucg_plan_choose(const ucg_collective_params_t *coll_params,
     return UCS_OK;
 }
 
+ucs_status_t ucg_plan_choose_incast_cb(const ucg_collective_params_t *params,
+                                       size_t dt_size, uint64_t dt_count,
+                                       uct_incast_cb_t *incast_cb)
+{
+    uct_incast_operator_t operator;
+    uct_incast_operand_t operand;
+    int is_integer;
+    int is_signed;
+    int is_float;
+    int is_sum;
+
+    void *external_op = UCG_PARAM_OP(params);
+    void *external_dt = params->recv.dtype;
+
+    is_sum = ucg_global_params.reduce_op.is_sum_f(external_op);
+    if (is_sum) {
+        is_float = ucg_global_params.datatype.is_floating_point_f(external_dt);
+        if (!is_float) {
+            is_integer = ucg_global_params.datatype.is_integer_f(external_dt,
+                                                                 &is_signed);
+        } else {
+            is_integer = 0;
+        }
+    }
+
+    if (is_sum && (is_float || is_integer)) {
+        operator = UCT_INCAST_OPERATOR_SUM;
+
+        if (is_float) {
+            switch (dt_size) {
+            case sizeof(float):
+                operand = UCT_INCAST_OPERAND_FLOAT;
+                break;
+            case sizeof(double):
+                operand = UCT_INCAST_OPERAND_DOUBLE;
+                break;
+            default:
+                operator = UCT_INCAST_OPERATOR_NONE;
+            }
+        } else {
+            switch (dt_size) {
+            case sizeof(uint8_t):
+                operand = is_signed ? UCT_INCAST_OPERAND_INT8_T :
+                                      UCT_INCAST_OPERAND_UINT8_T;
+                break;
+            case sizeof(uint16_t):
+                operand = is_signed ? UCT_INCAST_OPERAND_INT16_T :
+                                      UCT_INCAST_OPERAND_UINT16_T;
+                break;
+            case sizeof(uint32_t):
+                operand = is_signed ? UCT_INCAST_OPERAND_INT32_T :
+                                      UCT_INCAST_OPERAND_UINT32_T;
+                break;
+            case sizeof(uint64_t):
+                operand = is_signed ? UCT_INCAST_OPERAND_INT64_T :
+                                      UCT_INCAST_OPERAND_UINT64_T;
+                break;
+            default:
+                operator = UCT_INCAST_OPERATOR_NONE;
+            }
+        }
+    } else {
+        operator = UCT_INCAST_OPERATOR_NONE;
+    }
+
+    *incast_cb = (operator == UCT_INCAST_OPERATOR_NONE) ? NULL :
+        (uct_incast_cb_t)UCT_INCAST_CALLBACK_PACK(operator, operand, dt_count);
+
+    return UCS_OK;
+}
+
+static ucs_status_t ucg_plan_get_incast_hash(ucg_group_h group,
+                                             uct_incast_cb_t incast_cb,
+                                             khash_t(ucg_group_ep) **khash)
+{
+    unsigned index;
+    ucg_incast_ep_hash_by_cb_t *iter;
+
+    ucs_ptr_array_for_each(iter, index, &group->incast_eps) {
+        if (iter->incast_cb == incast_cb) {
+            *khash = &iter->incast_eps;
+            return UCS_OK;
+        }
+    }
+
+    iter = UCS_ALLOC_CHECK(sizeof(ucg_incast_ep_hash_by_cb_t), "ucg incast hash");
+
+    kh_init_inplace(ucg_group_ep, &iter->incast_eps);
+    ucs_ptr_array_insert(&group->incast_eps, iter);
+
+    iter->incast_cb = incast_cb;
+    *khash          = &iter->incast_eps;
+
+    return UCS_OK;
+}
+
 static ucs_status_t ucg_plan_connect_by_hash_key(ucg_group_h group,
                                                  ucg_group_member_index_t group_idx,
                                                  khash_t(ucg_group_ep) *khash,
@@ -279,6 +382,27 @@ static ucs_status_t ucg_plan_connect_by_hash_key(ucg_group_h group,
 
     if (!is_p2p) {
         status = ucg_group_wireup_coll_ifaces(group, group_idx, incast_cb, &ucp_ep);
+        if (status != UCS_OK) {
+            return status;
+        }
+
+        /* Store the same endpoint under both types, for future reference */
+        status = ucg_plan_get_incast_hash(group, incast_cb, &khash);
+        if (status != UCS_OK) {
+            return status;
+        }
+
+        iter = kh_put(ucg_group_ep, khash, group_idx, &ret);
+        if (ret != UCS_KH_PUT_KEY_PRESENT) {
+            kh_value(khash, iter) = ucp_ep;
+        }
+
+        khash = &group->bcast_eps;
+        iter = kh_put(ucg_group_ep, khash, group_idx, &ret);
+        if (ret != UCS_KH_PUT_KEY_PRESENT) {
+            kh_value(khash, iter) = ucp_ep;
+        }
+
     } else {
         remote_addr = NULL;
 
@@ -306,15 +430,17 @@ static ucs_status_t ucg_plan_connect_by_hash_key(ucg_group_h group,
 
         status = ucp_ep_create(group->worker, &ep_params, &ucp_ep);
         ucg_global_params.address.release_f(remote_addr);
+        if (status != UCS_OK) {
+            return status;
+        }
+
+        /* Store this endpoint, for future reference */
+        iter = kh_put(ucg_group_ep, khash, group_idx, &ret);
+        ucs_assert(ret != UCS_KH_PUT_KEY_PRESENT);
+        kh_value(khash, iter) = ucp_ep;
     }
 
-    if (status != UCS_OK) {
-        return status;
-    }
-
-    /* Store this endpoint, for future reference */
-    iter = kh_put(ucg_group_ep, khash, group_idx, &ret);
-    *ep_p = kh_value(khash, iter) = ucp_ep;
+    *ep_p = ucp_ep;
 
     return UCS_OK;
 }
@@ -395,6 +521,7 @@ static ucs_status_t ucg_plan_connect_p2p(ucg_group_h group,
     return status;
 }
 
+#ifdef HAVE_UCT_COLLECTIVES
 static ucs_status_t ucg_plan_connect_incast(ucg_group_h group,
                                             ucg_group_member_index_t group_idx,
                                             uct_incast_cb_t incast_cb,
@@ -404,11 +531,17 @@ static ucs_status_t ucg_plan_connect_incast(ucg_group_h group,
 {
     ucp_ep_h ucp_ep;
     uct_ep_h uct_ep;
+    ucs_status_t status;
     ucp_lane_index_t lane;
+    khash_t(ucg_group_ep) *khash;
 
-    ucs_status_t status = ucg_plan_connect_by_hash_key(group, group_idx,
-                                                       &group->incast_eps,
-                                                       incast_cb, 0, &ucp_ep);
+    status = ucg_plan_get_incast_hash(group, incast_cb, &khash);
+    if (status != UCS_OK) {
+        return status;
+    }
+
+    status = ucg_plan_connect_by_hash_key(group, group_idx, khash,
+                                          incast_cb, 0, &ucp_ep);
     if (status != UCS_OK) {
         return status;
     }
@@ -472,6 +605,9 @@ static ucs_status_t ucg_plan_connect_bcast(ucg_group_h group,
     return status;
 }
 
+static int is_bcast_address_being_bcasted = 0;
+#endif
+
 ucs_status_t ucg_plan_connect(ucg_group_h group,
                               ucg_group_member_index_t group_idx,
                               enum ucg_plan_connect_flags flags,
@@ -492,7 +628,14 @@ ucs_status_t ucg_plan_connect(ucg_group_h group,
             break;
 
         case UCG_PLAN_CONNECT_FLAG_WANT_BCAST:
+            if (is_bcast_address_being_bcasted) {
+                /* prevent recursive calls broadcasting the broadcast address */
+                return UCS_ERR_UNREACHABLE;
+            }
+
+            is_bcast_address_being_bcasted = 1;
             status = ucg_plan_connect_bcast(group, group_idx, &lane, &ucp_ep, ep_p);
+            is_bcast_address_being_bcasted = 0;
             break;
 
         default:
@@ -519,6 +662,8 @@ ucs_status_t ucg_plan_connect(ucg_group_h group,
     ucs_assert((*md_p) != NULL);
     ucs_assert((*md_attr_p) != NULL);
     ucs_assert((*ep_attr_p) != NULL);
+
+#ifdef HAVE_UCT_COLLECTIVES
     if (flags) {
         ucs_assert(ucp_ep_get_incast_lane(ucp_ep) !=
                    ucp_ep_get_bcast_lane(ucp_ep));
@@ -533,6 +678,7 @@ ucs_status_t ucg_plan_connect(ucg_group_h group,
             ucs_assert(((*ep_attr_p)->cap.flags & UCT_IFACE_FLAG_BCAST) != 0);
         }
     }
+#endif
 
     return UCS_OK;
 }

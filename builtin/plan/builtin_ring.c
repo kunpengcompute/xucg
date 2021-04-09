@@ -159,7 +159,6 @@ ucs_status_t ucg_builtin_ring_create(ucg_builtin_group_ctx_t *ctx,
     for (step_idx = 1; step_idx < ring->phs_cnt; step_idx++, phase++) {
         /* the following endpoint is as same as phase(0) */
         *phase = phase_zero;
-        phase->ucp_eps = NULL;
 
         /* modify method and step_index in phase */
         if (step_idx < proc_count - 1) {

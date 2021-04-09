@@ -209,6 +209,14 @@ ucg_group_wireup_coll_iface_bcast_addresses(ucg_group_h group,
 
     ucg_collective_destroy(first_bcast);
 
+    /* To prevent this P2P plan from being re-used (instead of the one we can
+     * now create with the help of these addresses) we must ignore this plan */
+    ucg_plan_t **plan =
+      &group->cache_by_modifiers[ucg_predefined_modifiers[UCG_PRIMITIVE_BCAST]];
+    ucs_assert(first_bcast->plan == *plan);
+    ucs_assert(first_bcast->plan->next_cb == NULL);
+    *plan = NULL;
+
     return status;
 }
 
@@ -502,6 +510,7 @@ UCS_PROFILE_FUNC(ucs_status_t, ucg_collective_create,
     unsigned coll_root;
     unsigned coll_mask;
     unsigned message_size_level;
+    ucp_datatype_t send_dt;
     ucs_status_t status;
 
     /* Sanity check */
@@ -516,7 +525,6 @@ UCS_PROFILE_FUNC(ucs_status_t, ucg_collective_create,
         plan_p             = &group->cache_by_modifiers[coll_mask];
     } else {
         /* find the plan of current root whether has been established */
-        ucp_datatype_t send_dt;
         // TODO: unsigned is_coll_root_found = 1;
 
         status = ucg_builtin_convert_datatype(params->send.dtype, &send_dt);
@@ -542,8 +550,32 @@ UCS_PROFILE_FUNC(ucs_status_t, ucg_collective_create,
         ucg_get_cache_plan(message_size_level, coll_root, group, params, &plan_p);
     }
 
-    /* check the recycling/cache for this collective */
+    /* */
     plan = *plan_p;
+    if (ucs_likely(plan != NULL) &&
+        ucs_unlikely(plan->incast_cb != UCG_PLAN_INCAST_UNUSED)) {
+        uct_incast_cb_t want_incast_cb;
+
+        status = ucg_builtin_convert_datatype(params->send.dtype, &send_dt);
+        if (ucs_unlikely(status != UCS_OK)) {
+            return status;
+        }
+
+        status = ucg_plan_choose_incast_cb(params,
+                                           ucp_dt_length(send_dt, 1, NULL, NULL),
+                                           params->send.count,
+                                           &want_incast_cb);
+        if (ucs_unlikely(status != UCS_OK)) {
+            return status;
+        }
+
+        while ((plan) && (plan->incast_cb != want_incast_cb)) {
+            plan_p = &plan->next_cb;
+            plan   = *plan_p;
+        }
+    }
+
+    /* check the recycling/cache for this collective */
     if (ucs_likely(plan != NULL)) {
         UCG_GROUP_THREAD_CS_ENTER(plan)
 

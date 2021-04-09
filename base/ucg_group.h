@@ -9,6 +9,7 @@
 #include <ucs/stats/stats.h>
 #include <ucs/type/spinlock.h>
 #include <ucs/datastruct/khash.h>
+#include <ucs/datastruct/ptr_array.h>
 #include <ucp/core/ucp_types.h>
 
 /* Note: <ucs/api/...> not used because this header is not installed */
@@ -28,6 +29,11 @@
     ((params)->send.type.root)
 
 KHASH_TYPE(ucg_group_ep, ucg_group_member_index_t, ucp_ep_h)
+
+typedef struct ucg_incast_ep_hash_by_cb {
+    uct_incast_cb_t incast_cb;
+    khash_t(ucg_group_ep) incast_eps;
+} ucg_incast_ep_hash_by_cb_t;
 
 typedef struct ucg_group {
     /*
@@ -49,8 +55,9 @@ typedef struct ucg_group {
     ucs_list_link_t       list;         /**< worker's group list */
     ucg_plan_resources_t *resources;    /**< resources available to this group */
     khash_t(ucg_group_ep) p2p_eps;      /**< P2P endpoints, by member index */
-    khash_t(ucg_group_ep) incast_eps;   /**< incast endpoints, by member index */
-    khash_t(ucg_group_ep) bcast_eps;   /**< bcast endpoints, by member index */
+    khash_t(ucg_group_ep) bcast_eps;    /**< bcast endpoints, by member index */
+    ucs_ptr_array_t       incast_eps;   /**< incast endpoints, by member index
+                                             and incast callback */
 
     UCS_STATS_NODE_DECLARE(stats);
 

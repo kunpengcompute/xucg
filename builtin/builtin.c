@@ -201,7 +201,8 @@ UCS_PROFILE_FUNC(ucs_status_t, ucg_builtin_am_handler,
                    (slot->req.expecting.step_idx <= header.msg.step_idx));
 
         /* Consume the message if it fits the current collective and step index */
-        if (ucs_likely(header.msg.local_id == slot->req.expecting.local_id)) {
+        if (ucs_likely(header.msg.local_id == slot->req.expecting.local_id) ||
+            ucs_unlikely(slot->req.flags & UCG_BUILTIN_REQUEST_FLAG_HANDLE_OOO)) {
             /* Make sure the packet indeed belongs to the collective currently on */
             data    = ((ucg_builtin_header_t*)data) + 1;
             length -= sizeof(ucg_builtin_header_t);
@@ -209,8 +210,7 @@ UCS_PROFILE_FUNC(ucs_status_t, ucg_builtin_am_handler,
             ucs_trace_req("ucg_builtin_am_handler CB: coll_id %u step_idx %u pending %u",
                           header.msg.coll_id, header.msg.step_idx, slot->req.pending);
 
-            ucg_builtin_step_recv_cb(&slot->req, header.remote_offset, data,
-                                     length, am_flags);
+            ucg_builtin_step_recv_cb(&slot->req, header, data, length, am_flags);
 
             return UCS_OK;
         }
@@ -1608,6 +1608,10 @@ void ucg_builtin_print_flags(ucg_builtin_op_step_t *step, uint32_t op_flags)
         printf("write");
         break;
 
+    case UCG_BUILTIN_OP_STEP_COMP_AGGREGATE_WRITE_OOO:
+        printf("write ooo");
+        break;
+
     case UCG_BUILTIN_OP_STEP_COMP_AGGREGATE_GATHER:
         printf("gather");
         break;
@@ -1718,6 +1722,9 @@ static void ucg_builtin_print(ucg_plan_t *plan,
             break;
         case UCG_PLAN_METHOD_GATHER_WAYPOINT:
             printf("Gather (W), ");
+            break;
+        case UCG_PLAN_METHOD_GATHER_FOR_PAGG:
+            printf("Gather (P), ");
             break;
         case UCG_PLAN_METHOD_REDUCE_TERMINAL:
             printf("Reduce (T), ");

@@ -92,14 +92,15 @@ enum ucg_builtin_op_step_flags {
     UCG_BUILTIN_OP_STEP_FLAG_BCOPY_PACK_LOCK   = UCS_BIT(15),
     UCG_BUILTIN_OP_STEP_FLAG_TEMP_BUFFER_USED  = UCS_BIT(16),
     UCG_BUILTIN_OP_STEP_FLAG_PACKED_DTYPE_MODE = UCS_BIT(17),
-    UCG_BUILTIN_OP_STEP_FLAG_FT_ONGOING        = UCS_BIT(18)
-};
+    UCG_BUILTIN_OP_STEP_FLAG_AGGREGATED_PACKET = UCS_BIT(18)
+}; /* Note: only 19 bits are allocated for this field in ucg_builtin_op_step_t */
 
 enum ucg_builtin_op_step_comp_aggregation {
     UCG_BUILTIN_OP_STEP_COMP_AGGREGATE_NOP = 0,
 
     /* Aggregation of short (Active-)messages */
     UCG_BUILTIN_OP_STEP_COMP_AGGREGATE_WRITE,
+    UCG_BUILTIN_OP_STEP_COMP_AGGREGATE_WRITE_OOO,
     UCG_BUILTIN_OP_STEP_COMP_AGGREGATE_GATHER,
     UCG_BUILTIN_OP_STEP_COMP_AGGREGATE_REDUCE,
     UCG_BUILTIN_OP_STEP_COMP_AGGREGATE_REDUCE_SWAP,
@@ -223,15 +224,16 @@ enum ucg_builtin_op_flags {
     UCG_BUILTIN_OP_FLAG_GATHER_WAYPOINT = UCS_BIT(5),
     UCG_BUILTIN_OP_FLAG_OPTIMIZE_CB     = UCS_BIT(6),
     UCG_BUILTIN_OP_FLAG_NON_CONTIGUOUS  = UCS_BIT(7),
+    UCG_BUILTIN_OP_STEP_FLAG_FT_ONGOING = UCS_BIT(8),
 
-    UCG_BUILTIN_OP_FLAG_SWITCH_MASK     = UCS_MASK(8),
+    UCG_BUILTIN_OP_FLAG_SWITCH_MASK     = UCS_MASK(9),
 
     /* Various flags - only for non-contiguous cases */
-    UCG_BUILTIN_OP_FLAG_VOLATILE_DT     = UCS_BIT(8),
-    UCG_BUILTIN_OP_FLAG_SEND_PACK       = UCS_BIT(9),
-    UCG_BUILTIN_OP_FLAG_SEND_UNPACK     = UCS_BIT(10),
-    UCG_BUILTIN_OP_FLAG_RECV_PACK       = UCS_BIT(11),
-    UCG_BUILTIN_OP_FLAG_RECV_UNPACK     = UCS_BIT(12)
+    UCG_BUILTIN_OP_FLAG_VOLATILE_DT     = UCS_BIT(9),
+    UCG_BUILTIN_OP_FLAG_SEND_PACK       = UCS_BIT(10),
+    UCG_BUILTIN_OP_FLAG_SEND_UNPACK     = UCS_BIT(11),
+    UCG_BUILTIN_OP_FLAG_RECV_PACK       = UCS_BIT(12),
+    UCG_BUILTIN_OP_FLAG_RECV_UNPACK     = UCS_BIT(13)
 };
 
 /* Below are the flags relevant for step completion, a.k.a. op finalize stage */
@@ -239,6 +241,10 @@ enum ucg_builtin_op_flags {
                                            UCG_BUILTIN_OP_FLAG_ALLTOALL    | \
                                            UCG_BUILTIN_OP_FLAG_OPTIMIZE_CB | \
                                            UCG_BUILTIN_OP_FLAG_NON_CONTIGUOUS)
+
+enum ucg_builtin_request_flags {
+    UCG_BUILTIN_REQUEST_FLAG_HANDLE_OOO = UCS_BIT(0)
+};
 
 struct ucg_builtin_op {
     ucg_op_t                 super;
@@ -265,6 +271,7 @@ struct ucg_builtin_op {
 struct ucg_builtin_request {
     volatile uint32_t         pending;      /**< number of step's pending messages */
     ucg_builtin_header_step_t expecting;    /**< Next packet expected (by header) */
+    uint8_t                   flags;        /**< @ref ucg_builtin_request_flags */
     uint8_t                   am_id;        /**< Active Message Identifier */
     ucg_builtin_op_step_t    *step;         /**< indicator of current step within the op */
     ucg_builtin_op_t         *op;           /**< operation currently running */

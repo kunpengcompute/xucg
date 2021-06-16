@@ -88,6 +88,7 @@ enum UCS_S_PACKED ucg_builtin_plan_method_type {
     UCG_PLAN_METHOD_BCAST_WAYPOINT,    /* receive and send on to all peers */
     UCG_PLAN_METHOD_GATHER_TERMINAL,   /* gather from all peers in the map */
     UCG_PLAN_METHOD_GATHER_WAYPOINT,   /* gather from all peers, and pass on */
+    UCG_PLAN_METHOD_GATHER_FOR_PAGG,   /* gather for packet aggregation */
     UCG_PLAN_METHOD_SCATTER_TERMINAL,  /* scatter to all peers in the map */
     UCG_PLAN_METHOD_SCATTER_WAYPOINT,  /* scatter and send "downwards" */
     UCG_PLAN_METHOD_REDUCE_TERMINAL,   /* receive and reduce from each peer */

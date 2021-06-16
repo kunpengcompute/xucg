@@ -35,7 +35,7 @@ ucs_status_t static UCS_F_ALWAYS_INLINE
 ucg_builtin_comp_ft_end_step(ucg_builtin_op_step_t *step)
 {
 #if ENABLE_FAULT_TOLERANCE
-    if (ucs_unlikely(step->flags & UCG_BUILTIN_OP_STEP_FLAG_FT_ONGOING))) {
+    if (ucs_unlikely(step->op->flags & UCG_BUILTIN_OP_STEP_FLAG_FT_ONGOING))) {
         ucg_builtin_plan_phase_t *phase = step->phase;
         if (phase->ep_cnt == 1) {
             ucg_ft_end(phase->handles[0], phase->indexes[0]);
@@ -136,15 +136,24 @@ ucg_builtin_comp_send_check_frag_by_offset(ucg_builtin_request_t *req,
     return step->iter_offset != UCG_BUILTIN_OFFSET_PIPELINE_READY;
 }
 
+static ucg_builtin_op_step_t*
+ucg_builtin_find_step_by_header(ucg_builtin_request_t *req,
+                                ucg_builtin_header_t header)
+{
+    return NULL; // TODO: implement...
+}
+
 static ucs_status_t UCS_F_ALWAYS_INLINE
 ucg_builtin_step_recv_handle_chunk(enum ucg_builtin_op_step_comp_aggregation ag,
                                    uint8_t *dst, uint8_t *src, size_t length,
-                                   size_t offset, int is_fragment, int is_swap,
-                                   int is_dt_packed, ucg_builtin_request_t *req)
+                                   ucg_builtin_header_t header, int is_fragment,
+                                   int is_swap, int is_dt_packed,
+                                   ucg_builtin_request_t *req)
 {
     ucs_status_t status;
     ucg_builtin_op_t *op;
     ucg_collective_params_t *params;
+    ucg_builtin_op_step_t *ooo_step;
     ucp_dt_generic_t *gen_dt;
     char *reduce_buf;
     void *gen_state;
@@ -158,22 +167,28 @@ ucg_builtin_step_recv_handle_chunk(enum ucg_builtin_op_step_comp_aggregation ag,
         status = UCS_OK;
         break;
 
+    case UCG_BUILTIN_OP_STEP_COMP_AGGREGATE_WRITE_OOO:
+        ooo_step = ucg_builtin_find_step_by_header(req, header);
+        dst      = ooo_step->recv_buffer + header.remote_offset;
+        /* no break */
     case UCG_BUILTIN_OP_STEP_COMP_AGGREGATE_WRITE:
         op = req->op;
         if (is_dt_packed) {
             gen_dt = ucp_dt_to_generic(op->recv_dt);
-            status = gen_dt->ops.unpack(op->recv_unpack, offset, src, length);
+            status = gen_dt->ops.unpack(op->recv_unpack, header.remote_offset,
+                                        src, length);
         } else {
             ucs_assert((is_fragment) ||
-                       (length + offset <= req->step->buffer_length));
+                       (length + header.remote_offset <=
+                        req->step->buffer_length));
             memcpy(dst, src, length);
             status = UCS_OK;
         }
         break;
 
     case UCG_BUILTIN_OP_STEP_COMP_AGGREGATE_GATHER:
-        ucg_builtin_comp_gather(req->step->recv_buffer, offset, src,
-                                req->step->buffer_length, length,
+        ucg_builtin_comp_gather(req->step->recv_buffer, header.remote_offset,
+                                src, req->step->buffer_length, length,
                                 UCG_PARAM_TYPE(&req->op->super.params).root);
         status = UCS_OK;
         break;
@@ -228,7 +243,8 @@ ucg_builtin_step_recv_handle_chunk(enum ucg_builtin_op_step_comp_aggregation ag,
     case UCG_BUILTIN_OP_STEP_COMP_AGGREGATE_REMOTE_KEY:
         /* zero-copy prepares the key for the next step */
         ucs_assert(length == req->step->phase->md_attr->rkey_packed_size);
-        status = ucg_builtin_comp_unpack_rkey(req->step + 1, offset, src);
+        status = ucg_builtin_comp_unpack_rkey(req->step + 1,
+                                              header.remote_offset, src);
         break;
     }
 
@@ -247,7 +263,7 @@ ucg_builtin_step_recv_handle_chunk(enum ucg_builtin_op_step_comp_aggregation ag,
                    UCG_BUILTIN_OP_STEP_COMP_AGGREGATE_REDUCE_SWAP);            \
                                                                                \
         if (_is_fragmented) {                                                  \
-           chunk_size = step->buffer_length - offset;                          \
+           chunk_size = step->buffer_length - header.remote_offset;            \
            if (_is_len_packed) {                                               \
                chunk_size = ucs_min(chunk_size,                                \
                    UCT_COLL_DTYPE_MODE_UNPACK_VALUE(step->fragment_length));   \
@@ -264,13 +280,13 @@ ucg_builtin_step_recv_handle_chunk(enum ucg_builtin_op_step_comp_aggregation ag,
         }                                                                      \
                                                                                \
         if (_is_batched && (am_flags & UCT_CB_PARAM_FLAG_STRIDE)) {            \
-            offset *= chunk_size;                                              \
+            header.remote_offset *= chunk_size;                                \
             length += sizeof(ucg_builtin_header_t);                            \
                                                                                \
             for (index = 0; index < step->batch_cnt; index++, data += length) {\
                 status = ucg_builtin_step_recv_handle_chunk(aggregation,       \
                                                             dest_buffer, data, \
-                                                            chunk_size, offset,\
+                                                            chunk_size, header,\
                                                             _is_fragmented,    \
                                                             is_swap,           \
                                                             _is_dt_packed,     \
@@ -282,7 +298,7 @@ ucg_builtin_step_recv_handle_chunk(enum ucg_builtin_op_step_comp_aggregation ag,
         } else {                                                               \
             status = ucg_builtin_step_recv_handle_chunk(aggregation,           \
                                                         dest_buffer, data,     \
-                                                        length, offset,        \
+                                                        length, header,        \
                                                         _is_fragmented,        \
                                                         is_swap, _is_dt_packed,\
                                                         req);                  \
@@ -318,19 +334,22 @@ ucg_builtin_step_recv_handle_chunk(enum ucg_builtin_op_step_comp_aggregation ag,
         break;
 
 static void UCS_F_ALWAYS_INLINE
-ucg_builtin_step_recv_handle_data(ucg_builtin_request_t *req, uint64_t offset,
-                                  uint8_t *data, size_t length, unsigned am_flags)
+ucg_builtin_step_recv_handle_data(ucg_builtin_request_t *req,
+                                  ucg_builtin_header_t header,
+                                  uint8_t *data, size_t length,
+                                  unsigned am_flags)
 {
     int is_swap;
     uint8_t index;
     size_t chunk_size;
     ucs_status_t status;
     ucg_builtin_op_step_t *step = req->step;
-    uint8_t *dest_buffer        = step->recv_buffer + offset;
+    uint8_t *dest_buffer        = step->recv_buffer + header.remote_offset;
 
     switch (step->comp_aggregation) {
         case_recv(UCG_BUILTIN_OP_STEP_COMP_AGGREGATE_NOP)
         case_recv(UCG_BUILTIN_OP_STEP_COMP_AGGREGATE_WRITE)
+        case_recv(UCG_BUILTIN_OP_STEP_COMP_AGGREGATE_WRITE_OOO)
         case_recv(UCG_BUILTIN_OP_STEP_COMP_AGGREGATE_GATHER)
         case_recv(UCG_BUILTIN_OP_STEP_COMP_AGGREGATE_REDUCE)
         case_recv(UCG_BUILTIN_OP_STEP_COMP_AGGREGATE_REDUCE_SWAP)
@@ -350,7 +369,8 @@ recv_handle_error:
     /* note: not really likely, but we optimize for the positive case */
 
 static int UCS_F_ALWAYS_INLINE
-ucg_builtin_step_recv_handle_comp(ucg_builtin_request_t *req, uint64_t offset)
+ucg_builtin_step_recv_handle_comp(ucg_builtin_request_t *req,
+                                  ucg_builtin_header_t header)
 {
     ucg_builtin_op_step_t *step = req->step;
 
@@ -375,7 +395,7 @@ ucg_builtin_step_recv_handle_comp(ucg_builtin_request_t *req, uint64_t offset)
         break;
 
     case UCG_BUILTIN_OP_STEP_COMP_CRITERIA_BY_FRAGMENT_OFFSET:
-        if (!ucg_builtin_comp_send_check_frag_by_offset(req, offset, 1)) {
+        if (!ucg_builtin_comp_send_check_frag_by_offset(req, header.remote_offset, 1)) {
             return 0;
         }
         break;
@@ -401,16 +421,16 @@ ucg_builtin_step_recv_handle_comp(ucg_builtin_request_t *req, uint64_t offset)
 }
 
 static int UCS_F_ALWAYS_INLINE
-ucg_builtin_step_recv_cb(ucg_builtin_request_t *req, uint64_t offset,
+ucg_builtin_step_recv_cb(ucg_builtin_request_t *req, ucg_builtin_header_t header,
                          void *data, size_t length, unsigned am_flags_ext)
 {
-    ucg_builtin_step_recv_handle_data(req, offset, data, length, am_flags_ext);
+    ucg_builtin_step_recv_handle_data(req, header, data, length, am_flags_ext);
 
     if (ucs_unlikely(am_flags_ext & UCT_CB_PARAM_FLAG_LAST)) {
         return 0; /* step is not done */
     }
 
-    return ucg_builtin_step_recv_handle_comp(req, offset);
+    return ucg_builtin_step_recv_handle_comp(req, header);
 }
 
 ucs_status_t static UCS_F_ALWAYS_INLINE
@@ -481,8 +501,7 @@ ucg_builtin_step_check_pending(ucg_builtin_comp_slot_t *slot,
                 length = rdesc->length - sizeof(ucg_builtin_header_t);
             }
 
-            is_step_done = ucg_builtin_step_recv_cb(&slot->req,
-                                                    header->remote_offset,
+            is_step_done = ucg_builtin_step_recv_cb(&slot->req, *header,
                                                     header + 1, length,
                                                     mock_am_flag);
 
@@ -503,8 +522,7 @@ ucg_builtin_step_check_pending(ucg_builtin_comp_slot_t *slot,
     }
 
     if ((mock_am_flag != 0) &&
-        (ucg_builtin_step_recv_handle_comp(&slot->req,
-                                           header->remote_offset))) {
+        (ucg_builtin_step_recv_handle_comp(&slot->req, *header))) {
         goto step_done;
     }
 

@@ -514,31 +514,28 @@ static ucs_status_t ucg_builtin_create(ucg_plan_ctx_h pctx,
 
     /* Initialize collective operation slots, incl. already pending messages */
     unsigned i;
-    ucs_ptr_array_t *by_group_id, *by_slot_id;
-    int is_msg_pending = ucs_ptr_array_lookup(&bctx->unexpected,
-                                              group_id,
-                                              by_group_id);
-
     for (i = 0; i < UCG_BUILTIN_MAX_CONCURRENT_OPS; i++) {
         ucg_builtin_comp_slot_t *slot = &gctx->slots[i];
+        slot->req.expecting.local_id  = 0;
+        slot->req.am_id               = bctx->am_id;
 
-        if (is_msg_pending &&
-            (ucs_ptr_array_lookup(by_group_id, i, by_slot_id))) {
-            ucs_ptr_array_remove(by_group_id, i);
-            memcpy(&slot->messages, by_slot_id, sizeof(*by_slot_id));
-            ucs_free(by_slot_id);
-        } else {
-            ucs_ptr_array_init(&slot->messages, "builtin messages");
-        }
-
-        slot->req.expecting.local_id = 0;
-        slot->req.am_id              = bctx->am_id;
+        ucs_ptr_array_init(&slot->messages, "builtin messages");
     }
 
-    if (is_msg_pending) {
+    ucs_ptr_array_t *unexpected;
+    if (ucs_ptr_array_lookup(&bctx->unexpected, group_id, unexpected)) {
+        ucs_assert(!ucs_ptr_array_is_empty(unexpected));
+
+        ucg_builtin_header_t *header;
+        ucs_ptr_array_for_each(header, i, unexpected) {
+            ucs_ptr_array_remove(unexpected, i);
+            ucs_ptr_array_insert(&gctx->slots[header->msg.coll_id].messages,
+                                 header);
+        }
+
         ucs_ptr_array_remove(&bctx->unexpected, group_id);
-        ucs_ptr_array_cleanup(by_group_id);
-        ucs_free(by_group_id);
+        ucs_ptr_array_cleanup(unexpected);
+        ucs_free(unexpected);
     }
 
     return UCS_OK;

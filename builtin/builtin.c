@@ -241,9 +241,15 @@ UCS_PROFILE_FUNC(ucs_status_t, ucg_builtin_am_handler,
     }
 
     if (am_flags & UCT_CB_PARAM_FLAG_STRIDE) {
-        cnt = (is_shifted || (am_flags & UCT_CB_PARAM_FLAG_DESC)) ? 1 :
-                (gctx->group_params->member_count - 1);
-        /* slot->req.step->batch_cnt cannot be used here - no request yet... */
+        /*
+         * The group doesn't exist so neither "gctx->group_params->member_count"
+         * nor "slot->req.step->batch_cnt" can be used here. It doesn't have to
+         * be a Shared-Memory transport (could be a network packet) and length
+         * just indicates the stride - so we trust UCT to hint us the number of
+         * chunks by using the extra AM flags.
+         */
+        cnt = am_flags >> UCT_CB_PARAM_FLAG_SHIFT;
+        ucs_assert(cnt > 1);
     } else
 #else
     }

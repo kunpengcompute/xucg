@@ -11,11 +11,13 @@ noinst_HEADERS = \
 	ucg_plan.h \
 	ucg_group.h \
 	ucg_context.h \
+	ucg_listener.h \
 	ucg_ft.h
 
 libucg_base_la_SOURCES = \
 	ucg_plan.c \
 	ucg_group.c \
 	ucg_context.c \
+	ucg_listener.c \
 	ucg_ft.c \
 	ucg_version.c

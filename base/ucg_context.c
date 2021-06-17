@@ -10,6 +10,7 @@
 #include "ucg_plan.h"
 #include "ucg_group.h"
 #include "ucg_context.h"
+#include "ucg_listener.h"
 
 #include <ucs/debug/debug.h>
 #include <ucg/api/ucg_version.h>
@@ -164,6 +165,7 @@ static ucs_status_t ucg_context_init(const ucg_params_t *params,
                                      const ucg_config_t *config,
                                      void *groups_ctx)
 {
+    uint8_t am_id      = UCP_AM_ID_LAST;
     ucg_context_t *ctx = (ucg_context_t*)groups_ctx;
     ctx->next_group_id = UCG_GROUP_FIRST_GROUP_ID;
 
@@ -184,14 +186,21 @@ static ucs_status_t ucg_context_init(const ucg_params_t *params,
     }
 
     status = ucg_plan_init(ctx->planners, ctx->num_planners, ctx->planners_ctx,
-                           &ctx->per_group_planners_ctx);
+                           &ctx->per_group_planners_ctx, &am_id);
     if (status != UCS_OK) {
         goto cleanup_pctx;
     }
 
     ucs_list_head_init(&ctx->groups_head);
+    status = ucg_listener_am_init(am_id, &ctx->groups_head);
+    if (status != UCS_OK) {
+        goto cleanup_plans;
+    }
 
     return UCS_OK;
+
+cleanup_plans:
+    ucg_plan_finalize(ctx->planners, ctx->num_planners, ctx->planners_ctx);
 
 cleanup_pctx:
     ucs_free(ctx->planners_ctx);

@@ -380,6 +380,78 @@ typedef struct ucg_group_params {
 
 /**
  * @ingroup UCG_GROUP
+ * @brief Parameters for a UCG group listener object.
+ *
+ * This structure defines parameters for @ref ucg_group_listener_create,
+ * which is used to listen for incoming client/server connections on a group.
+ */
+typedef struct ucg_listener_params {
+    /**
+     * Mask of valid fields in this structure, using bits from
+     * @ref ucg_listener_params_field.
+     * Fields not specified in this mask will be ignored.
+     * Provides ABI compatibility with respect to adding new fields.
+     */
+    uint64_t                            field_mask;
+
+    /**
+     * An address in the form of a sockaddr.
+     * This field is mandatory for filling (along with its corresponding bit
+     * in the field_mask - @ref UCP_LISTENER_PARAM_FIELD_SOCK_ADDR).
+     * The @ref ucp_listener_create routine will return with an error if sockaddr
+     * is not specified.
+     */
+    ucs_sock_addr_t                     sockaddr;
+
+    /**
+     * Handler to endpoint creation in a client-server connection flow.
+     * In order for the callback inside this handler to be invoked, the
+     * UCP_LISTENER_PARAM_FIELD_ACCEPT_HANDLER needs to be set in the
+     * field_mask.
+     */
+    ucp_listener_accept_handler_t       accept_handler;
+
+    /**
+     * Handler of an incoming connection request in a client-server connection
+     * flow. In order for the callback inside this handler to be invoked, the
+     * @ref UCP_LISTENER_PARAM_FIELD_CONN_HANDLER needs to be set in the
+     * field_mask.
+     * @note User is expected to call ucp_ep_create with set
+     *       @ref UCP_EP_PARAM_FIELD_CONN_REQUEST flag to
+     *       @ref ucp_ep_params_t::field_mask and
+     *       @ref ucp_ep_params_t::conn_request in order to be able to receive
+     *       communications.
+     */
+    ucp_listener_conn_handler_t         conn_handler;
+} ucg_listener_params_t;
+
+
+/**
+ * @ingroup UCG_GROUP
+ * @brief UCG group listener attributes.
+ *
+ * The structure defines the attributes which characterize
+ * the particular listener for a group.
+ */
+typedef struct ucg_listener_attr {
+    /**
+     * Mask of valid fields in this structure, using bits from
+     * @ref ucp_listener_attr_field.
+     * Fields not specified in this mask will be ignored.
+     * Provides ABI compatibility with respect to adding new fields.
+     */
+    uint64_t                field_mask;
+
+    /**
+     * Sockaddr on which this listener is listening for incoming connection
+     * requests.
+     */
+    struct sockaddr_storage sockaddr;
+} ucg_listener_attr_t;
+
+
+/**
+ * @ingroup UCG_GROUP
  * @brief Creation parameters for the UCG collective operation.
  *
  * The structure defines the parameters that are used during the UCG collective
@@ -466,6 +538,48 @@ ucs_status_t ucg_group_create(ucp_worker_h worker,
  * @param [in]  group       Group object to destroy.
  */
 void ucg_group_destroy(ucg_group_h group);
+
+/**
+ * @ingroup UCP_WORKER
+ * @brief Create a listener to accept connections on. Connection requests on
+ * the listener will arrive at a local address specified by the user.
+ *
+ * This routine creates a new listener object that is bound to a specific
+ * local address.
+ * The listener will listen to incoming connection requests.
+ * After receiving a request from the remote peer, an endpoint to this peer
+ * will be created - either right away or by calling @ref ucp_ep_create,
+ * as specified by the callback type in @ref ucp_listener_params_t.
+ * The user's callback will be invoked once the endpoint is created.
+ *
+ * @param [in]  group            Group object to create the listener on.
+ * @param [in]  bind_address     Local address to bind and listen on.
+ * @param [out] listener_p       A handle to the created listener, can be released
+ *                               by calling @ref ucg_group_listener_destroy
+ *
+ * @return Error code as defined by @ref ucs_status_t
+ *
+ * @note @ref ucp_listener_params_t::conn_handler or
+ *       @ref ucp_listener_params_t::accept_handler must be provided to be
+ *       able to handle incoming connections.
+ */
+ucs_status_t ucg_group_listener_create(ucg_group_h group,
+                                       ucs_sock_addr_t *bind_address,
+                                       ucg_listener_h *listener_p);
+
+ucs_status_t ucg_group_listener_connect(ucg_group_h group,
+                                        ucs_sock_addr_t *listener_addr);
+
+/**
+ * @ingroup UCP_WORKER
+ * @brief Stop accepting connections on a local address of the group object.
+ *
+ * This routine unbinds the worker from the given handle and stops
+ * listening for incoming connection requests on it.
+ *
+ * @param [in] listener        A handle to the listener to stop listening on.
+ */
+void ucg_group_listener_destroy(ucg_listener_h listener);
 
 
 /**

@@ -14,7 +14,8 @@ ucs_status_t ucg_plan_query(ucg_plan_desc_t **desc_p, unsigned *num_desc_p,
                             size_t *total_plan_ctx_size);
 
 ucs_status_t ucg_plan_init(ucg_plan_desc_t *descs, unsigned desc_cnt,
-                           ucg_plan_ctx_h plan, size_t *per_group_ctx_size);
+                           ucg_plan_ctx_h plan, size_t *per_group_ctx_size,
+                           uint8_t *am_id_p);
 
 void ucg_plan_finalize(ucg_plan_desc_t *descs, unsigned desc_cnt,
                        ucg_plan_ctx_h plan);

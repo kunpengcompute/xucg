@@ -64,6 +64,16 @@ typedef struct ucg_config                ucg_config_t;
 typedef struct ucg_group                *ucg_group_h;
 
 
+/**
+ * @ingroup UCG_GROUP
+ * @brief UCG listen handle.
+ *
+ * The listener handle is an opaque object that is used for listening on a
+ * specific address and accepting connections from clients to join a group.
+ */
+typedef struct ucg_listener              *ucg_listener_h;
+
+
  /**
   * @ingroup UCG_GROUP
   * @brief UCG collective operation handle

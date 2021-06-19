@@ -280,7 +280,6 @@ ucs_status_t ucg_builtin_tree_add_intra(const ucg_builtin_tree_params_t *params,
     for (member_idx = 0; member_idx < params->group_params->member_count; member_idx++) {
         enum ucg_group_member_distance next_distance =
                 params->group_params->distance[member_idx];
-        ucs_assert(next_distance < UCG_GROUP_MEMBER_DISTANCE_UNKNOWN);
         if ((next_distance <= UCG_GROUP_MEMBER_DISTANCE_HOST) && (ppn != NULL)) {
             (*ppn)++; // TODO: fix support for "non-full-nodes" allocation...
             if (ucs_unlikely(next_distance == UCG_GROUP_MEMBER_DISTANCE_NONE)) {

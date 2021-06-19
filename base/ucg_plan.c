@@ -667,8 +667,6 @@ ucs_status_t ucg_plan_connect(ucg_group_h group,
     if (flags) {
         ucs_assert(ucp_ep_get_incast_lane(ucp_ep) !=
                    ucp_ep_get_bcast_lane(ucp_ep));
-        ucs_assert(ucp_ep_get_incast_uct_ep(ucp_ep) !=
-                   ucp_ep_get_bcast_uct_ep(ucp_ep));
 
         if (flags & UCG_PLAN_CONNECT_FLAG_WANT_INCAST) {
             ucs_assert(((*ep_attr_p)->cap.flags & UCT_IFACE_FLAG_INCAST) != 0);

@@ -296,11 +296,11 @@ typedef struct ucg_builtin_comp_desc {
 } ucg_builtin_comp_desc_t;
 
 typedef struct ucg_builtin_ctx {
-    ucs_ptr_array_t      group_by_id;
-    uint16_t             am_id;
-    ucp_worker_h         worker;
-    ucs_ptr_array_t      unexpected;
-    ucg_builtin_config_t config;
+    ucs_ptr_array_locked_t group_by_id;
+    uint16_t               am_id;
+    ucp_worker_h           worker;
+    ucs_ptr_array_locked_t unexpected;
+    ucg_builtin_config_t   config;
 } ucg_builtin_ctx_t;
 
 

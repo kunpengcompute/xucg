@@ -262,6 +262,9 @@ ucs_status_t ucg_group_wireup_coll_ifaces(ucg_group_h group,
         return status;
     }
 
+    /* Because address lengths aren't equal among nodes - round up and pray. */
+    addr_len = ucs_roundup_pow2(addr_len); // TODO: find a way to get the same.
+
     /* Broadcast the address */
     status = ucg_group_wireup_coll_iface_bcast_addresses(group, addrs,
                                                          addr_len, root);

@@ -54,9 +54,6 @@ static ucs_config_field_t ucg_builtin_config_table[] = {
     {"MAX_MSG_LIST_SIZE", "40", "Largest loop count of msg process function",
      ucs_offsetof(ucg_builtin_config_t, max_msg_list_size), UCS_CONFIG_TYPE_UINT},
 
-    {"MEM_REG_OPT_CNT", "10", "Operation counter before registering the memory",
-     ucs_offsetof(ucg_builtin_config_t, mem_reg_opt_cnt), UCS_CONFIG_TYPE_ULUNITS},
-
     {"BCOPY_TO_ZCOPY_OPT", "1", "Switch for optimization from bcopy to zcopy",
      ucs_offsetof(ucg_builtin_config_t, bcopy_to_zcopy_opt), UCS_CONFIG_TYPE_UINT},
 
@@ -175,9 +172,12 @@ UCS_PROFILE_FUNC(ucs_status_t, ucg_builtin_am_handler,
 {
     int is_shifted;
     int data_offset;
+    int is_unexpected;
     ucs_status_t status;
     ucp_recv_desc_t *rdesc;
+    ucg_group_id_t group_id;
     ucs_ptr_array_t *msg_array;
+    ucs_ptr_array_t *tmp_array;
     ucg_group_member_index_t idx;
     ucg_group_member_index_t cnt;
     ucg_builtin_comp_slot_t *slot;
@@ -190,10 +190,13 @@ UCS_PROFILE_FUNC(ucs_status_t, ucg_builtin_am_handler,
     ucs_assert(header.header != 0); /* group_id >= UCG_GROUP_FIRST_GROUP_ID */
 
     /* Find the Group context, based on the ID received in the header */
-    ucg_group_id_t group_id = header.group_id;
+    group_id = header.group_id;
     ucs_assert(group_id >= UCG_GROUP_FIRST_GROUP_ID);
 
-    if (ucs_likely(ucs_ptr_array_lookup(&bctx->group_by_id, group_id, gctx))) {
+    /* Intentionally disregard lock, in order to reduce the latency */
+    if (ucs_likely(ucs_ptr_array_lookup(&bctx->group_by_id.super, group_id, gctx)) ||
+        ucs_unlikely(ucs_ptr_array_locked_lookup(&bctx->group_by_id, group_id,
+                UCS_PTR_ARRAY_LOCKED_FLAG_KEEP_LOCK_IF_NOT_FOUND, (void**)&gctx))) {
         /* Find the slot to be used, based on the ID received in the header */
         ucg_coll_id_t coll_id = header.msg.coll_id;
         slot = &gctx->slots[coll_id % UCG_BUILTIN_MAX_CONCURRENT_OPS];
@@ -215,51 +218,64 @@ UCS_PROFILE_FUNC(ucs_status_t, ucg_builtin_am_handler,
             return UCS_OK;
         }
 
-        msg_array = &slot->messages;
+        is_unexpected = 0;
+        msg_array     = &slot->messages;
+#ifdef HAVE_UCT_COLLECTIVES
+        cnt           = (am_flags & UCT_CB_PARAM_FLAG_STRIDE) ?
+                        (gctx->group_params->member_count - 1) : 0;
+#else
+        cnt           = 1;
+#endif
         ucs_trace_req("ucg_builtin_am_handler STORE: group_id %u "
                       "coll_id %u expected_id %u step_idx %u expected_idx %u",
                       header.group_id, header.msg.coll_id, slot->req.expecting.coll_id,
                       header.msg.step_idx, slot->req.expecting.step_idx);
     } else {
-        if (!ucs_ptr_array_lookup(&bctx->unexpected, group_id, msg_array)) {
-            msg_array = UCS_ALLOC_CHECK(sizeof(*msg_array), "unexpected group");
-            ucs_ptr_array_init(msg_array, "unexpected group messages");
-            ucs_ptr_array_set(&bctx->unexpected, group_id, msg_array);
-        }
-
         /*
-         * Note: This message arrived before the corresponding local group has
-         *       been created, which means it must have used P2P transports.
+         * This message is destined for a group that has not been created
+         * (in this process) yet. Next, a temporary array will be created for
+         * this and all further messages to this future group (by group ID). It
+         * is possible such an array has already been created, in which case
+         * just add to that array and dispose of the redundant one (created only
+         * to ensure atomicity).
          */
+
 #ifdef HAVE_UCT_COLLECTIVES
         ucs_assert((am_flags & UCT_CB_PARAM_FLAG_STRIDE) == 0);
+#endif
+        cnt           = 1;
+        is_unexpected = 1;
+        tmp_array     = UCS_ALLOC_CHECK(sizeof(*msg_array), "unexpected group");
+        ucs_ptr_array_init(tmp_array, "unexpected group messages");
+        ucs_ptr_array_locked_set_first(&bctx->unexpected, group_id, tmp_array,
+                                       (void**)&msg_array);
+        if (tmp_array != msg_array) {
+            ucs_free(tmp_array);
+        }
     }
 
+#ifdef HAVE_UCT_COLLECTIVES
     if (ucs_unlikely((is_shifted = (am_flags & UCT_CB_PARAM_FLAG_SHIFTED) != 0))) {
         data = UCS_PTR_BYTE_OFFSET(data, ((uint64_t*)data)[-1]);
         am_flags &= ~UCT_CB_PARAM_FLAG_DESC; /* avoid storing entire segments */
     }
-
-    if (am_flags & UCT_CB_PARAM_FLAG_STRIDE) {
-        /*
-         * The group doesn't exist so neither "gctx->group_params->member_count"
-         * nor "slot->req.step->batch_cnt" can be used here. It doesn't have to
-         * be a Shared-Memory transport (could be a network packet) and length
-         * just indicates the stride - so we trust UCT to hint us the number of
-         * chunks by using the extra AM flags.
-         */
-        cnt = am_flags >> UCT_CB_PARAM_FLAG_SHIFT;
-        ucs_assert(cnt > 1);
-    } else
-#else
-    }
 #endif
-    cnt = 1;
-    idx = 0;
+
+    if (ucs_likely((am_flags & UCT_CB_PARAM_FLAG_DESC) && (cnt == 1))) {
+        rdesc                  = ((ucp_recv_desc_t*)data) - 1;
+        rdesc->length          = length;
+        rdesc->uct_desc_offset = UCP_WORKER_HEADROOM_PRIV_SIZE;
+        rdesc->flags           = UCP_RECV_DESC_FLAG_UCT_DESC;
+        (void) ucs_ptr_array_insert(msg_array, rdesc);
+
+        status = UCS_INPROGRESS;
+        goto handled;
+    }
 
     /* Strided short messages might come with the header set only in item #0 */
     data_offset = (am_flags & UCT_CB_PARAM_FLAG_DESC) ? 0 : sizeof(header);
     length     -= data_offset;
+    idx         = 0;
 
     do {
         /* Store the incoming packet in the UCP Worker memory pool */
@@ -279,6 +295,11 @@ UCS_PROFILE_FUNC(ucs_status_t, ucg_builtin_am_handler,
         /* Skip to next chuck of data (STRIDE-only) */
         data = UCS_PTR_BYTE_OFFSET(data, length);
     } while (++idx < cnt);
+
+handled:
+    if (is_unexpected) {
+        ucs_ptr_array_locked_release_lock(&bctx->group_by_id);
+    }
 
     return status;
 }
@@ -454,8 +475,8 @@ static ucs_status_t ucg_builtin_init(ucg_plan_ctx_h pctx,
         return status;
     }
 
-    ucs_ptr_array_init(&bctx->group_by_id, "builtin_group_table");
-    ucs_ptr_array_init(&bctx->unexpected, "builtin_unexpected_table");
+    ucs_ptr_array_locked_init(&bctx->group_by_id, "builtin_group_table");
+    ucs_ptr_array_locked_init(&bctx->unexpected, "builtin_unexpected_table");
 
     return ucg_context_set_am_handler(pctx, bctx->am_id,
                                       ucg_builtin_am_handler,
@@ -465,7 +486,8 @@ static ucs_status_t ucg_builtin_init(ucg_plan_ctx_h pctx,
 static void ucg_builtin_finalize(ucg_plan_ctx_h pctx)
 {
     ucg_builtin_ctx_t *bctx = pctx;
-    ucs_ptr_array_cleanup(&bctx->group_by_id);
+    ucs_ptr_array_locked_cleanup(&bctx->unexpected);
+    ucs_ptr_array_locked_cleanup(&bctx->group_by_id);
 }
 
 static ucs_status_t ucg_builtin_create(ucg_plan_ctx_h pctx,
@@ -497,7 +519,6 @@ static ucs_status_t ucg_builtin_create(ucg_plan_ctx_h pctx,
 
     ucs_list_head_init(&gctx->plan_head);
     ucs_queue_head_init(&gctx->resend_head);
-    ucs_ptr_array_set(&bctx->group_by_id, group_id, gctx);
     ucs_assert_always(((uintptr_t)gctx % UCS_SYS_CACHE_LINE_SIZE) == 0);
 
     ucs_time_t interval = ucs_time_from_sec(bctx->config.resend_timer_tick);
@@ -528,19 +549,30 @@ static ucs_status_t ucg_builtin_create(ucg_plan_ctx_h pctx,
         ucs_ptr_array_init(&slot->messages, "builtin messages");
     }
 
+    /* Only now, when the slots and message arrays are ready, it "goes live" */
+    ucs_ptr_array_locked_set(&bctx->group_by_id, group_id, gctx);
+
     ucs_ptr_array_t *unexpected;
-    if (ucs_ptr_array_lookup(&bctx->unexpected, group_id, unexpected)) {
+    if (ucs_ptr_array_locked_lookup(&bctx->unexpected, group_id,
+                                    UCS_PTR_ARRAY_LOCKED_FLAG_KEEP_LOCK_IF_FOUND,
+                                    (void**)&unexpected)) {
+
         ucs_assert(!ucs_ptr_array_is_empty(unexpected));
 
+        ucp_recv_desc_t *rdesc;
         ucg_builtin_header_t *header;
-        ucs_ptr_array_for_each(header, i, unexpected) {
+        ucs_ptr_array_for_each(rdesc, i, unexpected) {
             ucs_ptr_array_remove(unexpected, i);
+
+            header = (ucg_builtin_header_t*)(rdesc + 1);
+            ucs_assert(header->group_id >= UCG_GROUP_FIRST_GROUP_ID);
             ucs_ptr_array_insert(&gctx->slots[header->msg.coll_id].messages,
-                                 header);
+                                 rdesc);
         }
 
-        ucs_ptr_array_remove(&bctx->unexpected, group_id);
         ucs_ptr_array_cleanup(unexpected);
+        ucs_ptr_array_remove(&bctx->unexpected.super, group_id);
+        ucs_ptr_array_locked_release_lock(&bctx->unexpected);
         ucs_free(unexpected);
     }
 
@@ -615,7 +647,7 @@ static void ucg_builtin_destroy(ucg_group_ctx_h ctx)
 
     /* Remove the group from the global storage array */
     ucg_builtin_ctx_t *bctx = gctx->bctx;
-    ucs_ptr_array_remove(&bctx->group_by_id, gctx->group_id);
+    ucs_ptr_array_locked_remove(&bctx->group_by_id, gctx->group_id);
 
     /* Note: gctx is freed as part of the group object itself */
 }

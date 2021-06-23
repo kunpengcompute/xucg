@@ -83,8 +83,8 @@ ucs_status_t ucg_builtin_ring_connect(ucg_builtin_group_ctx_t *ctx,
 void ucg_builtin_ring_find_my_index(const ucg_group_params_t *group_params, unsigned proc_count, ucg_group_member_index_t *my_index)
 {
     while ((*my_index < proc_count) &&
-           (group_params->distance[*my_index] !=
-           UCG_GROUP_MEMBER_DISTANCE_NONE)) {
+           (group_params->distance_array[*my_index] !=
+            UCG_GROUP_MEMBER_DISTANCE_NONE)) {
         (*my_index)++;
     }
     ucs_assert(*my_index != proc_count);

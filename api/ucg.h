@@ -83,10 +83,10 @@ enum ucg_fault_tolerance_mode {
                                       success or failure to handle the fault.*/
 };
 
-enum ucg_topo_info_type {
-    UCG_TOPO_INFO_NONE = 0,       /**< No additional information available */
-    UCG_TOPO_INFO_DISTANCE_TABLE, /**< Info form is a 2-D distance table */
-    UCG_TOPO_INFO_PLACEMENT_TABLE /**< Info form is placement per level */
+enum ucg_group_distance_type {
+    UCG_GROUP_DISTANCE_TYPE_ARRAY,    /**< Info form is a 1-D distance array */
+    UCG_GROUP_DISTANCE_TYPE_TABLE,    /**< Info form is a 2-D distance table */
+    UCG_GROUP_DISTANCE_TYPE_PLACEMENT /**< Info form is placement per level */
 };
 
 /**
@@ -238,20 +238,11 @@ typedef struct ucg_params {
         uint32_t job_uid;  /** Unique ID of the job which this process is a member of */
         uint32_t step_idx; /** Step index within this job (e.g. in SLURM) */
 
+        ucg_group_member_index_t job_size;      /* Number of members (processes) */
         enum ucg_group_member_distance map_by;  /* mpirun --map-by=?  */
         enum ucg_group_member_distance rank_by; /* mpirun --rank-by=? */
-        enum ucg_group_member_distance bind_to; /* mpirun --bind-to=? (previously: bind-to none flag) */
-
-        enum ucg_topo_info_type info_type;
-        union {
-            /* Distance table, where [i][j] is the distance between i and j */
-            /* Used if info_type is set to @ref UCG_TOPO_INFO_DISTANCE_TABLE */
-            enum ucg_group_member_distance **distance_table;
-
-            /* Placement table, so [1][2]=4 means the rank 1 is running on core 4 */
-            /* Used if info_type is set to @ref UCG_TOPO_INFO_PLACEMENT_TABLE */
-            uint16_t *placement[UCG_GROUP_MEMBER_DISTANCE_UNKNOWN];
-        };
+        enum ucg_group_member_distance bind_to; /* mpirun --bind-to=? */
+        unsigned procs_per_host;                /* PPN */
     } job_info;
 } ucg_params_t;
 
@@ -328,8 +319,8 @@ enum ucg_group_params_field {
     UCG_GROUP_PARAM_FIELD_ID           = UCS_BIT(0), /**< Unique identifier */
     UCG_GROUP_PARAM_FIELD_MEMBER_COUNT = UCS_BIT(1), /**< Number of members */
     UCG_GROUP_PARAM_FIELD_MEMBER_INDEX = UCS_BIT(2), /**< My member index */
-    UCG_GROUP_PARAM_FIELD_CB_CONTEXT   = UCS_BIT(3), /**< context for callbacks */
-    UCG_GROUP_PARAM_FIELD_DISTANCES    = UCS_BIT(4)  /**< Member distance array */
+    UCG_GROUP_PARAM_FIELD_CB_CONTEXT   = UCS_BIT(3), /**< Context for callbacks */
+    UCG_GROUP_PARAM_FIELD_DISTANCES    = UCS_BIT(4)  /**< Rank distance info */
 };
 
 /**
@@ -355,26 +346,38 @@ typedef struct ucg_group_params {
     void *cb_context; /* Opaque context object for address/neighbor callbacks.
                          In MPI implementations this would likely be MPI_Comm */
 
-    /*
-     * This array contains information about the process placement of different
-     * group members, which is used to select the best topology for collectives.
-     *
-     * For example, for 2 nodes, 3 sockets each, 4 cores per socket, each member
-     * should be passed the distance array contents as follows:
-     *   1st group member distance array:  0111222222223333333333333333
-     *   2nd group member distance array:  1011222222223333333333333333
-     *   3rd group member distance array:  1101222222223333333333333333
-     *   4th group member distance array:  1110222222223333333333333333
-     *   5th group member distance array:  2222011122223333333333333333
-     *   6th group member distance array:  2222101122223333333333333333
-     *   7th group member distance array:  2222110122223333333333333333
-     *   8th group member distance array:  2222111022223333333333333333
-     *    ...
-     *   12th group member distance array: 3333333333333333011122222222
-     *   13th group member distance array: 3333333333333333101122222222
-     *    ...
-     */
-    enum ucg_group_member_distance *distance;
+    enum ucg_group_distance_type distance_type; /* indicates the contents of
+                                                   the union below */
+    union {
+        /*
+         * This array contains information about the process placement of different
+         * group members, which is used to select the best topology for collectives.
+         *
+         * For example, for 2 nodes, 3 sockets each, 4 cores per socket, each member
+         * should be passed the distance array contents as follows:
+         *   1st group member distance array:  0111222222223333333333333333
+         *   2nd group member distance array:  1011222222223333333333333333
+         *   3rd group member distance array:  1101222222223333333333333333
+         *   4th group member distance array:  1110222222223333333333333333
+         *   5th group member distance array:  2222011122223333333333333333
+         *   6th group member distance array:  2222101122223333333333333333
+         *   7th group member distance array:  2222110122223333333333333333
+         *   8th group member distance array:  2222111022223333333333333333
+         *    ...
+         *   12th group member distance array: 3333333333333333011122222222
+         *   13th group member distance array: 3333333333333333101122222222
+         *    ...
+         */
+        enum ucg_group_member_distance *distance_array;
+
+        /* A 2-D matrix where [i][j] is the distance between i and j */
+        /* Used if info_type is set to @ref UCG_TOPO_INFO_DISTANCE_TABLE */
+        enum ucg_group_member_distance **distance_table;
+
+        /* Placement table, so [1][2]=4 means the rank 1 is running on core 4 */
+        /* Used if info_type is set to @ref UCG_TOPO_INFO_PLACEMENT_TABLE */
+        uint16_t *placement[UCG_GROUP_MEMBER_DISTANCE_UNKNOWN];
+    };
 } ucg_group_params_t;
 
 

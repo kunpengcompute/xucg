@@ -417,7 +417,7 @@ ucs_status_t ucg_builtin_recursive_create(ucg_builtin_group_ctx_t *ctx,
     /* Find my own index */
     ucg_group_member_index_t my_rank = 0;
     while ((my_rank < group_params->member_count) &&
-           (group_params->distance[my_rank] !=
+           (group_params->distance_array[my_rank] !=
            UCG_GROUP_MEMBER_DISTANCE_NONE)) {
         my_rank++;
     }

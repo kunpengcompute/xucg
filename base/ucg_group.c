@@ -163,7 +163,7 @@ ucg_group_wireup_coll_iface_create(ucg_group_h group,
     }
 
     ucs_assert(group->params.field_mask & UCG_GROUP_PARAM_FIELD_DISTANCES);
-    status = ucg_group_wireup_coll_iface_calc(group->params.distance,
+    status = ucg_group_wireup_coll_iface_calc(group->params.distance_array,
                                               group->params.member_count,
                                               &params.host_info.proc_idx,
                                               &params.host_info.proc_cnt);
@@ -304,6 +304,8 @@ ucs_status_t ucg_group_create(ucp_worker_h worker,
 {
     ucs_status_t status;
     struct ucg_group *group;
+    size_t dist_size, total_size;
+
     ucg_context_t *ctx = ucs_container_of(worker->context, ucg_context_t, ucp_ctx);
 
     if (!ucs_test_all_flags(params->field_mask, UCG_GROUP_PARAM_REQUIRED_MASK)) {
@@ -312,9 +314,30 @@ ucs_status_t ucg_group_create(ucp_worker_h worker,
     }
 
     /* Allocate a new group */
-    size_t dist_size  = sizeof(*params->distance) * params->member_count;
-    size_t total_size = ctx->per_group_planners_ctx + dist_size;
-    group             = UCS_ALLOC_CHECK(total_size, "communicator group");
+    if (params->field_mask & UCG_GROUP_PARAM_FIELD_DISTANCES) {
+        switch (params->distance_type) {
+        case UCG_GROUP_DISTANCE_TYPE_ARRAY:
+            dist_size = params->member_count;
+            break;
+
+        case UCG_GROUP_DISTANCE_TYPE_TABLE:
+            dist_size = params->member_count * params->member_count;
+            break;
+
+        case UCG_GROUP_DISTANCE_TYPE_PLACEMENT:
+            dist_size = params->member_count * UCG_GROUP_MEMBER_DISTANCE_UNKNOWN;
+            break;
+
+        default:
+            return UCS_ERR_INVALID_PARAM;
+        }
+    } else {
+        dist_size = params->member_count;;
+    }
+
+    dist_size *= sizeof(enum ucg_group_member_distance);
+    total_size = ctx->per_group_planners_ctx + dist_size;
+    group      = UCS_ALLOC_CHECK(total_size, "communicator group");
 
     /* Fill in the group fields */
     group->is_barrier_outstanding = 0;
@@ -330,13 +353,15 @@ ucs_status_t ucg_group_create(ucp_worker_h worker,
     ucs_queue_head_init(&group->pending);
     memcpy((ucg_group_params_t*)&group->params, params, sizeof(*params));
     // TODO: replace memcpy with per-field copy to improve ABI compatibility
-    group->params.distance = UCS_PTR_BYTE_OFFSET(group, total_size - dist_size);
+    group->params.distance_array = UCS_PTR_BYTE_OFFSET(group, total_size - dist_size);
 
     if (params->field_mask & UCG_GROUP_PARAM_FIELD_DISTANCES) {
-        memcpy(group->params.distance, params->distance, dist_size);
+        memcpy(group->params.distance_array, params->distance_array, dist_size);
     } else {
         /* If the user didn't specify the distances - treat as uniform */
-        memset(group->params.distance, UCG_GROUP_MEMBER_DISTANCE_UNKNOWN, dist_size);
+        UCS_STATIC_ASSERT(sizeof(enum ucg_group_member_distance) == sizeof(char));
+        memset(group->params.distance_array, UCG_GROUP_MEMBER_DISTANCE_UNKNOWN,
+               dist_size);
     }
 
     if ((params->field_mask & UCG_GROUP_PARAM_FIELD_ID) != 0) {

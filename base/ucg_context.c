@@ -41,6 +41,7 @@ ucs_config_field_t ucg_config_table[] = {
    ucs_offsetof(ucg_context_config_t, is_volatile_datatype), UCS_CONFIG_TYPE_BOOL},
 
   {NULL}
+
 };
 
 UCS_CONFIG_REGISTER_TABLE(ucg_config_table, "UCG context", NULL, ucg_config_t
@@ -275,6 +276,10 @@ static void ucg_context_copy_used_ucp_params(ucp_params_t *dst,
             break;
 
         case UCP_PARAM_FIELD_CONTEXT_HEADROOM:
+            ucp_params_size = ucs_offsetof(ucp_params_t, flags);
+            break;
+
+        case UCP_PARAM_FIELD_FLAGS:
             ucp_params_size = sizeof(ucp_params_t);
             break;
         }

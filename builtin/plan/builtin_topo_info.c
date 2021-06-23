@@ -21,8 +21,8 @@ ucs_status_t ucg_builtin_find_myself(const ucg_group_params_t *group_params,
     ucg_group_member_index_t init_myrank = (ucg_group_member_index_t) - 1;
     *myrank = init_myrank;
     for (member_idx = 0; member_idx < group_params->member_count; member_idx++) {
-        ucs_assert(group_params->distance[member_idx] <= UCG_GROUP_MEMBER_DISTANCE_UNKNOWN);
-        if (group_params->distance[member_idx] == UCG_GROUP_MEMBER_DISTANCE_NONE) {
+        ucs_assert(group_params->distance_array[member_idx] <= UCG_GROUP_MEMBER_DISTANCE_UNKNOWN);
+        if (group_params->distance_array[member_idx] == UCG_GROUP_MEMBER_DISTANCE_NONE) {
             *myrank = member_idx;
             break;
         }
@@ -112,7 +112,7 @@ ucs_status_t ucg_builtin_topology_info_create(ucg_builtin_topology_info_params_t
     unsigned node_idx;
     unsigned ppn_idx = 0;
 
-    if (ucg_global_params.job_info.info_type != UCG_TOPO_INFO_PLACEMENT_TABLE) {
+    if (group_params->distance_type != UCG_GROUP_DISTANCE_TYPE_PLACEMENT) {
         member_idx                  = group_params->member_count;
 
         topo_params->node_cnt       = 1;
@@ -131,7 +131,7 @@ ucs_status_t ucg_builtin_topology_info_create(ucg_builtin_topology_info_params_t
         return UCS_OK;
     }
 
-    uint16_t *node_index = ucg_global_params.job_info.placement[UCG_GROUP_MEMBER_DISTANCE_HOST];
+    uint16_t *node_index = group_params->placement[UCG_GROUP_MEMBER_DISTANCE_HOST];
 
     ucg_group_member_index_t myrank = 0;
     /* initalization */
@@ -186,12 +186,12 @@ ucs_status_t ucg_builtin_topology_info_create(ucg_builtin_topology_info_params_t
 ucs_status_t ucg_builtin_check_ppn(const ucg_group_params_t *group_params,
                                    unsigned *unequal_ppn)
 {
-    if (ucg_global_params.job_info.info_type != UCG_TOPO_INFO_PLACEMENT_TABLE) {
+    if (group_params->distance_type != UCG_GROUP_DISTANCE_TYPE_PLACEMENT) {
         *unequal_ppn = 1; /* Actually, we just don't know in this case */
         return UCS_OK;
     }
 
-    uint16_t *node_index = ucg_global_params.job_info.placement[UCG_GROUP_MEMBER_DISTANCE_HOST];
+    uint16_t *node_index = group_params->placement[UCG_GROUP_MEMBER_DISTANCE_HOST];
     ucg_group_member_index_t member_idx;
     volatile unsigned node_cnt = 0;
     unsigned node_idx;

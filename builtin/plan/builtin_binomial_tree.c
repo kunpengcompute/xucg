@@ -60,7 +60,8 @@ unsigned ucg_builtin_calculate_ppx(const ucg_group_params_t *group_params,
     ucs_assert(group_params->field_mask & UCG_GROUP_PARAM_FIELD_DISTANCES);
 
     for (member_idx = 0; member_idx < group_params->member_count; member_idx++) {
-        enum ucg_group_member_distance next_distance = group_params->distance[member_idx];
+        enum ucg_group_member_distance next_distance =
+                group_params->distance_array[member_idx];
         ucs_assert(next_distance <= UCG_GROUP_MEMBER_DISTANCE_UNKNOWN);
         if (ucs_likely(next_distance <= domain_distance)) {
             ppx++;
@@ -881,7 +882,7 @@ static ucs_status_t ucg_builtin_binomial_tree_inter_create(enum ucg_builtin_plan
                 unsigned phs_cnt = tree->phs_cnt;
                 ucg_group_member_index_t *node_leaders = UCS_ALLOC_CHECK(node_count * sizeof(ucg_group_member_index_t),
                                                                          "recursive ranks");
-                (void)ucg_builtin_get_node_leaders(ucg_global_params.job_info.placement[UCG_GROUP_MEMBER_DISTANCE_HOST],
+                (void)ucg_builtin_get_node_leaders(params->group_params->placement[UCG_GROUP_MEMBER_DISTANCE_HOST],
                                                    params->group_params->member_count,
                                                    ucg_algo.topo_level, ppx, node_leaders);
                 ucg_builtin_recursive_connect(params->ctx, my_index, node_leaders, node_count, factor, 0, is_mock, tree);
@@ -1462,7 +1463,7 @@ static void ucg_builtin_prepare_member_idx(const ucg_builtin_binomial_tree_param
         k = 0;
         ucg_group_member_index_t member_idx;
         for (member_idx = 0; member_idx < params->group_params->member_count; member_idx++) {
-            if (ucs_likely(params->group_params->distance[member_idx] <= domain_distance)) {
+            if (ucs_likely(params->group_params->distance_array[member_idx] <= domain_distance)) {
                 member_list[k++] = member_idx;
             }
         }

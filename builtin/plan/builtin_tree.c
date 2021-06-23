@@ -279,7 +279,7 @@ ucs_status_t ucg_builtin_tree_add_intra(const ucg_builtin_tree_params_t *params,
     /* Go over member distances, filling the per-phase member lists */
     for (member_idx = 0; member_idx < params->group_params->member_count; member_idx++) {
         enum ucg_group_member_distance next_distance =
-                params->group_params->distance[member_idx];
+                params->group_params->distance_array[member_idx];
         if ((next_distance <= UCG_GROUP_MEMBER_DISTANCE_HOST) && (ppn != NULL)) {
             (*ppn)++; // TODO: fix support for "non-full-nodes" allocation...
             if (ucs_unlikely(next_distance == UCG_GROUP_MEMBER_DISTANCE_NONE)) {
@@ -296,7 +296,7 @@ ucs_status_t ucg_builtin_tree_add_intra(const ucg_builtin_tree_params_t *params,
     /* Go over potential parents, filling the per-phase member lists */
     for (member_idx = 0; member_idx < *my_idx; member_idx++) {
         enum ucg_group_member_distance next_distance =
-                params->group_params->distance[member_idx];
+                params->group_params->distance_array[member_idx];
 
         /* If per-socket level is disabled - treat all local ranks the same */
         if (is_single_level && (next_distance == UCG_GROUP_MEMBER_DISTANCE_SOCKET)) {
@@ -321,7 +321,7 @@ ucs_status_t ucg_builtin_tree_add_intra(const ucg_builtin_tree_params_t *params,
     /* Go over potential children, filling the per-phase member lists */
     for (member_idx++; member_idx < params->group_params->member_count; member_idx++) {
         enum ucg_group_member_distance next_distance =
-                params->group_params->distance[member_idx];
+                params->group_params->distance_array[member_idx];
         /* If per-socket level is disabled - treat all local ranks the same */
         if (is_single_level && (next_distance == UCG_GROUP_MEMBER_DISTANCE_SOCKET)) {
             next_distance = UCG_GROUP_MEMBER_DISTANCE_HOST;
@@ -363,7 +363,7 @@ ucs_status_t ucg_builtin_tree_add_intra(const ucg_builtin_tree_params_t *params,
         /* If I'm the new root - expect also a message from the "old" root (0) */
         if (*my_idx == params->root) {
             up_cnt = 0;
-            if (params->group_params->distance[0] < UCG_GROUP_MEMBER_DISTANCE_UNKNOWN) {
+            if (params->group_params->distance_array[0] < UCG_GROUP_MEMBER_DISTANCE_UNKNOWN) {
                 down[down_cnt++] = 0;
             }
         }

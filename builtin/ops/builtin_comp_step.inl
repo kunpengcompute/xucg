@@ -155,7 +155,7 @@ ucg_builtin_step_recv_handle_chunk(enum ucg_builtin_op_step_comp_aggregation ag,
     ucg_collective_params_t *params;
     ucg_builtin_op_step_t *ooo_step;
     ucp_dt_generic_t *gen_dt;
-    char *reduce_buf;
+    uint8_t *reduce_buf;
     void *gen_state;
     ptrdiff_t dsize;
     ptrdiff_t gap;
@@ -216,7 +216,7 @@ ucg_builtin_step_recv_handle_chunk(enum ucg_builtin_op_step_comp_aggregation ag,
                 return UCS_ERR_INVALID_PARAM;
             }
 
-            reduce_buf = (char *)ucs_alloca(dsize);
+            reduce_buf = (uint8_t*)ucs_alloca(dsize);
             gen_state  = gen_dt->ops.start_unpack(gen_dt->context,
                                                   reduce_buf - gap,
                                                   params->recv.count);
@@ -422,7 +422,7 @@ ucg_builtin_step_recv_handle_comp(ucg_builtin_request_t *req,
 
 static int UCS_F_ALWAYS_INLINE
 ucg_builtin_step_recv_cb(ucg_builtin_request_t *req, ucg_builtin_header_t header,
-                         void *data, size_t length, unsigned am_flags_ext)
+                         uint8_t *data, size_t length, unsigned am_flags_ext)
 {
     ucg_builtin_step_recv_handle_data(req, header, data, length, am_flags_ext);
 
@@ -439,6 +439,7 @@ ucg_builtin_step_check_pending(ucg_builtin_comp_slot_t *slot,
                                ucg_builtin_header_t expected)
 {
     /* Check pending incoming messages - invoke the callback on each one */
+    void *msg;
     size_t length;
     int is_batch;
     int is_fragd;
@@ -462,7 +463,8 @@ ucg_builtin_step_check_pending(ucg_builtin_comp_slot_t *slot,
     is_batch = step->comp_flags & UCG_BUILTIN_OP_STEP_COMP_FLAG_BATCHED_DATA;
     is_fragd = step->comp_flags & UCG_BUILTIN_OP_STEP_COMP_FLAG_FRAGMENTED_DATA;
 
-    ucs_ptr_array_for_each(rdesc, msg_index, &slot->messages) {
+    ucs_ptr_array_for_each(msg, msg_index, &slot->messages) {
+        rdesc  = (ucp_recv_desc_t*)msg;
         header = (ucg_builtin_header_t*)(rdesc + 1);
         ucs_assert((header->msg.coll_id  != slot->req.expecting.coll_id) ||
                    (header->msg.step_idx >= slot->req.expecting.step_idx));
@@ -502,8 +504,8 @@ ucg_builtin_step_check_pending(ucg_builtin_comp_slot_t *slot,
             }
 
             is_step_done = ucg_builtin_step_recv_cb(&slot->req, *header,
-                                                    header + 1, length,
-                                                    mock_am_flag);
+                                                    (uint8_t*)(header + 1),
+                                                    length, mock_am_flag);
 
             /* Dispose of the packet, according to its allocation */
             ucp_recv_desc_release(rdesc

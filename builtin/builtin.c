@@ -213,7 +213,8 @@ UCS_PROFILE_FUNC(ucs_status_t, ucg_builtin_am_handler,
             ucs_trace_req("ucg_builtin_am_handler CB: coll_id %u step_idx %u pending %u",
                           header.msg.coll_id, header.msg.step_idx, slot->req.pending);
 
-            ucg_builtin_step_recv_cb(&slot->req, header, data, length, am_flags);
+            ucg_builtin_step_recv_cb(&slot->req, header, (uint8_t*)data, length,
+                                     am_flags);
 
             return UCS_OK;
         }
@@ -360,7 +361,7 @@ ucg_builtin_calc_host_proc_cnt(const ucg_group_params_t *group_params)
     ucg_group_member_index_t index, count = 0;
 
     for (index = 0; index < group_params->member_count; index++) {
-        if (group_params->distance[index] <= UCG_GROUP_MEMBER_DISTANCE_HOST) {
+        if (group_params->distance_array[index] <= UCG_GROUP_MEMBER_DISTANCE_HOST) {
             count++;
         }
     }
@@ -1080,7 +1081,7 @@ static void ucg_builtin_prepare_rank_same_unit(const ucg_group_params_t *group_p
     unsigned idx, member_idx;
     enum ucg_group_member_distance next_distance;
     for (idx = 0, member_idx = 0; member_idx < group_params->member_count; member_idx++) {
-        next_distance = group_params->distance[member_idx];
+        next_distance = group_params->distance_array[member_idx];
         if (ucs_likely(next_distance <= domain_distance)) {
             rank_same_unit[idx++] = member_idx;
         }
@@ -1110,7 +1111,7 @@ ucs_status_t ucg_builtin_check_continuous_number(const ucg_group_params_t *group
 {
     unsigned i,j;
 
-    if (ucg_global_params.job_info.info_type != UCG_TOPO_INFO_DISTANCE_TABLE) {
+    if (group_params->distance_type != UCG_GROUP_DISTANCE_TYPE_TABLE) {
         return ucg_builtin_check_continuous_number_no_distance_table(group_params, domain_distance, discont_flag);
     }
 
@@ -1125,7 +1126,7 @@ ucs_status_t ucg_builtin_check_continuous_number(const ucg_group_params_t *group
             ucg_group_member_index_t global_j;
             ucg_global_params.get_global_index_f(group_params->cb_context, j, &global_j);
 
-            if (ucg_global_params.job_info.distance_table[global_i][global_j] > domain_distance) {
+            if (group_params->distance_table[global_i][global_j] > domain_distance) {
                 continue;
             }
 

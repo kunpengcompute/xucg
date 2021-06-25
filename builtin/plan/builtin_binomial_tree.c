@@ -1697,6 +1697,29 @@ static ucs_status_t ucg_builtin_binomial_tree_build(const ucg_builtin_binomial_t
     return status;
 }
 
+static void ucg_calcu_node_cnt(unsigned *node_cnt, const ucg_group_params_t *group_params)
+{
+    ucg_group_member_index_t member_idx;
+    unsigned node_idx;
+
+    for (member_idx = 0; member_idx < group_params->member_count; member_idx++) {
+        node_idx = group_params->node_index[member_idx];
+        if (*node_cnt < node_idx) {
+            *node_cnt = node_idx;
+        }
+    }
+    (*node_cnt)++;
+}
+
+static unsigned ucg_tree_degree_set(unsigned param, unsigned config)
+{
+    if (param > config) {
+        return param;
+    } else {
+        return config;
+    }
+}
+
 ucs_status_t ucg_builtin_binomial_tree_create(ucg_builtin_group_ctx_t *ctx,
                                               enum ucg_builtin_plan_topology_type plan_topo_type,
                                               const ucg_builtin_config_t *config,
@@ -1710,6 +1733,10 @@ ucs_status_t ucg_builtin_binomial_tree_create(ucg_builtin_group_ctx_t *ctx,
     ucg_builtin_plan_t *tree = (ucg_builtin_plan_t*)UCS_ALLOC_CHECK(alloc_size, "tree topology");
     memset(tree, 0, alloc_size);
     tree->phs_cnt = 0; /* will be incremented with usage */
+	unsigned node_cnt = 0;
+
+    /* node count */
+    ucg_calcu_node_cnt(&node_cnt, group_params);
 
     /* tree discovery and construction, by phase */
     ucg_builtin_binomial_tree_params_t params = {
@@ -1718,11 +1745,12 @@ ucs_status_t ucg_builtin_binomial_tree_create(ucg_builtin_group_ctx_t *ctx,
         .topo_type = plan_topo_type,
         .group_params = group_params,
         .root = coll_type->root,
-        .tree_degree_inter_fanout = config->bmtree.degree_inter_fanout,
-        .tree_degree_inter_fanin  = config->bmtree.degree_inter_fanin,
+        .tree_degree_inter_fanout = ucg_tree_degree_set(node_cnt - 1, config->bmtree.degree_inter_fanout),
+        .tree_degree_inter_fanin  = ucg_tree_degree_set(node_cnt - 1, config->bmtree.degree_inter_fanin),
         .tree_degree_intra_fanout = config->bmtree.degree_intra_fanout,
         .tree_degree_intra_fanin  = config->bmtree.degree_intra_fanin
     };
+	
     ucs_status_t ret = ucg_builtin_binomial_tree_build(&params, tree, &alloc_size);
     if (ret != UCS_OK) {
         ucs_free(tree);

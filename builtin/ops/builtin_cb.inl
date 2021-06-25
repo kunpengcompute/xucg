@@ -238,7 +238,7 @@ static int ucg_builtin_comp_recv_one_cb(ucg_builtin_request_t *req,
 static int ucg_builtin_comp_recv_noncontig_one_cb(ucg_builtin_request_t *req,
     uint64_t offset, void *data, size_t length)
 {
-    req->op->recv_dt->ops.unpack(req->step->non_contig.unpack_state.dt.generic.state,
+    req->op->recv_dt->ops.unpack(req->step->non_contig.unpack_state,
                                  offset, data, length);
     (void) ucg_builtin_comp_step_cb(req, NULL);
     return 1;
@@ -256,7 +256,7 @@ static int ucg_builtin_comp_recv_one_then_send_cb(ucg_builtin_request_t *req,
 static int ucg_builtin_comp_recv_noncontig_one_then_send_cb(ucg_builtin_request_t *req,
     uint64_t offset, void *data, size_t length)
 {
-    req->op->recv_dt->ops.unpack(req->step->non_contig.unpack_state.dt.generic.state,
+    req->op->recv_dt->ops.unpack(req->step->non_contig.unpack_state,
                                  offset, data, length);
     req->recv_comp = 1;
     (void) ucg_builtin_step_execute(req, NULL);
@@ -273,7 +273,7 @@ static int ucg_builtin_comp_recv_many_cb(ucg_builtin_request_t *req,
 static int ucg_builtin_comp_recv_noncontig_many_cb(ucg_builtin_request_t *req,
     uint64_t offset, void *data, size_t length)
 {
-    req->op->recv_dt->ops.unpack(req->step->non_contig.unpack_state.dt.generic.state,
+    req->op->recv_dt->ops.unpack(req->step->non_contig.unpack_state,
                                  offset, data, length);
     return ucg_builtin_comp_step_check_cb(req);
 }
@@ -288,7 +288,7 @@ static int ucg_builtin_comp_recv_many_then_send_pipe_cb(ucg_builtin_request_t *r
 static int ucg_builtin_comp_recv_noncontig_many_then_send_pipe_cb(ucg_builtin_request_t *req,
     uint64_t offset, void *data, size_t length)
 {
-    req->op->recv_dt->ops.unpack(req->step->non_contig.unpack_state.dt.generic.state,
+    req->op->recv_dt->ops.unpack(req->step->non_contig.unpack_state,
                                  offset, data, length);
     return ucg_builtin_comp_send_check_frag_cb(req, offset);
 }
@@ -306,7 +306,7 @@ static int ucg_builtin_comp_recv_many_then_send_cb(ucg_builtin_request_t *req,
 static int ucg_builtin_comp_recv_noncontig_many_then_send_cb(ucg_builtin_request_t *req,
     uint64_t offset, void *data, size_t length)
 {
-    req->op->recv_dt->ops.unpack(req->step->non_contig.unpack_state.dt.generic.state,
+    req->op->recv_dt->ops.unpack(req->step->non_contig.unpack_state,
                                  offset, data, length);
     if (req->pending == 1) {
         req->recv_comp = 1;
@@ -347,8 +347,8 @@ UCS_PROFILE_FUNC(int, ucg_builtin_comp_reduce_full_cb, (req, offset, data, lengt
         char *tmp_buffer = NULL;
         char *netdata = (char *)req->step->phase->recv_cache_buffer;
         ucp_dt_generic_t *gen_dt = req->op->recv_dt;
-        void *state_pack = req->step->non_contig.pack_state_recv.dt.generic.state;
-        void *state_unpack = req->step->non_contig.unpack_state.dt.generic.state;
+        void *state_pack = req->step->non_contig.pack_state_recv;
+        void *state_unpack = req->step->non_contig.unpack_state;
         ucg_collective_params_t *params = &req->op->super.params;
         size_t dt_len = (gen_dt == NULL) ? params->recv.dt_len :
                         ucg_builtin_get_dt_len(gen_dt);
@@ -719,21 +719,21 @@ ucg_builtin_init_state(ucg_builtin_op_step_t *step, int option,
             state_gen = dt_gen->ops.start_unpack(dt_gen->context, step->recv_buffer,
                                                 params->recv.count);
 
-            step->non_contig.unpack_state.dt.generic.state = state_gen;
+            step->non_contig.unpack_state = state_gen;
             break;
 
         case 1:
             state_gen = dt_gen->ops.start_pack(dt_gen->context, step->send_buffer,
                                             params->send.count);
 
-            step->non_contig.pack_state.dt.generic.state = state_gen;
+            step->non_contig.pack_state = state_gen;
             break;
 
         case 2:
             state_gen = dt_gen->ops.start_pack(dt_gen->context, step->recv_buffer,
                                             params->recv.count);
 
-            step->non_contig.pack_state_recv.dt.generic.state = state_gen;
+            step->non_contig.pack_state_recv = state_gen;
             break;
 
         default:
@@ -755,15 +755,15 @@ ucg_builtin_finalize_state(ucg_builtin_op_step_t *step, int option,
 
     switch (option) {
         case 0:
-            dt_gen->ops.finish(step->non_contig.unpack_state.dt.generic.state);
+            dt_gen->ops.finish(step->non_contig.unpack_state);
             break;
 
         case 1:
-            dt_gen->ops.finish(step->non_contig.pack_state.dt.generic.state);
+            dt_gen->ops.finish(step->non_contig.pack_state);
             break;
 
         case 2:
-            dt_gen->ops.finish(step->non_contig.pack_state_recv.dt.generic.state);
+            dt_gen->ops.finish(step->non_contig.pack_state_recv);
             break;
 
         default:

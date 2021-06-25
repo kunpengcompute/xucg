@@ -50,7 +50,7 @@ static UCS_F_ALWAYS_INLINE ucs_status_t ucg_builtin_step_am_short_one(ucg_builti
     ucs_debug("am_short_one step %u length %zu", step->am_header.step_idx, step->buffer_length);
 
     int8_t *send_buffer          = step->send_buffer;
-    void *dt_state               = step->non_contig.pack_state.dt.generic.state;
+    void *dt_state               = step->non_contig.pack_state;
     if (dt_state != NULL) {
         req->op->send_dt->ops.pack(dt_state, 0, step->non_contig.contig_buffer, step->buffer_length);
         send_buffer              = step->non_contig.contig_buffer;
@@ -67,7 +67,7 @@ static UCS_F_ALWAYS_INLINE ucs_status_t ucg_builtin_step_am_short_max(ucg_builti
     unsigned am_id               = step->am_id;
     ucg_offset_t frag_size       = step->fragment_length;
     int8_t *send_buffer          = step->send_buffer;
-    void *dt_state               = step->non_contig.pack_state.dt.generic.state;
+    void *dt_state               = step->non_contig.pack_state;
 
     if (dt_state != NULL) {
         req->op->send_dt->ops.pack(dt_state, 0, step->non_contig.contig_buffer, step->buffer_length);
@@ -122,7 +122,7 @@ static size_t ucg_builtin_step_am_bcopy_single_frag_packer(void *dest, void *arg
     ucg_builtin_request_t *req       = (ucg_builtin_request_t*)arg;
     ucg_builtin_op_step_t *step      = req->step;
     ucg_builtin_header_t *header_ptr = (ucg_builtin_header_t*)dest;
-    void *dt_state                   = step->non_contig.pack_state.dt.generic.state;
+    void *dt_state                   = step->non_contig.pack_state;
     header_ptr->header               = step->am_header.header;
 
     if (dt_state != NULL) {
@@ -138,7 +138,7 @@ static size_t ucg_builtin_step_am_bcopy_full_frag_packer(void *dest, void *arg)
     ucg_builtin_request_t *req       = (ucg_builtin_request_t*)arg;
     ucg_builtin_op_step_t *step      = req->step;
     ucg_builtin_header_t *header_ptr = (ucg_builtin_header_t*)dest;
-    void *dt_state                   = step->non_contig.pack_state.dt.generic.state;
+    void *dt_state                   = step->non_contig.pack_state;
     header_ptr->header               = step->am_header.header;
 
     if (dt_state != NULL) {
@@ -155,7 +155,7 @@ static size_t ucg_builtin_step_am_bcopy_partial_frag_packer(void *dest, void *ar
     ucg_builtin_op_step_t *step      = req->step;
     ucg_offset_t last_frag_length    = step->buffer_length - step->iter_offset;
     ucg_builtin_header_t *header_ptr = (ucg_builtin_header_t*)dest;
-    void *dt_state                   = step->non_contig.pack_state.dt.generic.state;
+    void *dt_state                   = step->non_contig.pack_state;
     header_ptr->header               = step->am_header.header;
 
     if (dt_state != NULL) {
@@ -236,7 +236,7 @@ static UCS_F_ALWAYS_INLINE ucs_status_t ucg_builtin_step_am_zcopy_one(ucg_builti
                                                                       uct_ep_h ep, int is_single_send)
 {
     int8_t *send_buffer          = step->send_buffer;
-    void *dt_state               = step->non_contig.pack_state.dt.generic.state;
+    void *dt_state               = step->non_contig.pack_state;
 
     if (dt_state != NULL) {
         req->op->send_dt->ops.pack(dt_state, 0, step->non_contig.contig_buffer, step->buffer_length);
@@ -271,7 +271,7 @@ static UCS_F_ALWAYS_INLINE ucs_status_t ucg_builtin_step_am_zcopy_max(ucg_builti
     step->am_header.remote_offset = (is_single_send) ? step->iter_offset :
                                     step->am_header.remote_offset;
     int8_t *send_buffer           = step->send_buffer;
-    void *dt_state                = step->non_contig.pack_state.dt.generic.state;
+    void *dt_state                = step->non_contig.pack_state;
     if (dt_state != NULL) {
         req->op->send_dt->ops.pack(dt_state, 0, step->non_contig.contig_buffer, step->buffer_length);
         send_buffer               = step->non_contig.contig_buffer;
@@ -1056,9 +1056,9 @@ ucs_status_t ucg_builtin_step_create(ucg_builtin_plan_phase_t *phase,
     step->send_cb            = NULL;
 
     step->non_contig.contig_buffer = NULL;
-    step->non_contig.pack_state.dt.generic.state   = NULL;
-    step->non_contig.unpack_state.dt.generic.state = NULL;
-    step->non_contig.pack_state_recv.dt.generic.state = NULL;
+    step->non_contig.pack_state   = NULL;
+    step->non_contig.unpack_state = NULL;
+    step->non_contig.pack_state_recv = NULL;
 
     /* special parameter of buffer length should be set for allgather with bruck plan */
     if (phase->method == UCG_PLAN_METHOD_ALLGATHER_BRUCK) {
@@ -1327,8 +1327,8 @@ void ucg_builtin_swap_net_recv(char *netdata, size_t length, size_t offset,
 {
     ucg_builtin_op_step_t *step = req->step;
     ucp_dt_generic_t *gen_dt = req->op->recv_dt;
-    void *state_pack = step->non_contig.pack_state_recv.dt.generic.state;
-    void *state_unpack = step->non_contig.unpack_state.dt.generic.state;
+    void *state_pack = step->non_contig.pack_state_recv;
+    void *state_unpack = step->non_contig.unpack_state;
     char *recv_buffer = (char *)step->recv_buffer;
     char *tmp_buffer = NULL;
 

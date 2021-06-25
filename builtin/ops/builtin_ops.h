@@ -149,9 +149,9 @@ typedef struct ucg_builtin_op_step {
     /* Fields intended for non-contig datatypes */
     struct {
         int8_t                *contig_buffer;
-        ucp_dt_state_t         pack_state;
-        ucp_dt_state_t         unpack_state;
-        ucp_dt_state_t         pack_state_recv;
+        void                  *pack_state;
+        void                  *unpack_state;
+        void                  *pack_state_recv;
     } non_contig;
 
     /* Fields intended for zero-copy */

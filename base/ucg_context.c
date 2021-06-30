@@ -407,6 +407,20 @@ ucs_status_t ucg_init_version(unsigned ucg_api_major_version,
                 ucg_context_comp_fallback : ucg_context_comp_fallback_no_offsets;
     }
 
+    if (!(params->field_mask & UCG_PARAM_FIELD_DATATYPE_CB)) {
+       ucg_global_params.datatype.convert_f           = ucs_empty_function_do_assert;
+       ucg_global_params.datatype.get_span_f          = ucs_empty_function_do_assert;
+       ucg_global_params.datatype.is_integer_f        = ucs_empty_function_do_assert;
+       ucg_global_params.datatype.is_floating_point_f = ucs_empty_function_do_assert;
+    }
+
+    if (!(params->field_mask & UCG_PARAM_FIELD_REDUCE_OP_CB)) {
+       ucg_global_params.reduce_op.reduce_cb_f       = ucs_empty_function_do_assert;
+       ucg_global_params.reduce_op.is_sum_f          = ucs_empty_function_do_assert;
+       ucg_global_params.reduce_op.is_loc_expected_f = ucs_empty_function_do_assert;
+       ucg_global_params.reduce_op.is_commutative_f  = ucs_empty_function_do_assert;
+    }
+
 #ifndef HAVE_UCP_EXTENSIONS
     const ucp_params_t *ucp_params_arg = params->super;
 #else

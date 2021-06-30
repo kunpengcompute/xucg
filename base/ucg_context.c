@@ -410,15 +410,15 @@ ucs_status_t ucg_init_version(unsigned ucg_api_major_version,
     if (!(params->field_mask & UCG_PARAM_FIELD_DATATYPE_CB)) {
        ucg_global_params.datatype.convert_f           = ucs_empty_function_do_assert;
        ucg_global_params.datatype.get_span_f          = ucs_empty_function_do_assert;
-       ucg_global_params.datatype.is_integer_f        = ucs_empty_function_do_assert;
-       ucg_global_params.datatype.is_floating_point_f = ucs_empty_function_do_assert;
+       ucg_global_params.datatype.is_integer_f        = ucs_empty_function_return_zero_int;
+       ucg_global_params.datatype.is_floating_point_f = ucs_empty_function_return_zero_int;
     }
 
     if (!(params->field_mask & UCG_PARAM_FIELD_REDUCE_OP_CB)) {
        ucg_global_params.reduce_op.reduce_cb_f       = ucs_empty_function_do_assert;
-       ucg_global_params.reduce_op.is_sum_f          = ucs_empty_function_do_assert;
-       ucg_global_params.reduce_op.is_loc_expected_f = ucs_empty_function_do_assert;
-       ucg_global_params.reduce_op.is_commutative_f  = ucs_empty_function_do_assert;
+       ucg_global_params.reduce_op.is_sum_f          = ucs_empty_function_return_zero_int;
+       ucg_global_params.reduce_op.is_loc_expected_f = ucs_empty_function_return_zero_int;
+       ucg_global_params.reduce_op.is_commutative_f  = ucs_empty_function_return_zero_int;
     }
 
 #ifndef HAVE_UCP_EXTENSIONS

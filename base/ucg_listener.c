@@ -12,16 +12,25 @@ static uint8_t ucg_listener_am_id = 0;
 
 static void ucg_group_listener_accept_cb(ucp_ep_h ep, void *arg)
 {
-    ucg_group_h group              = (ucg_group_h)arg;
-    ucp_request_param_t params     = {
+    ucg_group_h group                  = (ucg_group_h)arg;
+    ucg_group_member_index_t new_index = group->params.member_count++;
+    ucp_request_param_t params         = {
             .op_attr_mask = UCP_OP_ATTR_FIELD_FLAGS,
             .flags        = UCP_AM_SEND_FLAG_EAGER
     };
-    ucg_listener_group_info_t info = {
+    ucg_listener_group_info_t info     = {
             .id           = group->params.id,
-            .member_count = group->params.member_count,
-            .member_index = group->params.member_index
+            .member_count = new_index,
+            .member_index = new_index
     };
+
+    group->params.distance_array = ucs_realloc(group->params.distance_array,
+                                               new_index, "dynamic distance");
+    if (!group->params.distance_array) {
+        return;
+    }
+
+    group->params.distance_array[info.member_index] = UCG_GROUP_MEMBER_DISTANCE_UNKNOWN;
 
     /* Send back the group information (blocking, but likely immediate) */
     ucs_status_ptr_t status = ucp_am_send_nbx(ep, ucg_listener_am_id, 0, 0,
@@ -60,8 +69,6 @@ ucs_status_t ucg_group_listener_connect(ucg_group_h group,
             .sockaddr   = *listener_addr,
             .flags      = UCP_EP_PARAMS_FLAGS_CLIENT_SERVER
     };
-
-    ucs_assert(group->params.member_count == 0);
 
     status = ucp_ep_create(group->worker, &params, &ep);
     if (status != UCS_OK) {

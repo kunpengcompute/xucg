@@ -340,6 +340,11 @@ ucs_status_t ucg_context_set_async_timer(ucs_async_context_t *async,
 ucs_status_t ucg_context_unset_async_timer(ucs_async_context_t *async,
                                            int timer_id);
 
+/* Helper function to count the peers within a given distance from myself */
+unsigned ucg_group_count_ppx(const ucg_group_params_t *group_params,
+                             enum ucg_group_member_distance domain_distance,
+                             unsigned *ppn);
+
 /* Start/stop pending operations after a barrier has been completed */
 ucs_status_t ucg_collective_acquire_barrier(ucg_group_h group);
 ucs_status_t ucg_collective_release_barrier(ucg_group_h group);

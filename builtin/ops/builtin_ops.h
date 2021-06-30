@@ -328,7 +328,8 @@ ucs_status_t ucg_builtin_step_create_rkey_bcast(ucg_builtin_plan_t *plan,
 ucs_status_t ucg_builtin_step_execute(ucg_builtin_request_t *req,
                                       ucg_builtin_header_t header);
 
-ucs_status_t ucg_builtin_step_zcopy_prep(ucg_builtin_op_step_t *step);
+ucs_status_t ucg_builtin_step_zcopy_prep(ucg_builtin_op_step_t *step,
+                                         const ucg_collective_params_t *params);
 
 ucs_status_t ucg_builtin_step_select_packers(const ucg_collective_params_t *params,
                                              size_t send_dt_len,
@@ -407,6 +408,28 @@ ucg_builtin_step_set_remote_address(ucg_builtin_op_step_t *step, uint8_t **ptr)
     ucs_assert(step->iter_offset < step->ep_cnt);
     ucs_assert(step->buffer_length == (sizeof(uint64_t) +
                                        step->phase->md_attr->rkey_packed_size));
+}
+
+static UCS_F_ALWAYS_INLINE size_t
+ucg_builtin_step_length(ucg_builtin_op_step_t *step,
+                        const ucg_collective_params_t *params,
+                        int is_send)
+{
+    size_t unpacked;
+    int is_fragmented = (step->flags & UCG_BUILTIN_OP_STEP_FLAG_FRAGMENTED);
+    int is_len_packed = (step->comp_flags &
+                         UCG_BUILTIN_OP_STEP_COMP_FLAG_PACKED_LENGTH);
+
+    if (is_fragmented || is_len_packed) {
+        unpacked = step->dtype_length;
+        if (is_len_packed) {
+            unpacked = UCT_COLL_DTYPE_MODE_UNPACK_VALUE(unpacked);
+        }
+
+        return unpacked * (is_send ? params->recv.count : params->send.count);
+    }
+
+    return step->buffer_length;
 }
 
 /*

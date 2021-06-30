@@ -3,7 +3,6 @@
  * See file LICENSE for terms.
  */
 
-#include <math.h>
 #include <ucs/debug/log.h>
 #include <ucs/debug/assert.h>
 #include <ucs/debug/memtrack.h>
@@ -260,43 +259,48 @@ ucs_status_t ucg_builtin_tree_connect(ucg_builtin_plan_t *tree,
 }
 
 ucs_status_t ucg_builtin_tree_add_intra(const ucg_builtin_tree_params_t *params,
-                                        ucg_group_member_index_t *my_idx,
                                         unsigned *ppn,
+                                        ucg_group_member_index_t my_idx,
                                         ucg_group_member_index_t *up,
                                         unsigned *final_up_cnt,
                                         ucg_group_member_index_t *down,
                                         unsigned *final_down_cnt,
                                         enum ucg_group_member_distance *master_phase)
 {
+    enum ucg_group_member_distance next_distance;
     unsigned up_cnt                               = 0;
     unsigned down_cnt                             = 0;
-    ucg_group_member_index_t member_idx           = (ucg_group_member_index_t)-1;
+    ucg_group_member_index_t member_idx           = params->group_params->member_index;
     ucg_group_member_index_t socket_threshold     = params->config->sock_thresh;
     enum ucg_group_member_distance up_distance    = UCG_GROUP_MEMBER_DISTANCE_UNKNOWN;
     enum ucg_group_member_distance down_distance  = UCG_GROUP_MEMBER_DISTANCE_NONE;
     enum ucg_group_member_distance first_distance = UCG_GROUP_MEMBER_DISTANCE_NONE;
 
-    /* Go over member distances, filling the per-phase member lists */
-    for (member_idx = 0; member_idx < params->group_params->member_count; member_idx++) {
-        enum ucg_group_member_distance next_distance =
-                params->group_params->distance_array[member_idx];
-        if ((next_distance <= UCG_GROUP_MEMBER_DISTANCE_HOST) && (ppn != NULL)) {
-            (*ppn)++; // TODO: fix support for "non-full-nodes" allocation...
-            if (ucs_unlikely(next_distance == UCG_GROUP_MEMBER_DISTANCE_NONE)) {
-                ucs_assert(member_idx == params->group_params->member_index);
-                *my_idx = member_idx;
-            }
-        }
-    }
-    ucs_assert(member_idx != (ucg_group_member_index_t)-1);
+    /* Check how many processes are on each node */
+    *final_down_cnt = ucg_group_count_ppx(params->group_params,
+                                          UCG_GROUP_MEMBER_DISTANCE_HOST, ppn);
 
     /* If there's a small number of cores per socket - no use in 2-levels... */
     int is_single_level = (*ppn < socket_threshold);
 
+    /* No information - use a flat tree (TODO: support multi-level trees too) */
+    if (params->group_params->distance_type == UCG_GROUP_DISTANCE_TYPE_FIXED) {
+        if (member_idx == 0) {
+            *final_up_cnt = 0;
+            ucg_builtin_prepare_rank_same_unit(params->group_params,
+                                               UCG_GROUP_MEMBER_DISTANCE_UNKNOWN,
+                                               down);
+        } else {
+            *final_down_cnt = 0;
+            *final_up_cnt   = 1;
+            *up             = 0;
+        }
+        return UCS_OK;
+    }
+
     /* Go over potential parents, filling the per-phase member lists */
-    for (member_idx = 0; member_idx < *my_idx; member_idx++) {
-        enum ucg_group_member_distance next_distance =
-                params->group_params->distance_array[member_idx];
+    for (member_idx = 0; member_idx < my_idx; member_idx++) {
+        next_distance = params->group_params->distance_array[member_idx];
 
         /* If per-socket level is disabled - treat all local ranks the same */
         if (is_single_level && (next_distance == UCG_GROUP_MEMBER_DISTANCE_SOCKET)) {
@@ -320,8 +324,7 @@ ucs_status_t ucg_builtin_tree_add_intra(const ucg_builtin_tree_params_t *params,
 
     /* Go over potential children, filling the per-phase member lists */
     for (member_idx++; member_idx < params->group_params->member_count; member_idx++) {
-        enum ucg_group_member_distance next_distance =
-                params->group_params->distance_array[member_idx];
+        next_distance = params->group_params->distance_array[member_idx];
         /* If per-socket level is disabled - treat all local ranks the same */
         if (is_single_level && (next_distance == UCG_GROUP_MEMBER_DISTANCE_SOCKET)) {
             next_distance = UCG_GROUP_MEMBER_DISTANCE_HOST;
@@ -361,7 +364,7 @@ ucs_status_t ucg_builtin_tree_add_intra(const ucg_builtin_tree_params_t *params,
         }
 
         /* If I'm the new root - expect also a message from the "old" root (0) */
-        if (*my_idx == params->root) {
+        if (my_idx == params->root) {
             up_cnt = 0;
             if (params->group_params->distance_array[0] < UCG_GROUP_MEMBER_DISTANCE_UNKNOWN) {
                 down[down_cnt++] = 0;
@@ -473,17 +476,19 @@ static ucs_status_t ucg_builtin_tree_build(const ucg_builtin_tree_params_t *para
      *         a list of fabric-masters in a multi-root formation (topmost
      *         phase of each collective is all-to-all between fabric-masters).
      */
-    enum ucg_group_member_distance master_phase = UCG_GROUP_MEMBER_DISTANCE_CLUSTER;
-    ucs_status_t status = ucg_builtin_tree_add_intra(params, &tree->super.my_index,
-                                                     &ppn, host_up, &host_up_cnt,
+    enum ucg_group_member_distance master = UCG_GROUP_MEMBER_DISTANCE_CLUSTER;
+    tree->super.my_index                  = params->group_params->member_index;
+    ucs_status_t status = ucg_builtin_tree_add_intra(params, &ppn,
+                                                     tree->super.my_index,
+                                                     host_up, &host_up_cnt,
                                                      host_down, &host_down_cnt,
-                                                     &master_phase);
+                                                     &master);
     if (ucs_unlikely(status != UCS_OK)) {
         return status;
     }
 
     /* Network peers calculation */
-    if ((master_phase >= UCG_GROUP_MEMBER_DISTANCE_HOST) &&
+    if ((master >= UCG_GROUP_MEMBER_DISTANCE_HOST) &&
         (ppn < params->group_params->member_count)) {
         host_up_cnt = 0; /* ignore fake parent of index 0 */
         status = ucg_builtin_tree_add_inter(params, tree->super.my_index, ppn,

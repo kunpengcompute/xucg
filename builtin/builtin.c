@@ -29,7 +29,6 @@
                                   UCG_GROUP_PARAM_FIELD_DISTANCES)
 
 #define CACHE_SIZE 1000
-#define RECURSIVE_FACTOR 2
 #define DEFAULT_INTER_KVALUE 8
 #define DEFAULT_INTRA_KVALUE 2
 #define DATATYPE_ALIGN 16
@@ -38,9 +37,14 @@
                                   UCG_GROUP_COLLECTIVE_MODIFIER_BROADCAST)
 
 static ucs_config_field_t ucg_builtin_config_table[] = {
+    {"TREE_", "", NULL, ucs_offsetof(ucg_builtin_config_t, tree),
+     UCS_CONFIG_TYPE_TABLE(ucg_builtin_tree_config_table)},
 
     {"BMTREE_", "", NULL, ucs_offsetof(ucg_builtin_config_t, bmtree),
      UCS_CONFIG_TYPE_TABLE(ucg_builtin_binomial_tree_config_table)},
+
+    {"RECURSIVE_", "", NULL, ucs_offsetof(ucg_builtin_config_t, recursive),
+     UCS_CONFIG_TYPE_TABLE(ucg_builtin_recursive_config_table)},
 
     {"BCAST_ALGORITHM", "0", "Bcast algorithm",
      ucs_offsetof(ucg_builtin_config_t, bcast_algorithm), UCS_CONFIG_TYPE_DOUBLE},
@@ -334,7 +338,6 @@ static ucs_status_t ucg_builtin_init_plan_config(ucg_builtin_config_t *config)
 {
     config->cache_size = CACHE_SIZE;
     config->pipelining = 0;
-    config->recursive.factor = RECURSIVE_FACTOR;
 
     /* K-nomial tree algorithm require all K vaule is bigger than 1 */
     if (config->bmtree.degree_inter_fanout <= 1 || config->bmtree.degree_inter_fanin <= 1 ||
@@ -358,15 +361,7 @@ static ucs_status_t ucg_builtin_init_plan_config(ucg_builtin_config_t *config)
 static ucg_group_member_index_t
 ucg_builtin_calc_host_proc_cnt(const ucg_group_params_t *group_params)
 {
-    ucg_group_member_index_t index, count = 0;
-
-    for (index = 0; index < group_params->member_count; index++) {
-        if (group_params->distance_array[index] <= UCG_GROUP_MEMBER_DISTANCE_HOST) {
-            count++;
-        }
-    }
-
-    return count;
+    return ucg_group_count_ppx(group_params, UCG_GROUP_MEMBER_DISTANCE_HOST, NULL);
 }
 
 void ucg_builtin_req_enqueue_resend(ucg_builtin_group_ctx_t *gctx,
@@ -1074,25 +1069,11 @@ void ucg_builtin_check_continuous_number_by_sort(ucg_group_member_index_t *array
     }
 }
 
-static void ucg_builtin_prepare_rank_same_unit(const ucg_group_params_t *group_params,
-                                               enum ucg_group_member_distance domain_distance,
-                                               ucg_group_member_index_t *rank_same_unit)
-{
-    unsigned idx, member_idx;
-    enum ucg_group_member_distance next_distance;
-    for (idx = 0, member_idx = 0; member_idx < group_params->member_count; member_idx++) {
-        next_distance = group_params->distance_array[member_idx];
-        if (ucs_likely(next_distance <= domain_distance)) {
-            rank_same_unit[idx++] = member_idx;
-        }
-    }
-}
-
 ucs_status_t ucg_builtin_check_continuous_number_no_distance_table(const ucg_group_params_t *group_params,
                                                                    enum ucg_group_member_distance domain_distance,
                                                                    unsigned *discont_flag)
 {
-    unsigned ppx = ucg_builtin_calculate_ppx(group_params, domain_distance);
+    unsigned ppx = ucg_group_count_ppx(group_params, domain_distance, NULL);
 
     /* store rank number in same unit */
     size_t alloc_size = ppx * sizeof(ucg_group_member_index_t);

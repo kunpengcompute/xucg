@@ -174,21 +174,31 @@ ucg_builtin_step_recv_handle_chunk(enum ucg_builtin_op_step_comp_aggregation ag,
     case UCG_BUILTIN_OP_STEP_COMP_AGGREGATE_WRITE:
         op = req->op;
         if (is_dt_packed) {
+            ucs_assert(ucp_dt_length(op->recv_dt, 0, NULL, op->recv_unpack) ==
+                       req->step->dtype_length);
+
             gen_dt = ucp_dt_to_generic(op->recv_dt);
             status = gen_dt->ops.unpack(op->recv_unpack, header.remote_offset,
                                         src, length);
         } else {
-            ucs_assert((is_fragment) ||
-                       (length + header.remote_offset <=
-                        req->step->buffer_length));
+            if (is_fragment) {
+                ucs_assert(length <= req->step->fragment_length);
+            } else {
+                ucs_assert(length + header.remote_offset <=
+                           req->step->buffer_length);
+            }
+
             memcpy(dst, src, length);
             status = UCS_OK;
         }
         break;
 
     case UCG_BUILTIN_OP_STEP_COMP_AGGREGATE_GATHER:
+        op = req->op;
         ucg_builtin_comp_gather(req->step->recv_buffer, header.remote_offset,
-                                src, req->step->buffer_length, length,
+                                src, ucg_builtin_step_length(req->step,
+                                                             &op->super.params,
+                                                             0), length,
                                 UCG_PARAM_TYPE(&req->op->super.params).root);
         status = UCS_OK;
         break;
@@ -442,10 +452,9 @@ ucg_builtin_step_check_pending(ucg_builtin_comp_slot_t *slot,
     void *msg;
     size_t length;
     int is_batch;
-    int is_fragd;
     int is_step_done;
     unsigned msg_index;
-    unsigned mock_am_flag;
+    unsigned mock_flag;
     ucp_recv_desc_t *rdesc;
     ucg_builtin_header_t *header;
 
@@ -459,9 +468,8 @@ ucg_builtin_step_check_pending(ucg_builtin_comp_slot_t *slot,
         return UCS_INPROGRESS;
     }
 
-    mock_am_flag = 0;
-    is_batch = step->comp_flags & UCG_BUILTIN_OP_STEP_COMP_FLAG_BATCHED_DATA;
-    is_fragd = step->comp_flags & UCG_BUILTIN_OP_STEP_COMP_FLAG_FRAGMENTED_DATA;
+    mock_flag = 0;
+    is_batch  = step->comp_flags & UCG_BUILTIN_OP_STEP_COMP_FLAG_BATCHED_DATA;
 
     ucs_ptr_array_for_each(msg, msg_index, &slot->messages) {
         rdesc  = (ucp_recv_desc_t*)msg;
@@ -484,19 +492,16 @@ ucg_builtin_step_check_pending(ucg_builtin_comp_slot_t *slot,
             if (((rdesc->flags & UCT_CB_PARAM_FLAG_DESC) == 0) &&
                  (step->comp_criteria <= UCG_BUILTIN_OP_STEP_COMP_CRITERIA_SINGLE_MESSAGE)) {
                                /* can be UCG_BUILTIN_OP_STEP_COMP_CRITERIA_SEND */
-                mock_am_flag = UCT_CB_PARAM_FLAG_LAST;
+                mock_flag = UCT_CB_PARAM_FLAG_LAST;
             }
 
             if (is_batch) {
                 /* At the time of arrival the length was not known, since the
                  * batches are padded in memory - so we grab the information
                  * from the step (information specified by local invocation) */
-                if (is_fragd) {
-                    length = step->dtype_length *
-                             slot->req.op->super.params.recv.count;
-                } else {
-                    length = step->buffer_length;
-                }
+                length = ucg_builtin_step_length(step,
+                                                 &slot->req.op->super.params,
+                                                 0);
 
                 ucs_assert(length <= (rdesc->length - sizeof(ucg_builtin_header_t)));
             } else {
@@ -505,7 +510,7 @@ ucg_builtin_step_check_pending(ucg_builtin_comp_slot_t *slot,
 
             is_step_done = ucg_builtin_step_recv_cb(&slot->req, *header,
                                                     (uint8_t*)(header + 1),
-                                                    length, mock_am_flag);
+                                                    length, mock_flag);
 
             /* Dispose of the packet, according to its allocation */
             ucp_recv_desc_release(rdesc
@@ -523,7 +528,7 @@ ucg_builtin_step_check_pending(ucg_builtin_comp_slot_t *slot,
         }
     }
 
-    if ((mock_am_flag != 0) &&
+    if ((mock_flag != 0) &&
         (ucg_builtin_step_recv_handle_comp(&slot->req, *header))) {
         goto step_done;
     }

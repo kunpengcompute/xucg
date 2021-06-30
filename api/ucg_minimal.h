@@ -35,8 +35,22 @@ ucg_minimal_init(ucg_minimal_ctx_t *ctx,
     ucg_params_t context_params;
     ucg_config_t *context_config;
     ucp_worker_params_t worker_params;
-    ucg_group_params_t group_params;
-    unsigned num_connections_so_far = 0;
+    ucp_params_t ucp_context_params = {0};
+    ucg_params_t ucg_context_params = {0};
+    int is_server                   = (flags & UCG_MINIMAL_FLAG_SERVER);
+    ucp_context_params.field_mask   = UCP_PARAM_FIELD_FEATURES;
+    ucp_context_params.features     = UCP_FEATURE_GROUPS;
+    ucg_context_params.super        = &ucp_context_params;
+    ucg_context_params.field_mask   = UCG_PARAM_FIELD_ADDRESS_CB;
+    ucg_group_attr_t group_attr     = {
+            .field_mask             = UCG_GROUP_ATTR_FIELD_MEMBER_COUNT
+    };
+    ucg_group_params_t group_params = {
+            .field_mask             = UCG_GROUP_PARAM_FIELD_MEMBER_COUNT |
+                                      UCG_GROUP_PARAM_FIELD_MEMBER_INDEX,
+            .member_index           = !is_server,
+            .member_count           = 1 + !is_server
+    };
 
     status = ucg_config_read(NULL, NULL, &context_config);
     if (status != UCS_OK) {
@@ -60,7 +74,7 @@ ucg_minimal_init(ucg_minimal_ctx_t *ctx,
         goto cleanup_worker;
     }
 
-    if (flags & UCG_MINIMAL_FLAG_SERVER) {
+    if (is_server) {
         status = ucg_group_listener_connect(ctx->group, server_address);
         if (status != UCS_OK) {
             goto cleanup_group;

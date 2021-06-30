@@ -4,9 +4,9 @@
  */
 
 #include "builtin_plan.h"
-#include <math.h>
-#include <ucs/debug/assert.h>
+
 #include <ucs/debug/log.h>
+#include <ucs/debug/assert.h>
 #include <ucs/debug/memtrack.h>
 #include <uct/api/uct_def.h>
 
@@ -51,33 +51,9 @@ ucs_config_field_t ucg_builtin_binomial_tree_config_table[] = {
     {NULL}
 };
 
-unsigned ucg_builtin_calculate_ppx(const ucg_group_params_t *group_params,
-                                   enum ucg_group_member_distance domain_distance)
-{
-    unsigned member_idx;
-    unsigned ppx = 0;
-
-    ucs_assert(group_params->field_mask & UCG_GROUP_PARAM_FIELD_DISTANCES);
-
-    for (member_idx = 0; member_idx < group_params->member_count; member_idx++) {
-        enum ucg_group_member_distance next_distance =
-                group_params->distance_array[member_idx];
-        ucs_assert(next_distance <= UCG_GROUP_MEMBER_DISTANCE_UNKNOWN);
-        if (ucs_likely(next_distance <= domain_distance)) {
-            ppx++;
-        }
-    }
-
-    return ppx;
-}
-
-/*
-    left-most tree for FANOUT
-    right-most tree for FANIN
-*/
 enum ucg_builtin_tree_direction {
-    UCG_PLAN_LEFT_MOST_TREE,
-    UCG_PLAN_RIGHT_MOST_TREE
+    UCG_PLAN_LEFT_MOST_TREE, /* left-most tree for FANOUT */
+    UCG_PLAN_RIGHT_MOST_TREE /* right-most tree for FANIN */
 };
 
 static ucs_status_t ucg_builtin_bmtree_algo_build_left(unsigned rank,
@@ -1615,9 +1591,9 @@ static ucs_status_t ucg_builtin_tree_build(const ucg_builtin_binomial_tree_param
         /* L3cache-aware: ppx = ppl (processes per L3cache) */
         enum ucg_group_member_distance domain_distance = UCG_GROUP_MEMBER_DISTANCE_HOST;
         status = choose_distance_from_topo_aware_level(&domain_distance);
-        *ppx = ucg_builtin_calculate_ppx(params->group_params, domain_distance);
-        *ppn = ucg_builtin_calculate_ppx(params->group_params, UCG_GROUP_MEMBER_DISTANCE_HOST);
-        *pps = ucg_builtin_calculate_ppx(params->group_params, UCG_GROUP_MEMBER_DISTANCE_SOCKET);
+        *ppx = ucg_group_count_ppx(params->group_params, domain_distance, NULL);
+        *ppn = ucg_group_count_ppx(params->group_params, UCG_GROUP_MEMBER_DISTANCE_HOST, NULL);
+        *pps = ucg_group_count_ppx(params->group_params, UCG_GROUP_MEMBER_DISTANCE_SOCKET, NULL);
         status = ucg_builtin_topo_tree_build(params, topo_params, domain_distance, root, rank, up, up_cnt, down,
                                              down_cnt, up_fanin, up_fanin_cnt,
                                              down_fanin, down_fanin_cnt,

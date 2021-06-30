@@ -17,8 +17,7 @@
 #include <ucp/wireup/address.h> /* for ucp_address_pack/unpack */
 
 #define UCG_GROUP_PARAM_REQUIRED_MASK (UCG_GROUP_PARAM_FIELD_MEMBER_COUNT |\
-                                       UCG_GROUP_PARAM_FIELD_MEMBER_INDEX |\
-                                       UCG_GROUP_PARAM_FIELD_CB_CONTEXT)
+                                       UCG_GROUP_PARAM_FIELD_MEMBER_INDEX)
 
 #if ENABLE_STATS
 /**
@@ -119,36 +118,51 @@ static inline ucs_status_t ucg_group_plan(ucg_group_h group,
     return UCS_OK;
 }
 
-#if HAVE_UCP_EXTENSIONS
-static ucs_status_t
-ucg_group_wireup_coll_iface_calc(enum ucg_group_member_distance *distance,
-                                 ucg_group_member_index_t member_count,
-                                 uint32_t *proc_idx, uint32_t *proc_cnt)
+unsigned ucg_group_count_ppx(const ucg_group_params_t *group_params,
+                             enum ucg_group_member_distance domain_distance,
+                             unsigned *ppn)
 {
-    ucs_status_t status = UCS_ERR_INVALID_PARAM;
-    ucg_group_member_index_t idx;
+    enum ucg_group_member_distance distance;
+    ucg_group_member_index_t index, count = 0;
 
-    for (idx = 0; idx < member_count; idx++) {
-        if (distance[idx] == UCG_GROUP_MEMBER_DISTANCE_NONE) {
-            *proc_idx = (uint32_t)idx;
-            status    = UCS_OK;
-        }
-        if (distance[idx] <= UCG_GROUP_MEMBER_DISTANCE_HOST) {
-            (*proc_cnt)++;
-        }
+    if (ppn != NULL) {
+        *ppn = 1;
     }
 
-    return status;
+    switch (group_params->distance_type) {
+    case UCG_GROUP_DISTANCE_TYPE_FIXED:
+        distance = group_params->distance_value;
+        return (distance > domain_distance) ? 1 :
+                ucs_max(group_params->member_count, 1);
+
+    case UCG_GROUP_DISTANCE_TYPE_ARRAY:
+        for (index = 0; index < group_params->member_count; index++) {
+            distance = group_params->distance_array[index];
+            ucs_assert(distance <= UCG_GROUP_MEMBER_DISTANCE_UNKNOWN);
+            if (distance <= domain_distance) {
+                count++;
+            }
+            if ((distance <= UCG_GROUP_MEMBER_DISTANCE_HOST) && (ppn != NULL)) {
+                (*ppn)++; // TODO: fix support for "non-full-nodes" allocation
+            }
+        }
+        return count;
+
+    case UCG_GROUP_DISTANCE_TYPE_TABLE:
+    case UCG_GROUP_DISTANCE_TYPE_PLACEMENT:
+        return 1;
+    }
+
+    return count;
 }
 
+#if HAVE_UCP_EXTENSIONS
 static ucs_status_t
 ucg_group_wireup_coll_iface_create(ucg_group_h group,
                                    uct_incast_cb_t incast_cb,
                                    unsigned *iface_id_base_p,
                                    ucp_tl_bitmap_t *coll_tl_bitmap_p)
 {
-    ucs_status_t status;
-
     uct_iface_params_t params = {
         .field_mask = UCT_IFACE_PARAM_FIELD_COLL_INFO,
         .global_info = {
@@ -162,14 +176,9 @@ ucg_group_wireup_coll_iface_create(ucg_group_h group,
         params.incast_cb   = incast_cb;
     }
 
-    ucs_assert(group->params.field_mask & UCG_GROUP_PARAM_FIELD_DISTANCES);
-    status = ucg_group_wireup_coll_iface_calc(group->params.distance_array,
-                                              group->params.member_count,
-                                              &params.host_info.proc_idx,
-                                              &params.host_info.proc_cnt);
-    if (status != UCS_OK) {
-        return status;
-    }
+    params.host_info.proc_idx = group->params.member_index;
+    params.host_info.proc_cnt = ucg_group_count_ppx(&group->params,
+            UCG_GROUP_MEMBER_DISTANCE_HOST, NULL);
 
     return ucp_worker_add_resource_ifaces(group->worker, &params,
                                           iface_id_base_p, coll_tl_bitmap_p);
@@ -316,6 +325,10 @@ ucs_status_t ucg_group_create(ucp_worker_h worker,
     /* Allocate a new group */
     if (params->field_mask & UCG_GROUP_PARAM_FIELD_DISTANCES) {
         switch (params->distance_type) {
+        case UCG_GROUP_DISTANCE_TYPE_FIXED:
+            dist_size = 0;
+            break;
+
         case UCG_GROUP_DISTANCE_TYPE_ARRAY:
             dist_size = params->member_count;
             break;
@@ -332,7 +345,7 @@ ucs_status_t ucg_group_create(ucp_worker_h worker,
             return UCS_ERR_INVALID_PARAM;
         }
     } else {
-        dist_size = params->member_count;;
+        dist_size = 0;
     }
 
     dist_size *= sizeof(enum ucg_group_member_distance);
@@ -356,19 +369,33 @@ ucs_status_t ucg_group_create(ucp_worker_h worker,
     group->params.distance_array = UCS_PTR_BYTE_OFFSET(group, total_size - dist_size);
 
     if (params->field_mask & UCG_GROUP_PARAM_FIELD_DISTANCES) {
-        memcpy(group->params.distance_array, params->distance_array, dist_size);
+        switch (params->distance_type) {
+        case UCG_GROUP_DISTANCE_TYPE_FIXED:
+            break;
+
+        case UCG_GROUP_DISTANCE_TYPE_ARRAY:
+            memcpy(group->params.distance_array, params->distance_array, dist_size);
+            break;
+
+        case UCG_GROUP_DISTANCE_TYPE_TABLE:
+        case UCG_GROUP_DISTANCE_TYPE_PLACEMENT:
+            return UCS_ERR_NOT_IMPLEMENTED;
+
+        default:
+            return UCS_ERR_INVALID_PARAM;
+        }
     } else {
         /* If the user didn't specify the distances - treat as uniform */
-        UCS_STATIC_ASSERT(sizeof(enum ucg_group_member_distance) == sizeof(char));
-        memset(group->params.distance_array, UCG_GROUP_MEMBER_DISTANCE_UNKNOWN,
-               dist_size);
+        group->params.field_mask    |= UCG_GROUP_PARAM_FIELD_DISTANCES;
+        group->params.distance_type  = UCG_GROUP_DISTANCE_TYPE_FIXED;
+        group->params.distance_value = UCG_GROUP_MEMBER_DISTANCE_UNKNOWN;
     }
 
     if ((params->field_mask & UCG_GROUP_PARAM_FIELD_ID) != 0) {
         ctx->next_group_id = ucs_max(ctx->next_group_id, group->params.id);
     } else {
-        group->params.id = ++ctx->next_group_id;
         group->params.field_mask |= UCG_GROUP_PARAM_FIELD_ID;
+        group->params.id          = ++ctx->next_group_id;
     }
 
     status = UCS_STATS_NODE_ALLOC(&group->stats,

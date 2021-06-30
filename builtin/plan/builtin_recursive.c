@@ -14,6 +14,13 @@
 #define MAX_PHASES 16
 #define NUM_TWO 2
 
+ucs_config_field_t ucg_builtin_recursive_config_table[] = {
+    {"FACTOR", "2", "Recursive factor.\n",
+     ucs_offsetof(ucg_builtin_recursive_config_t, factor), UCS_CONFIG_TYPE_UINT},
+
+    {NULL}
+};
+
 static ucs_status_t ucg_builtin_recursive_non_pow_two_pre(ucg_builtin_group_ctx_t *ctx,
                                                           uct_ep_h *next_ep,
                                                           ucg_builtin_plan_phase_t *phase,

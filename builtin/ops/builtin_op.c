@@ -119,10 +119,12 @@ ucg_builtin_finalize_alltoall(ucg_builtin_op_t *op)
         }                                                                      \
                                                                                \
         if (_is_reduce && _is_init) {                                          \
-            ucg_builtin_op_step_t *step = &op->steps[0];                       \
-            memcpy(step->recv_buffer, /* Might be a temporary buffer */        \
-                   op->super.params.send.buffer,                               \
-                   step->buffer_length);                                       \
+            step        = &op->steps[0];                                       \
+            send_buffer = op->super.params.send.buffer;                        \
+            if (ucs_likely(step->recv_buffer != send_buffer)) { /* in place */ \
+                buffer_length = ucg_builtin_step_length(step, params, 0);      \
+                memcpy(step->recv_buffer, send_buffer, buffer_length);         \
+            }                                                                  \
         }                                                                      \
                                                                                \
         if (_is_alltoall) {                                                    \
@@ -134,10 +136,12 @@ ucg_builtin_finalize_alltoall(ucg_builtin_op_t *op)
         }                                                                      \
                                                                                \
         if (_is_scatter && _is_init) {                                         \
-            ucg_builtin_op_step_t *step = &op->steps[0];                       \
-            memcpy(step->recv_buffer, /* Might be a temporary buffer */        \
-                   op->super.params.send.buffer,                               \
-                   step->buffer_length);                                       \
+            step        = &op->steps[0];                                       \
+            send_buffer = op->super.params.send.buffer;                        \
+            if (ucs_likely(step->recv_buffer != send_buffer)) { /* TODO: FIX */ \
+                buffer_length = ucg_builtin_step_length(step, params, 0);      \
+                memcpy(step->recv_buffer, send_buffer, buffer_length);         \
+            }                                                                  \
         }                                                                      \
                                                                                \
         if (_is_gather_term && _is_init) {                                     \
@@ -260,12 +264,15 @@ ucg_builtin_finalize_alltoall(ucg_builtin_op_t *op)
 static ucs_status_t UCS_F_ALWAYS_INLINE
 ucg_builtin_op_do_by_flags(ucg_builtin_op_t *op, int is_init, ucg_coll_id_t coll_id)
 {
+    ucg_builtin_op_step_t *step;
     ucs_status_t status;
     int is_volatile_dt;
     int is_send_pack;
     int is_recv_pack;
     int is_send_unpack;
     int is_recv_unpack;
+    size_t buffer_length;
+    void *send_buffer;
 
     uint32_t op_flags               = op->flags;
     ucg_collective_params_t *params = &op->super.params;

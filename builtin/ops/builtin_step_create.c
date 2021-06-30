@@ -37,13 +37,15 @@ static void ucg_builtin_step_am_zcopy_comp_step_check_cb(uct_completion_t *self
     ucg_builtin_comp_step_cb(req);
 }
 
-ucs_status_t ucg_builtin_step_zcopy_prep(ucg_builtin_op_step_t *step)
+ucs_status_t ucg_builtin_step_zcopy_prep(ucg_builtin_op_step_t *step,
+                                         const ucg_collective_params_t *params)
 {
     step->zcopy.zcomp.comp.count = step->fragments_total;
     step->zcopy.zcomp.comp.func  = ucg_builtin_step_am_zcopy_comp_step_check_cb;
 
     /* Register the buffer, creating a memory handle used in zero-copy sends */
-    return uct_md_mem_reg(step->uct_md, step->send_buffer, step->buffer_length,
+    return uct_md_mem_reg(step->uct_md, step->send_buffer,
+                          ucg_builtin_step_length(step, params, 1),
                           UCT_MD_MEM_ACCESS_ALL, &step->zcopy.memh);
 }
 
@@ -58,7 +60,7 @@ static ucs_status_t ucg_builtin_optimize_am_bcopy_to_zcopy(ucg_builtin_op_t *op)
         step = &op->steps[step_idx++];
         if ((step->flags & UCG_BUILTIN_OP_STEP_FLAG_SEND_AM_BCOPY) &&
             (step->phase->md_attr->cap.max_reg > step->buffer_length)) {
-            status = ucg_builtin_step_zcopy_prep(step);
+            status = ucg_builtin_step_zcopy_prep(step, &op->super.params);
             if (status != UCS_OK) {
                 goto bcopy_to_zcopy_cleanup;
             }
@@ -102,7 +104,8 @@ ucs_status_t ucg_builtin_op_consider_optimization(ucg_builtin_op_t *op,
                                                   ucg_builtin_config_t *config)
 {
     ucg_builtin_op_step_t *step;
-    ucg_step_idx_t step_idx = 0;
+    const ucg_collective_params_t *params = &op->super.params;
+    ucg_step_idx_t step_idx               = 0;
 
     do {
         step = &op->steps[step_idx++];
@@ -118,7 +121,9 @@ ucs_status_t ucg_builtin_op_consider_optimization(ucg_builtin_op_t *op,
             (step->flags & UCG_BUILTIN_OP_STEP_FLAG_SEND_AM_BCOPY) &&
             (step->phase->iface_attr->cap.flags & UCT_IFACE_FLAG_AM_ZCOPY) &&
             (step->phase->md_attr->cap.flags & UCT_MD_FLAG_NEED_MEMH) &&
-            (step->phase->md_attr->cap.max_reg > step->buffer_length)) {
+            (step->phase->md_attr->cap.max_reg > ucg_builtin_step_length(step,
+                                                                         params,
+                                                                         1))) {
             op->optm_cb = ucg_builtin_optimize_am_bcopy_to_zcopy;
             op->opt_cnt = config->mem_reg_opt_cnt;
             op->flags  |= UCG_BUILTIN_OP_FLAG_OPTIMIZE_CB;
@@ -127,7 +132,9 @@ ucs_status_t ucg_builtin_op_consider_optimization(ucg_builtin_op_t *op,
 
         if ((step->flags & UCG_BUILTIN_OP_STEP_FLAG_SEND_AM_ZCOPY) &&
             (step->flags & UCG_GROUP_COLLECTIVE_MODIFIER_SYMMETRIC) &&
-            (step->phase->md_attr->cap.max_reg > step->buffer_length)) {
+            (step->phase->md_attr->cap.max_reg > ucg_builtin_step_length(step,
+                                                                         params,
+                                                                         1))) {
             op->optm_cb = ucg_builtin_optimize_am_to_rma;
             op->opt_cnt = config->mem_rma_opt_cnt;
             op->flags  |= UCG_BUILTIN_OP_FLAG_OPTIMIZE_CB;
@@ -573,7 +580,7 @@ zcopy_redo:
             }
 
             if (is_send_dt_contig) {
-                *op_flags |= UCG_BUILTIN_OP_FLAG_SEND_PACK;
+                *op_flags        |= UCG_BUILTIN_OP_FLAG_SEND_PACK;
             } else {
                 step->comp_flags |= UCG_BUILTIN_OP_STEP_COMP_FLAG_PACKED_DATATYPE;
             }
@@ -649,7 +656,7 @@ zcopy_redo:
     /* memory registration (using the memory registration cache) */
     int is_zcopy = (send_flags & UCG_BUILTIN_OP_STEP_FLAG_SEND_AM_ZCOPY);
     if (is_zcopy) {
-        status = ucg_builtin_step_zcopy_prep(step);
+        status = ucg_builtin_step_zcopy_prep(step, params);
         if (ucs_unlikely(status != UCS_OK)) {
             return status;
         }

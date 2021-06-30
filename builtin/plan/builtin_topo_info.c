@@ -226,3 +226,39 @@ ucs_status_t ucg_builtin_check_ppn(const ucg_group_params_t *group_params,
     ppn_array = NULL;
     return UCS_OK;
 }
+
+void
+ucg_builtin_prepare_rank_same_unit(const ucg_group_params_t *group_params,
+                                   enum ucg_group_member_distance domain_distance,
+                                   ucg_group_member_index_t *rank_same_unit)
+{
+    enum ucg_group_member_distance distance;
+    ucg_group_member_index_t index, count = 0;
+
+    switch (group_params->distance_type) {
+    case UCG_GROUP_DISTANCE_TYPE_FIXED:
+        distance = group_params->distance_value;
+        if (distance > domain_distance) {
+            *rank_same_unit = group_params->member_index;
+        }
+
+        for (index = 0; index < group_params->member_count; index++) {
+            rank_same_unit[count++] = index;
+        }
+        break;
+
+    case UCG_GROUP_DISTANCE_TYPE_ARRAY:
+        for (index = 0; index < group_params->member_count; index++) {
+            distance = group_params->distance_array[index];
+            ucs_assert(distance <= UCG_GROUP_MEMBER_DISTANCE_UNKNOWN);
+            if (distance <= domain_distance) {
+                rank_same_unit[count++] = index;
+            }
+        }
+        break;
+
+    case UCG_GROUP_DISTANCE_TYPE_TABLE:
+    case UCG_GROUP_DISTANCE_TYPE_PLACEMENT:
+        break;
+    }
+}

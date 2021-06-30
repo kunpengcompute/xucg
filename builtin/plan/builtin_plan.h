@@ -9,6 +9,7 @@
 #include <ucg/api/ucg_plan_component.h>
 #include <ucs/datastruct/mpool.inl>
 #include <ucp/core/ucp_types.h> /* for ucp_rsc_index_t */
+#include <ucs/sys/math.h>
 #include <uct/api/uct.h>
 
 enum UCS_S_PACKED ucg_builtin_algorithm_feature {
@@ -224,7 +225,9 @@ typedef struct ucg_builtin_binomial_tree_config {
     unsigned degree_intra_fanout;
     unsigned degree_intra_fanin;
 } ucg_builtin_binomial_tree_config_t;
+
 extern ucs_config_field_t ucg_builtin_binomial_tree_config_table[];
+
 ucs_status_t ucg_builtin_binomial_tree_create(ucg_builtin_group_ctx_t *ctx,
                                               enum ucg_builtin_plan_topology_type plan_topo_type,
                                               const ucg_builtin_config_t *config,
@@ -235,6 +238,8 @@ ucs_status_t ucg_builtin_binomial_tree_create(ucg_builtin_group_ctx_t *ctx,
 typedef struct ucg_builtin_recursive_config {
     unsigned factor;
 } ucg_builtin_recursive_config_t;
+
+extern ucs_config_field_t ucg_builtin_recursive_config_table[];
 
 ucs_status_t ucg_builtin_recursive_create(ucg_builtin_group_ctx_t *ctx,
                                           enum ucg_builtin_plan_topology_type plan_topo_type,
@@ -288,6 +293,8 @@ typedef struct ucg_builtin_tree_params {
     ucg_builtin_group_ctx_t            *ctx;
     uct_incast_cb_t                     incast_cb;
 } ucg_builtin_tree_params_t;
+
+extern ucs_config_field_t ucg_builtin_tree_config_table[];
 
 ucs_status_t ucg_builtin_tree_create(ucg_builtin_group_ctx_t *ctx,
         enum ucg_builtin_plan_topology_type plan_topo_type,
@@ -380,7 +387,8 @@ ucs_status_t ucg_builtin_algorithm_decision(const ucg_collective_type_t *coll_ty
                                             const ucg_collective_params_t *coll_params,
                                             ucg_builtin_config_t *config);
 
-unsigned ucg_builtin_calculate_ppx(const ucg_group_params_t *group_params,
-                                   enum ucg_group_member_distance domain_distance);
-
+void
+ucg_builtin_prepare_rank_same_unit(const ucg_group_params_t *group_params,
+                                   enum ucg_group_member_distance domain_distance,
+                                   ucg_group_member_index_t *rank_same_unit);
 #endif

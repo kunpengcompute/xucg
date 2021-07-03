@@ -178,6 +178,7 @@ UCS_PROFILE_FUNC(ucs_status_t, ucg_builtin_am_handler,
     int data_offset;
     int is_unexpected;
     ucs_status_t status;
+    ucp_worker_h worker;
     ucp_recv_desc_t *rdesc;
     ucg_group_id_t group_id;
     ucs_ptr_array_t *msg_array;
@@ -267,10 +268,10 @@ UCS_PROFILE_FUNC(ucs_status_t, ucg_builtin_am_handler,
 #endif
 
     if (ucs_likely((am_flags & UCT_CB_PARAM_FLAG_DESC) && (cnt == 1))) {
-        rdesc                  = ((ucp_recv_desc_t*)data) - 1;
-        rdesc->length          = length;
-        rdesc->uct_desc_offset = UCP_WORKER_HEADROOM_PRIV_SIZE;
-        rdesc->flags           = UCP_RECV_DESC_FLAG_UCT_DESC;
+        rdesc                      = ((ucp_recv_desc_t*)data) - 1;
+        rdesc->length              = length;
+        rdesc->release_desc_offset = UCP_WORKER_HEADROOM_PRIV_SIZE;
+        rdesc->flags               = UCP_RECV_DESC_FLAG_UCT_DESC;
         (void) ucs_ptr_array_insert(msg_array, rdesc);
 
         status = UCS_INPROGRESS;
@@ -279,13 +280,14 @@ UCS_PROFILE_FUNC(ucs_status_t, ucg_builtin_am_handler,
 
     /* Strided short messages might come with the header set only in item #0 */
     data_offset = (am_flags & UCT_CB_PARAM_FLAG_DESC) ? 0 : sizeof(header);
+    worker      = bctx->worker;
     length     -= data_offset;
     idx         = 0;
 
     do {
         /* Store the incoming packet in the UCP Worker memory pool */
-        status = ucp_recv_desc_init(bctx->worker, data, length, data_offset,
-                                    am_flags, 0, 0, 0, &rdesc);
+        status = ucp_recv_desc_init(worker, data, length, data_offset, am_flags,
+                                    0, 0, 0, worker->am.alignment, &rdesc);
         if (ucs_unlikely(UCS_STATUS_IS_ERR(status))) {
             break;
         }

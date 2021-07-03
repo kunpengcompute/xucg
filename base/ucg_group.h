@@ -78,6 +78,9 @@ typedef struct ucg_group {
      */
     unsigned              root_used[UCG_GROUP_MAX_ROOT_PARAM];
 
+    /* Group name for tracing and analysis */
+    char                  name[UCG_GROUP_NAME_MAX];
+
     /* Below this point - the private per-planner data is allocated/stored */
 } ucg_group_t;
 
@@ -98,5 +101,9 @@ ucs_status_t ucg_group_wireup_coll_ifaces(ucg_group_h group,
                                           ucg_group_member_index_t root,
                                           uct_incast_cb_t incast_cb,
                                           ucp_ep_h *ep_p);
+
+void ucg_group_store_ep(khash_t(ucg_group_ep) *khash,
+                        ucg_group_member_index_t index,
+                        ucp_ep_h ep);
 
 #endif /* UCG_GROUP_H_ */

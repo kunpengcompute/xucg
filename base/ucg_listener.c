@@ -12,34 +12,17 @@ static uint8_t ucg_listener_am_id = 0;
 
 static void ucg_group_listener_accept_cb(ucp_ep_h ep, void *arg)
 {
-    ucg_group_h group                  = (ucg_group_h)arg;
-    ucg_group_member_index_t new_index = group->params.member_count++;
-    ucp_request_param_t params         = {
-            .op_attr_mask = UCP_OP_ATTR_FIELD_FLAGS,
-            .flags        = UCP_AM_SEND_FLAG_EAGER
-    };
-    ucg_listener_group_info_t info     = {
-            .id           = group->params.id,
-            .member_count = new_index,
-            .member_index = new_index
+    ucg_group_h group              = (ucg_group_h)arg;
+    ucg_group_member_index_t index = group->params.member_count++;
+    ucg_listener_group_info_t info = {
+            .id                    = group->params.id,
+            .member_count          = index + 1,
+            .member_index          = index
     };
 
-    group->params.distance_array = ucs_realloc(group->params.distance_array,
-                                               new_index, "dynamic distance");
-    if (!group->params.distance_array) {
-        return;
-    }
-
-    group->params.distance_array[info.member_index] = UCG_GROUP_MEMBER_DISTANCE_UNKNOWN;
-
-    /* Send back the group information (blocking, but likely immediate) */
-    ucs_status_ptr_t status = ucp_am_send_nbx(ep, ucg_listener_am_id, 0, 0,
-                                              &info, sizeof(info), &params);
-    if (UCS_PTR_IS_PTR(status)) {
-        do {
-            ucp_worker_progress(ep->worker);
-        } while (ucp_request_check_status(status) == UCS_INPROGRESS);
-    }
+    /* Send back the group information */
+    (void) ucp_am_send_nb(ep, ucg_listener_am_id, &info, 1,
+                          ucp_dt_make_contig(sizeof(info)), NULL, 0);
 }
 
 ucs_status_t ucg_group_listener_create(ucg_group_h group,
@@ -48,10 +31,12 @@ ucs_status_t ucg_group_listener_create(ucg_group_h group,
 {
     ucp_listener_h super;
     ucp_listener_params_t params = {
+            .field_mask     = UCP_LISTENER_PARAM_FIELD_SOCK_ADDR |
+                              UCP_LISTENER_PARAM_FIELD_ACCEPT_HANDLER,
             .sockaddr       = *bind_address,
             .accept_handler = {
-                    .cb  = ucg_group_listener_accept_cb,
-                    .arg = group
+                    .cb     = ucg_group_listener_accept_cb,
+                    .arg    = group
             }
     };
 
@@ -75,12 +60,11 @@ ucs_status_t ucg_group_listener_connect(ucg_group_h group,
         return status;
     }
 
-    /* wait for the group information to arrive (via Active Message) */
-    while (group->params.member_count == 0) {
-        ucp_worker_progress(group->worker);
-    }
+    /* Store this endpoint as the root */
+    ucg_group_store_ep(&group->p2p_eps, 0, ep);
 
-    return UCS_OK;
+    /* wait for the group information to arrive (via Active Message) */
+    return ucg_collective_acquire_barrier(group);
 }
 
 void ucg_group_listener_destroy(ucg_listener_h listener)
@@ -102,8 +86,7 @@ static ucs_status_t ucg_group_listener_set_info_cb(void *arg, void *data,
         if (group->params.id == info->id) {
             group->params.member_index = info->member_index;
             group->params.member_count = info->member_count;
-
-            return UCS_OK;
+            return ucg_collective_release_barrier(group);
         }
     }
 

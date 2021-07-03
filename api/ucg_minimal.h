@@ -32,7 +32,6 @@ ucg_minimal_init(ucg_minimal_ctx_t *ctx,
                  uint64_t flags)
 {
     ucs_status_t status;
-    ucg_params_t context_params;
     ucg_config_t *context_config;
     ucp_worker_params_t worker_params;
     ucp_params_t ucp_context_params = {0};
@@ -57,7 +56,7 @@ ucg_minimal_init(ucg_minimal_ctx_t *ctx,
         return status;
     }
 
-    status = ucg_init(&context_params, context_config, &ctx->context);
+    status = ucg_init(&ucg_context_params, context_config, &ctx->context);
     ucg_config_release(context_config);
     if (status != UCS_OK) {
         return status;
@@ -83,17 +82,29 @@ ucg_minimal_init(ucg_minimal_ctx_t *ctx,
         return UCS_OK;
     }
 
-    status = ucg_group_listener_create(ctx->group, server_address,
-                                       &ctx->listener);
+    status = ucg_group_listener_create(ctx->group, server_address, &ctx->listener);
     if (status != UCS_OK) {
         goto cleanup_group;
     }
 
-    while (num_connections_so_far < num_connections_to_wait) {
+    do {
         status = ucp_worker_progress(ctx->worker);
-    }
+        if (status != UCS_OK) {
+            goto cleanup_listener;
+        }
+
+        status = ucg_group_query(ctx->group, &group_attr);
+        if (status != UCS_OK) {
+            goto cleanup_listener;
+        }
+    } while (group_attr.member_count < (num_connections_to_wait + 1));
+
+    ucg_group_listener_destroy(ctx->listener);
 
     return UCS_OK;
+
+cleanup_listener:
+    ucg_group_listener_destroy(ctx->listener);
 
 cleanup_group:
     ucg_group_destroy(ctx->group);

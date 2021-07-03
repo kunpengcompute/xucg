@@ -48,6 +48,17 @@ KHASH_IMPL(ucg_group_ep, ucg_group_member_index_t, ucp_ep_h,
                                                  UCS_SYS_CACHE_LINE_SIZE); \
     ucg_plan_foreach(descs, desc_cnt, pctx, gctx)
 
+void ucg_group_store_ep(khash_t(ucg_group_ep) *khash,
+                        ucg_group_member_index_t index,
+                        ucp_ep_h ep)
+{
+    int ret;
+    khiter_t iter = kh_put(ucg_group_ep, khash, index, &ret);
+    if (ret != UCS_KH_PUT_KEY_PRESENT) {
+        kh_value(khash, iter) = ep;
+    }
+}
+
 static ucs_status_t ucg_plan_config_read(ucg_plan_component_t *component,
                                          const char *env_prefix,
                                          const char *filename,
@@ -366,7 +377,6 @@ static ucs_status_t ucg_plan_connect_by_hash_key(ucg_group_h group,
                                                  uct_incast_cb_t incast_cb,
                                                  int is_p2p, ucp_ep_h *ep_p)
 {
-    int ret;
     ucp_ep_h ucp_ep;
     ucs_status_t status;
     size_t remote_addr_len;
@@ -392,17 +402,7 @@ static ucs_status_t ucg_plan_connect_by_hash_key(ucg_group_h group,
             return status;
         }
 
-        iter = kh_put(ucg_group_ep, khash, group_idx, &ret);
-        if (ret != UCS_KH_PUT_KEY_PRESENT) {
-            kh_value(khash, iter) = ucp_ep;
-        }
-
-        khash = &group->bcast_eps;
-        iter = kh_put(ucg_group_ep, khash, group_idx, &ret);
-        if (ret != UCS_KH_PUT_KEY_PRESENT) {
-            kh_value(khash, iter) = ucp_ep;
-        }
-
+        ucg_group_store_ep(&group->bcast_eps, group_idx, ucp_ep);
     } else {
         remote_addr = NULL;
 
@@ -433,13 +433,9 @@ static ucs_status_t ucg_plan_connect_by_hash_key(ucg_group_h group,
         if (status != UCS_OK) {
             return status;
         }
-
-        /* Store this endpoint, for future reference */
-        iter = kh_put(ucg_group_ep, khash, group_idx, &ret);
-        ucs_assert(ret != UCS_KH_PUT_KEY_PRESENT);
-        kh_value(khash, iter) = ucp_ep;
     }
 
+    ucg_group_store_ep(khash, group_idx, ucp_ep);
     *ep_p = ucp_ep;
 
     return UCS_OK;

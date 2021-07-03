@@ -143,4 +143,13 @@ typedef void (*ucg_collective_callback_t)(void *request, ucs_status_t status);
  */
 typedef unsigned (*ucg_collective_progress_t)(ucg_coll_h coll);
 
+
+/**
+ * @ingroup UCG_GROUP
+ * @brief Maximum size of the UCG group name in structure of entity attributes
+ * provided by a query method.
+ */
+#define UCG_GROUP_NAME_MAX 32
+
+
 #endif

@@ -84,6 +84,7 @@ enum ucg_fault_tolerance_mode {
 };
 
 enum ucg_group_distance_type {
+    UCG_GROUP_DISTANCE_TYPE_FIXED,    /**< Info form is a constant value */
     UCG_GROUP_DISTANCE_TYPE_ARRAY,    /**< Info form is a 1-D distance array */
     UCG_GROUP_DISTANCE_TYPE_TABLE,    /**< Info form is a 2-D distance table */
     UCG_GROUP_DISTANCE_TYPE_PLACEMENT /**< Info form is placement per level */
@@ -320,7 +321,8 @@ enum ucg_group_params_field {
     UCG_GROUP_PARAM_FIELD_MEMBER_COUNT = UCS_BIT(1), /**< Number of members */
     UCG_GROUP_PARAM_FIELD_MEMBER_INDEX = UCS_BIT(2), /**< My member index */
     UCG_GROUP_PARAM_FIELD_CB_CONTEXT   = UCS_BIT(3), /**< Context for callbacks */
-    UCG_GROUP_PARAM_FIELD_DISTANCES    = UCS_BIT(4)  /**< Rank distance info */
+    UCG_GROUP_PARAM_FIELD_DISTANCES    = UCS_BIT(4), /**< Rank distance info */
+    UCG_GROUP_PARAM_FIELD_NAME         = UCS_BIT(5)  /**< Group name */
 };
 
 /**
@@ -349,6 +351,9 @@ typedef struct ucg_group_params {
     enum ucg_group_distance_type distance_type; /* indicates the contents of
                                                    the union below */
     union {
+        /* Used in case the distance is fixed among all nodes */
+        enum ucg_group_member_distance distance_value;
+
         /*
          * This array contains information about the process placement of different
          * group members, which is used to select the best topology for collectives.
@@ -378,7 +383,70 @@ typedef struct ucg_group_params {
         /* Used if info_type is set to @ref UCG_TOPO_INFO_PLACEMENT_TABLE */
         uint16_t *placement[UCG_GROUP_MEMBER_DISTANCE_UNKNOWN];
     };
+
+    /**
+     * Tracing and analysis tools can identify the group using this name. To
+     * retrieve the group's name, use @ref ucg_group_query, as the name you
+     * supply may be changed by UCX under some circumstances, e.g. a name
+     * conflict. This field is only assigned if you set
+     * @ref UCG_GROUP_PARAM_FIELD_NAME in the field mask. If not, then a
+     * default unique name will be created for you.
+     */
+    const char *name;
 } ucg_group_params_t;
+
+
+/**
+ * @ingroup UCG_GROUP
+ * @brief UCG group attributes field mask.
+ *
+ * The enumeration allows specifying which fields in @ref ucg_group_attr_t are
+ * present. It is used to enable backward compatibility support.
+ */
+enum ucg_group_attr_field {
+    UCG_GROUP_ATTR_FIELD_NAME         = UCS_BIT(0), /**< UCG group name */
+    UCG_GROUP_ATTR_FIELD_ID           = UCS_BIT(1), /**< UCG group ID */
+    UCG_GROUP_ATTR_FIELD_MEMBER_COUNT = UCS_BIT(2), /**< Group members total */
+    UCG_GROUP_ATTR_FIELD_MEMBER_INDEX = UCS_BIT(3)  /**< Index within the group */
+};
+
+
+/**
+ * @ingroup UCG_GROUP
+ * @brief UCG group attributes.
+ *
+ * The structure defines the attributes which characterize
+ * the particular group.
+ */
+typedef struct ucg_group_attr {
+    /**
+     * Mask of valid fields in this structure, using bits from
+     * @ref ucg_group_attr_field.
+     * Fields not specified in this mask will be ignored.
+     * Provides ABI compatibility with respect to adding new fields.
+     */
+    uint64_t              field_mask;
+
+    /**
+     * Tracing and analysis tools can identify the worker using this name.
+     */
+    char                  name[UCG_GROUP_NAME_MAX];
+
+    /*
+     * Unique group identifier - can either be specified or auto-generated.
+     */
+    ucg_group_id_t        id;
+
+    /*
+     * Number of group members
+     */
+    ucg_group_member_index_t member_count;
+
+    /*
+     * My member index within the group
+     */
+    ucg_group_member_index_t member_index;
+} ucg_group_attr_t;
 
 
 /**
@@ -541,6 +609,22 @@ ucs_status_t ucg_group_create(ucp_worker_h worker,
  * @param [in]  group       Group object to destroy.
  */
 void ucg_group_destroy(ucg_group_h group);
+
+
+/**
+ * @ingroup UCG_GROUP
+ * @brief Get attributes specific to a particular group.
+ *
+ * This routine fetches information about the group.
+ *
+ * @param [in]  group      Group object to query.
+ * @param [out] attr       Filled with attributes of a group.
+ *
+ * @return Error code as defined by @ref ucs_status_t
+ */
+ucs_status_t ucg_group_query(ucg_group_h worker,
+                             ucg_group_attr_t *attr);
+
 
 /**
  * @ingroup UCP_WORKER

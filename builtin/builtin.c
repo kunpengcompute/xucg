@@ -1480,7 +1480,9 @@ static ucs_status_t ucg_builtin_plan(ucg_group_ctx_h ctx,
 #endif
             status = ucg_builtin_binomial_tree_create(builtin_ctx, plan_topo_type, config,
                                                       builtin_ctx->group_params, coll_type, &plan);
-            plan->super.incast_cb = UCG_PLAN_INCAST_UNUSED;
+            if (status == UCS_OK) {
+                plan->super.incast_cb = UCG_PLAN_INCAST_UNUSED;
+            }
             break;
     }
 

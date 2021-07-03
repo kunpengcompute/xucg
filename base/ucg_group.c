@@ -366,7 +366,6 @@ ucs_status_t ucg_group_create(ucp_worker_h worker,
     ucs_queue_head_init(&group->pending);
     memcpy((ucg_group_params_t*)&group->params, params, sizeof(*params));
     // TODO: replace memcpy with per-field copy to improve ABI compatibility
-    group->params.distance_array = UCS_PTR_BYTE_OFFSET(group, total_size - dist_size);
 
     if (params->field_mask & UCG_GROUP_PARAM_FIELD_DISTANCES) {
         switch (params->distance_type) {
@@ -425,9 +424,26 @@ cleanup_group:
     return status;
 }
 
-const ucg_group_params_t* ucg_group_get_params(ucg_group_h group)
+ucs_status_t ucg_group_query(ucg_group_h group,
+                             ucg_group_attr_t *attr)
 {
-    return &group->params;
+    if (attr->field_mask & UCG_GROUP_ATTR_FIELD_NAME) {
+        ucs_strncpy_safe(attr->name, group->name, UCG_GROUP_NAME_MAX);
+    }
+
+    if (attr->field_mask & UCG_GROUP_ATTR_FIELD_ID) {
+        attr->id = group->params.id;
+    }
+
+    if (attr->field_mask & UCG_GROUP_ATTR_FIELD_MEMBER_COUNT) {
+        attr->id = group->params.member_count;
+    }
+
+    if (attr->field_mask & UCG_GROUP_ATTR_FIELD_MEMBER_INDEX) {
+        attr->id = group->params.member_index;
+    }
+
+    return UCS_OK;
 }
 
 static ucs_status_t ucg_group_cache_cleanup(ucg_group_h group)

@@ -120,7 +120,7 @@ ucs_status_t ucg_builtin_tree_connect(ucg_builtin_plan_t *tree,
                                              UCG_PLAN_METHOD_REDUCE_TERMINAL;
             } else if (mod & UCG_GROUP_COLLECTIVE_MODIFIER_CONCATENATE) {
                 fanin_method = host_up_cnt ? UCG_PLAN_METHOD_GATHER_WAYPOINT :
-                                             UCG_PLAN_METHOD_GATHER_TERMINAL;
+                                             UCG_PLAN_METHOD_GATHER_FOR_PAGG;
             } else {
                 ucs_assert(host_up_cnt == 0);
                 fanin_method = UCG_PLAN_METHOD_RECV_TERMINAL;
@@ -153,7 +153,9 @@ ucs_status_t ucg_builtin_tree_connect(ucg_builtin_plan_t *tree,
                                             UCG_PLAN_METHOD_REDUCE_TERMINAL;
             } else if (mod & UCG_GROUP_COLLECTIVE_MODIFIER_CONCATENATE) {
                 fanin_method = net_up_cnt ? UCG_PLAN_METHOD_GATHER_WAYPOINT :
-                                            UCG_PLAN_METHOD_GATHER_TERMINAL;
+                        (mod & UCG_GROUP_COLLECTIVE_MODIFIER_SINGLE_DESTINATION) ?
+                                UCG_PLAN_METHOD_GATHER_TERMINAL :
+                                UCG_PLAN_METHOD_GATHER_A2A_ROOT;
             } else {
                 ucs_assert(host_up_cnt == 0);
                 fanin_method = UCG_PLAN_METHOD_RECV_TERMINAL;

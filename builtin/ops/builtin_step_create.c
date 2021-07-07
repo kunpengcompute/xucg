@@ -464,6 +464,7 @@ zcopy_redo:
         is_send = 1;
         break;
 
+    case UCG_PLAN_METHOD_SCATTER_A2A_PEER:
     case UCG_PLAN_METHOD_SCATTER_TERMINAL:
         is_send = 1;
         *op_flags |= UCG_BUILTIN_OP_FLAG_SCATTER;
@@ -475,6 +476,12 @@ zcopy_redo:
         *op_flags |= UCG_BUILTIN_OP_FLAG_REDUCE;
         break;
 
+    case UCG_PLAN_METHOD_GATHER_A2A_ROOT:
+        step->flags         |= UCG_BUILTIN_OP_STEP_FLAG_TEMP_BUFFER_USED;
+        *current_data_buffer =
+                        (int8_t*)UCS_ALLOC_CHECK(step->buffer_length *
+                                                 plan->super.group_size,
+                                                 "ucg_alltoall_buffer");
     case UCG_PLAN_METHOD_GATHER_TERMINAL:
         is_recv = 1;
         if (is_concat) {
@@ -489,6 +496,7 @@ zcopy_redo:
     case UCG_PLAN_METHOD_REDUCE_WAYPOINT:
         is_reduction = 1;
         /* no break */
+    case UCG_PLAN_METHOD_GATHER_FOR_PAGG:
     case UCG_PLAN_METHOD_GATHER_WAYPOINT:
         if (is_concat) {
             *op_flags |= UCG_BUILTIN_OP_FLAG_GATHER_WAYPOINT;
@@ -541,8 +549,12 @@ zcopy_redo:
         *op_flags |= UCG_BUILTIN_OP_FLAG_ALLTOALL;
         break;
 
-    default:
-        break;
+    case UCG_PLAN_METHOD_PAIRWISE:
+    case UCG_PLAN_METHOD_ALLGATHER_BRUCK:
+    case UCG_PLAN_METHOD_ALLGATHER_RECURSIVE:
+    case UCG_PLAN_METHOD_REDUCE_SCATTER_RING:
+    case UCG_PLAN_METHOD_ALLGATHER_RING:
+        return UCS_ERR_UNSUPPORTED;
     }
 
     int is_barrier = modifiers & UCG_GROUP_COLLECTIVE_MODIFIER_BARRIER;

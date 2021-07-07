@@ -90,8 +90,10 @@ enum UCS_S_PACKED ucg_builtin_plan_method_type {
     UCG_PLAN_METHOD_GATHER_TERMINAL,   /* gather from all peers in the map */
     UCG_PLAN_METHOD_GATHER_WAYPOINT,   /* gather from all peers, and pass on */
     UCG_PLAN_METHOD_GATHER_FOR_PAGG,   /* gather for packet aggregation */
+    UCG_PLAN_METHOD_GATHER_A2A_ROOT,  /* scatter an aggregated alltoall result */
     UCG_PLAN_METHOD_SCATTER_TERMINAL,  /* scatter to all peers in the map */
     UCG_PLAN_METHOD_SCATTER_WAYPOINT,  /* scatter and send "downwards" */
+    UCG_PLAN_METHOD_SCATTER_A2A_PEER,  /* scatter my own part in an alltoall */
     UCG_PLAN_METHOD_REDUCE_TERMINAL,   /* receive and reduce from each peer */
     UCG_PLAN_METHOD_REDUCE_WAYPOINT,   /* receive, reduce, and pass onwards */
     UCG_PLAN_METHOD_REDUCE_RECURSIVE,  /* send+receive and reduce (RD) */

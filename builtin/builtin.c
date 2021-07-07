@@ -1741,6 +1741,9 @@ static void ucg_builtin_print(ucg_plan_t *plan,
         case UCG_PLAN_METHOD_SCATTER_WAYPOINT:
             printf("Scatter (W), ");
             break;
+        case UCG_PLAN_METHOD_SCATTER_A2A_PEER:
+            printf("Scatter (P), ");
+            break;
         case UCG_PLAN_METHOD_GATHER_TERMINAL:
             printf("Gather (T), ");
             break;
@@ -1749,6 +1752,9 @@ static void ucg_builtin_print(ucg_plan_t *plan,
             break;
         case UCG_PLAN_METHOD_GATHER_FOR_PAGG:
             printf("Gather (P), ");
+            break;
+        case UCG_PLAN_METHOD_GATHER_A2A_ROOT:
+            printf("Gather (R), ");
             break;
         case UCG_PLAN_METHOD_REDUCE_TERMINAL:
             printf("Reduce (T), ");

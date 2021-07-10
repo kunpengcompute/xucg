@@ -388,6 +388,11 @@ ucs_status_t ucg_init_version(unsigned ucg_api_major_version,
                   status == UCS_OK ? addr_info.file.path : "");
     }
 
+    if (params->super == NULL) {
+        status = UCS_ERR_INVALID_PARAM;
+        goto err;
+    }
+
     ucg_config_t *dfl_config = NULL;
     if (config == NULL) {
         status = ucg_config_read(NULL, NULL, &dfl_config);

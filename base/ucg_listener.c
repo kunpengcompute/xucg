@@ -20,6 +20,9 @@ static void ucg_group_listener_accept_cb(ucp_ep_h ep, void *arg)
             .member_index          = index
     };
 
+    /* Store this endpoint as the root */
+    ucg_group_store_ep(&group->p2p_eps, index, ep);
+
     /* Send back the group information */
     (void) ucp_am_send_nb(ep, ucg_listener_am_id, &info, 1,
                           ucp_dt_make_contig(sizeof(info)), NULL, 0);
@@ -29,7 +32,6 @@ ucs_status_t ucg_group_listener_create(ucg_group_h group,
                                        ucs_sock_addr_t *bind_address,
                                        ucg_listener_h *listener_p)
 {
-    ucp_listener_h super;
     ucp_listener_params_t params = {
             .field_mask     = UCP_LISTENER_PARAM_FIELD_SOCK_ADDR |
                               UCP_LISTENER_PARAM_FIELD_ACCEPT_HANDLER,
@@ -40,7 +42,8 @@ ucs_status_t ucg_group_listener_create(ucg_group_h group,
             }
     };
 
-    return ucp_listener_create(group->worker, &params, &super);
+    return ucp_listener_create(group->worker, &params,
+                               (ucp_listener_h*)listener_p);
 }
 
 ucs_status_t ucg_group_listener_connect(ucg_group_h group,

@@ -413,6 +413,7 @@ zcopy_redo:
     if (ucs_unlikely(status != UCS_OK)) {
         return status;
     }
+    ucs_assert(step->uct_send != NULL);
 
     /*
      * Note: specifically for steps containing zero-copy communication - an

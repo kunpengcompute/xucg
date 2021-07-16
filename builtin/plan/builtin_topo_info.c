@@ -239,11 +239,13 @@ ucg_builtin_prepare_rank_same_unit(const ucg_group_params_t *group_params,
     case UCG_GROUP_DISTANCE_TYPE_FIXED:
         distance = group_params->distance_value;
         if (distance > domain_distance) {
-            *rank_same_unit = group_params->member_index;
+            *rank_same_unit = group_params->member_count - 1;
         }
 
         for (index = 0; index < group_params->member_count; index++) {
-            rank_same_unit[count++] = index;
+            if (index != group_params->member_index) {
+                rank_same_unit[count++] = index;
+            }
         }
         break;
 
@@ -252,7 +254,9 @@ ucg_builtin_prepare_rank_same_unit(const ucg_group_params_t *group_params,
             distance = group_params->distance_array[index];
             ucs_assert(distance <= UCG_GROUP_MEMBER_DISTANCE_UNKNOWN);
             if (distance <= domain_distance) {
-                rank_same_unit[count++] = index;
+                if (index != group_params->member_index) {
+                    rank_same_unit[count++] = index;
+                }
             }
         }
         break;

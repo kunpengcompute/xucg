@@ -436,11 +436,11 @@ ucs_status_t ucg_group_query(ucg_group_h group,
     }
 
     if (attr->field_mask & UCG_GROUP_ATTR_FIELD_MEMBER_COUNT) {
-        attr->id = group->params.member_count;
+        attr->member_count = group->params.member_count;
     }
 
     if (attr->field_mask & UCG_GROUP_ATTR_FIELD_MEMBER_INDEX) {
-        attr->id = group->params.member_index;
+        attr->member_index = group->params.member_index;
     }
 
     return UCS_OK;

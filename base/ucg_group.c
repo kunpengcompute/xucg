@@ -307,6 +307,60 @@ ucs_status_t ucg_group_wireup_coll_ifaces(ucg_group_h group,
 }
 #endif
 
+static void ucg_group_copy_params(ucg_group_params_t *dst,
+                                  const ucg_group_params_t *src,
+                                  void *distance, size_t distance_size)
+{
+    size_t group_params_size = sizeof(src->field_mask) +
+                               ucs_offsetof(ucg_params_t, field_mask);
+
+    if (src->field_mask != 0) {
+        enum ucg_group_params_field msb_flag = UCS_BIT((sizeof(uint64_t) * 8)
+                - 1 - ucs_count_leading_zero_bits(src->field_mask));
+        ucs_assert((msb_flag & src->field_mask) == msb_flag);
+
+        switch (msb_flag) {
+        case UCG_GROUP_PARAM_FIELD_ID:
+            group_params_size = ucs_offsetof(ucg_group_params_t, member_count);
+            break;
+
+        case UCG_GROUP_PARAM_FIELD_MEMBER_COUNT:
+            group_params_size = ucs_offsetof(ucg_group_params_t, member_index);
+            break;
+
+        case UCG_GROUP_PARAM_FIELD_MEMBER_INDEX:
+            group_params_size = ucs_offsetof(ucg_group_params_t, cb_context);
+            break;
+
+        case UCG_GROUP_PARAM_FIELD_CB_CONTEXT:
+            group_params_size = ucs_offsetof(ucg_group_params_t, distance_type);
+            break;
+
+        case UCG_GROUP_PARAM_FIELD_DISTANCES:
+            group_params_size = ucs_offsetof(ucg_group_params_t, name);
+            break;
+
+        case UCG_GROUP_PARAM_FIELD_NAME:
+            group_params_size = sizeof(ucg_params_t);
+            break;
+        }
+    }
+
+    memcpy(dst, src, group_params_size);
+
+    if (dst->field_mask & UCG_GROUP_PARAM_FIELD_DISTANCES) {
+        dst->distance_array = distance;
+        if (src->distance_type != UCG_GROUP_DISTANCE_TYPE_FIXED) {
+            memcpy(distance, src->distance_array, distance_size);
+        }
+    } else {
+        /* If the user didn't specify the distances - treat as uniform */
+        dst->field_mask    |= UCG_GROUP_PARAM_FIELD_DISTANCES;
+        dst->distance_type  = UCG_GROUP_DISTANCE_TYPE_FIXED;
+        dst->distance_value = UCG_GROUP_MEMBER_DISTANCE_UNKNOWN;
+    }
+}
+
 ucs_status_t ucg_group_create(ucp_worker_h worker,
                               const ucg_group_params_t *params,
                               ucg_group_h *group_p)
@@ -364,33 +418,11 @@ ucs_status_t ucg_group_create(ucp_worker_h worker,
 #endif
 
     ucs_queue_head_init(&group->pending);
-    memcpy((ucg_group_params_t*)&group->params, params, sizeof(*params));
-    // TODO: replace memcpy with per-field copy to improve ABI compatibility
+    ucg_group_copy_params(&group->params, params,
+                          UCS_PTR_BYTE_OFFSET(group, total_size - dist_size),
+                          dist_size);
 
-    if (params->field_mask & UCG_GROUP_PARAM_FIELD_DISTANCES) {
-        switch (params->distance_type) {
-        case UCG_GROUP_DISTANCE_TYPE_FIXED:
-            break;
-
-        case UCG_GROUP_DISTANCE_TYPE_ARRAY:
-            memcpy(group->params.distance_array, params->distance_array, dist_size);
-            break;
-
-        case UCG_GROUP_DISTANCE_TYPE_TABLE:
-        case UCG_GROUP_DISTANCE_TYPE_PLACEMENT:
-            return UCS_ERR_NOT_IMPLEMENTED;
-
-        default:
-            return UCS_ERR_INVALID_PARAM;
-        }
-    } else {
-        /* If the user didn't specify the distances - treat as uniform */
-        group->params.field_mask    |= UCG_GROUP_PARAM_FIELD_DISTANCES;
-        group->params.distance_type  = UCG_GROUP_DISTANCE_TYPE_FIXED;
-        group->params.distance_value = UCG_GROUP_MEMBER_DISTANCE_UNKNOWN;
-    }
-
-    if ((params->field_mask & UCG_GROUP_PARAM_FIELD_ID) != 0) {
+    if (params->field_mask & UCG_GROUP_PARAM_FIELD_ID) {
         ctx->next_group_id = ucs_max(ctx->next_group_id, group->params.id);
     } else {
         group->params.field_mask |= UCG_GROUP_PARAM_FIELD_ID;

@@ -426,7 +426,7 @@ ucg_builtin_step_length(ucg_builtin_op_step_t *step,
             unpacked = UCT_COLL_DTYPE_MODE_UNPACK_VALUE(unpacked);
         }
 
-        return unpacked * (is_send ? params->recv.count : params->send.count);
+        return unpacked * (is_send ? params->send.count : params->recv.count);
     }
 
     return step->buffer_length;

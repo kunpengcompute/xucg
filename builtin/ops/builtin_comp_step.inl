@@ -503,6 +503,17 @@ ucg_builtin_step_check_pending(ucg_builtin_comp_slot_t *slot,
                                                  &slot->req.op->super.params,
                                                  0);
 
+                if (step->flags & UCG_BUILTIN_OP_STEP_FLAG_FRAGMENTED) {
+                    if (header->remote_offset + step->fragment_length >= length) {
+                        /* Last fragment */
+                        ucs_assert(length > header->remote_offset);
+                        length = length - header->remote_offset;
+                    } else {
+                        /* Ordinary fragment */
+                        length = step->fragment_length;
+                    }
+                }
+
                 ucs_assert(length <= (rdesc->length - sizeof(ucg_builtin_header_t)));
             } else {
                 length = rdesc->length - sizeof(ucg_builtin_header_t);

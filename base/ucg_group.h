@@ -1,6 +1,6 @@
 /*
- * Copyright (C) Huawei Technologies Co., Ltd. 2019-2020.  ALL RIGHTS RESERVED.
- * See file LICENSE for terms.
+ * Copyright (C) Huawei Technologies Co., Ltd. 2019-2020.  All rights reserved.
+ * Description: UCG group
  */
 
 #ifndef UCG_GROUP_H_
@@ -18,13 +18,18 @@
 #define UCG_GROUP_MSG_SIZE_LEVEL 2
 
 /* threshold message size to switch algorithm */
-#define UCG_GROUP_MED_MSG_SIZE 16384
+#define UCG_GROUP_MED_MSG_SIZE 8192
 
 /* max number of actual root rank used */
 #define UCG_GROUP_MAX_ROOT_PARAM 96
 
 /* max number of collective type in the plan cache. */
 #define UCG_GROUP_MAX_COLL_TYPE_BUCKETS 16
+/* 1 for inc available ande 0 for unavailable */
+#define UCG_GROUP_INC_STATUS_NUM  2
+
+/* max number of ops stored in a plan */
+#define UCG_GROUP_MAX_OPS_IN_PLAN  200
 
 extern size_t ucg_ctx_worker_offset;
 #define UCG_WORKER_TO_GROUPS_CTX(worker) \
@@ -37,7 +42,9 @@ extern size_t ucg_ctx_worker_offset;
     ((params)->type.root)
 
 __KHASH_TYPE(ucg_groups_ep, ucg_group_member_index_t, ucp_ep_h)
-
+__KHASH_IMPL(ucg_groups_ep, static UCS_F_MAYBE_UNUSED inline,
+             ucg_group_member_index_t, ucp_ep_h, 1, kh_int64_hash_func,
+             kh_int64_hash_equal);
 /*
  * To enable the "Groups" feature in UCX - it's registered as part of the UCX
  * context - and allocated a context slot in each UCP Worker at a certain offset.
@@ -75,18 +82,7 @@ struct ucg_group {
     unsigned           iface_cnt;
     uct_iface_h        ifaces[UCG_GROUP_MAX_IFACES];
 
-    /* per-group cache of previous plans/operations, arranged as follows:
-     * for each collective type (e.g. Allreduce) there is a plan with a list of
-     * operations. To re-use a past operation it must be available and match the
-     * requested collective parameters.
-     */
-    ucg_plan_t        *cache[UCG_GROUP_MSG_SIZE_LEVEL][UCG_GROUP_MAX_ROOT_PARAM][UCG_GROUP_MAX_COLL_TYPE_BUCKETS];
-
-    /*
-     * for root collective operations(e.g. Bcast), the parameter of root should be
-     * the criterion to decide whether plan has been found.
-     */
-    unsigned           root_used[UCG_GROUP_MAX_ROOT_PARAM];
+    ucg_plan_t        **builtin_pcache[COLL_TYPE_NUMS];
 
     /* Below this point - the private per-planner data is allocated/stored */
 };
@@ -94,12 +90,5 @@ struct ucg_group {
 int ucg_builtin_op_can_reuse(const ucg_plan_t *plan, const ucg_op_t *op,
                              const ucg_collective_params_t *params);
 
-void ucg_builtin_update_op(const ucg_plan_t *plan, ucg_op_t *op,
-                           const ucg_collective_params_t *params);
-
-int ucg_is_segmented_allreduce(const ucg_collective_params_t *coll_params);
-
-int ucg_is_noncontig_allreduce(const ucg_group_params_t *group_params,
-                               const ucg_collective_params_t *coll_params);
 
 #endif /* UCG_GROUP_H_ */

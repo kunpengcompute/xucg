@@ -1,9 +1,9 @@
 /*
- * Copyright (C) Huawei Technologies Co., Ltd. 2019-2020.  ALL RIGHTS RESERVED.
- * See file LICENSE for terms.
+ * Copyright (C) Huawei Technologies Co., Ltd. 2019-2020. All rights reserved.
+ * Description: UCG plan
  */
 
-#include "ucg_plan.h"
+#include <ucg/secure/include/securec.h>
 
 #include <ucg/api/ucg_mpi.h>
 #include <ucs/config/parser.h>
@@ -15,9 +15,10 @@
 #include <ucs/sys/string.h>
 #include <ucs/arch/cpu.h>
 
+#include "ucg_plan.h"
 UCS_LIST_HEAD(ucg_plan_components_list);
 
-/**
+/*
  * Keeps information about allocated configuration structure, to be used when
  * releasing the options.
  */
@@ -127,8 +128,12 @@ ucs_status_t ucg_plan_query(ucg_plan_desc_t **resources_p, unsigned *nums_p)
         }
 
         resources = tmp;
-        memcpy(resources + nums, planners,
-               sizeof(*planners) * num_plans);
+        if (memcpy_s(resources + nums, sizeof(*planners) * num_plans, planners,
+               sizeof(*planners) * num_plans) != EOK) {
+            status = UCS_ERR_OUT_OF_RANGE;
+            goto err;
+        }
+
         nums += num_plans;
         ucg_plan_free((void **)&planners);
     }
@@ -164,9 +169,8 @@ ucs_status_t ucg_plan_single(ucg_plan_component_t *planc,
                              ucg_plan_desc_t **resources_p,
                              unsigned *nums_p)
 {
-    ucg_plan_desc_t *resource;
+    ucg_plan_desc_t *resource = ucs_malloc(sizeof(*resource), "planner description");
 
-    resource = ucs_malloc(sizeof(*resource), "planner description");
     if (resource == NULL) {
         return UCS_ERR_NO_MEMORY;
     }

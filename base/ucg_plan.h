@@ -1,6 +1,6 @@
 /*
- * Copyright (C) Huawei Technologies Co., Ltd. 2019-2020.  ALL RIGHTS RESERVED.
- * See file LICENSE for terms.
+ * Copyright (C) Huawei Technologies Co., Ltd. 2019-2020.  All rights reserved.
+ * Description: UCG plan
  */
 
 #ifndef UCG_PLAN_H_
@@ -19,8 +19,8 @@ ucs_status_t ucg_plan_select_component(ucg_plan_desc_t *planners,
                                        ucg_plan_component_t **planc_p);
 
 /* Functions on a specific component */
-#define ucg_plan(planc, group_ctx, msg_size, coll_group, coll_params, plan_p) \
-    ((planc)->plan(planc, group_ctx, msg_size, coll_group, coll_params, plan_p))
+#define ucg_plan(planc, group, algo_id, coll_params, plan_p) \
+    ((planc)->plan(group, algo_id, coll_params, plan_p))
 #define ucg_prepare(plan, params, op) ((plan)->planner->prepare(plan, params, op))
 #define ucg_trigger(op, cid, req)     ((op)->plan->planner->trigger(op, cid, req))
 #define ucg_discard(op)               ((op)->plan->planner->discard(op))

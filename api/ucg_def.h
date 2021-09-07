@@ -1,5 +1,5 @@
 /*
- * Copyright (C) Huawei Technologies Co., Ltd. 2019-2020.  ALL RIGHTS RESERVED.
+ * Copyright (C) Huawei Technologies Co., Ltd. 2019-2021. ALL RIGHTS RESERVED.
  * See file LICENSE for terms.
  */
 
@@ -66,12 +66,5 @@ typedef uint64_t                         ucg_group_member_index_t;
  */
 typedef void (*ucg_collective_callback_t)(void *request, ucs_status_t status);
 
-/**
- * @ingroup ucg_collective
- * @brief Hash index for each hash table.
- *
- * This type is used as index of hash array.
- */
-typedef uint32_t                         ucg_hash_index_t;
 
 #endif

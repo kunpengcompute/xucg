@@ -1,12 +1,13 @@
 /*
- * Copyright (C) Huawei Technologies Co., Ltd. 2019-2020.  ALL RIGHTS RESERVED.
- * See file LICENSE for terms.
+ * Copyright (C) Huawei Technologies Co., Ltd. 2019-2020. All rights reserved.
+ * Description: UCG group
  */
 
-#include "ucg_group.h"
-#include "../builtin/plan/builtin_plan.h"
-#include <ucg/api/ucg_mpi.h>
+#include <ucg/builtin/plan/builtin_plan.h>
+#include <ucg/builtin/plan/builtin_plan_cache.h>
+#include <ucg/builtin/plan/builtin_algo_decision.h>
 
+#include <ucg/api/ucg_mpi.h>
 #include <ucp/core/ucp_ep.inl>
 #include <ucp/core/ucp_worker.h>
 #include <ucs/datastruct/queue.h>
@@ -16,10 +17,10 @@
 #include <ucp/core/ucp_ep.inl>
 #include <ucp/core/ucp_proxy_ep.h> /* for @ref ucp_proxy_ep_test */
 
+#include "ucg_group.h"
+
 #if ENABLE_STATS
-/**
- * UCG group statistics counters
- */
+/* UCG group statistics counters */
 enum {
     UCG_GROUP_STAT_PLANS_CREATED,
     UCG_GROUP_STAT_PLANS_USED,
@@ -57,10 +58,6 @@ static ucs_stats_class_t ucg_group_stats_class = {
     }                                                \
 }
 
-__KHASH_IMPL(ucg_groups_ep, static UCS_F_MAYBE_UNUSED inline,
-            ucg_group_member_index_t, ucp_ep_h, 1, kh_int64_hash_func,
-            kh_int64_hash_equal);
-
 unsigned ucg_worker_progress(ucg_worker_h worker)
 {
     unsigned idx;
@@ -93,40 +90,6 @@ unsigned ucg_group_progress(ucg_group_h group)
 unsigned ucg_base_am_id;
 size_t ucg_ctx_worker_offset;
 
-void ucg_init_group_cache(struct ucg_group *new_group)
-{
-    unsigned idx, rank, algo_idx;
-    for (algo_idx = 0; algo_idx <  UCG_GROUP_MSG_SIZE_LEVEL; algo_idx++) {
-        for (rank = 0; rank < UCG_GROUP_MAX_ROOT_PARAM; rank++) {
-            for (idx = 0; idx < UCG_GROUP_MAX_COLL_TYPE_BUCKETS; idx++) {
-                new_group->cache[algo_idx][rank][idx] = NULL;
-            }
-        }
-    }
-}
-
-void ucg_init_group_root_used(struct ucg_group *new_group)
-{
-    unsigned rank;
-    /* Initalization of root_used */
-    for (rank = 0; rank < UCG_GROUP_MAX_ROOT_PARAM; rank++) {
-        new_group->root_used[rank] = (unsigned) -1;
-    }
-}
-
-static void ucg_group_clean_topo_map(ucg_group_params_t *params, unsigned index)
-{
-    unsigned i;
-    for (i = 0; i <= index; i++) {
-        if(params->topo_map[i] != NULL) {
-            ucs_free(params->topo_map[i]);
-            params->topo_map[i] = NULL;
-        }
-    }
-    ucs_free(params->topo_map);
-    params->topo_map = NULL;
-}
-
 ucs_status_t ucg_init_group(ucg_worker_h worker,
                             const ucg_group_params_t *params,
                             ucg_groups_t *ctx,
@@ -142,32 +105,12 @@ ucs_status_t ucg_init_group(ucg_worker_h worker,
     new_group->iface_cnt              = 0;
 
     ucs_queue_head_init(&new_group->pending);
-    memcpy((ucg_group_params_t*)&new_group->params, params, sizeof(*params));
-    new_group->params.distance = (typeof(params->distance))((char*)(new_group
-            + 1) + ctx->total_planner_sizes);
-    memcpy(new_group->params.distance, params->distance, distance_size);
+    new_group->params = *params;
     new_group->params.node_index = (typeof(params->node_index))((char*)(new_group
             + 1) + ctx->total_planner_sizes + distance_size);
     memcpy(new_group->params.node_index, params->node_index, nodenumber_size);
     memset(new_group + 1, 0, ctx->total_planner_sizes);
-
-    ucg_init_group_cache(new_group);
-    ucg_init_group_root_used(new_group);
-    new_group->params.topo_map = NULL;
-    if (params->topo_map) {
-        new_group->params.topo_map = UCS_ALLOC_CHECK(sizeof(char*) * params->member_count, "topo map");
-        unsigned i;
-        for (i = 0; i < params->member_count; i++) {
-            unsigned topo_size = sizeof(char) * params->member_count;
-            new_group->params.topo_map[i] = (char*)malloc(topo_size);
-            if (new_group->params.topo_map[i] == NULL) {
-                ucg_group_clean_topo_map(&new_group->params, i);
-                return UCS_ERR_NO_MEMORY;
-            }
-            memcpy(new_group->params.topo_map[i], params->topo_map[i], topo_size);
-        }
-    }
-
+    new_group->params.topo_args = params->topo_args;
     return UCS_OK;
 }
 
@@ -180,7 +123,6 @@ static void ucg_group_clean_planners(ucg_groups_t *ctx,
         planner->destroy((void*)new_group);
     }
     ucs_free(new_group);
-    new_group = NULL;
 }
 
 static ucs_status_t ucg_group_planner_create(ucg_groups_t *ctx,
@@ -188,7 +130,7 @@ static ucs_status_t ucg_group_planner_create(ucg_groups_t *ctx,
                                              struct ucg_group *new_group,
                                              int *idx)
 {
-    ucs_status_t status = UCS_OK;
+    ucs_status_t status;
     for (*idx = 0; *idx < ctx->num_planners; (*idx)++) {
         /* Create the per-planner per-group context */
         ucg_plan_component_t *planner = ctx->planners[*idx].plan_component;
@@ -213,17 +155,16 @@ ucs_status_t ucg_group_create(ucg_worker_h worker,
     UCP_WORKER_THREAD_CS_ENTER_CONDITIONAL(worker);
 
     /* allocate a new group */
-    size_t distance_size              = sizeof(*params->distance) * params->member_count;
     size_t nodenumber_size            = sizeof(*params->node_index) * params->member_count;
     struct ucg_group *new_group       = ucs_malloc(sizeof(struct ucg_group) +
-            ctx->total_planner_sizes + distance_size + nodenumber_size, "communicator group");
+            ctx->total_planner_sizes + nodenumber_size, "communicator group");
     if (new_group == NULL) {
         status = UCS_ERR_NO_MEMORY;
         goto cleanup_none;
     }
 
     int idx = 0;
-    status = ucg_init_group(worker, params, ctx, distance_size, nodenumber_size, new_group);
+    status = ucg_init_group(worker, params, ctx, 0, nodenumber_size, new_group);
     if (status != UCS_OK) {
         ucs_free(new_group);
         new_group = NULL;
@@ -235,12 +176,24 @@ ucs_status_t ucg_group_create(ucg_worker_h worker,
         goto cleanup_planners;
     }
 
+#if ENABLE_UCG_HICOLL
+    /*
+     * INC initialization, generate random comm_id,
+     * subroot send query to root and root reply notify
+     */
+    ucg_builtin_config_t *config;
+    config = (ucg_builtin_config_t *)ctx->planners[0].plan_component->plan_config;
+    init_inc_params(new_group);
+    if (inc_enable(config)) {
+        (void)inc_create(new_group, config, params);
+    }
+#endif
+
     status = UCS_STATS_NODE_ALLOC(&new_group->stats,
                                   &ucg_group_stats_class, worker->stats, "-%p", new_group);
     if (status != UCS_OK) {
         goto cleanup_planners;
     }
-    new_group->params.is_socket_balance = params->is_socket_balance;
     ucs_list_add_head(&ctx->groups_head, &new_group->list);
     UCP_WORKER_THREAD_CS_EXIT_CONDITIONAL(worker);
     *group_p = new_group;
@@ -249,7 +202,7 @@ ucs_status_t ucg_group_create(ucg_worker_h worker,
 
 cleanup_planners:
     ucg_group_clean_planners(ctx, idx, new_group);
-
+    new_group = NULL;
 cleanup_none:
     UCP_WORKER_THREAD_CS_EXIT_CONDITIONAL(worker);
     return status;
@@ -261,6 +214,15 @@ const ucg_group_params_t* ucg_group_get_params(ucg_group_h group)
         return NULL;
     }
     return &group->params;
+}
+
+ucg_group_member_index_t ucg_group_get_member_count(ucg_group_h group)
+{
+    const ucg_group_params_t *group_params = ucg_group_get_params(group);
+    if (group_params == NULL) {
+        return 0;
+    }
+    return group_params->member_count;
 }
 
 void ucg_group_planner_destroy(ucg_group_h group)
@@ -283,7 +245,19 @@ void ucg_group_destroy(ucg_group_h group)
     while (!ucs_queue_is_empty(&group->pending)) {
         ucg_group_progress(group);
     }
-
+#if ENABLE_UCG_HICOLL
+    /*
+     * INC finalize, clear switch
+     * subroot send kill to root and root reply kill to subroot clear switch
+     */
+    ucs_status_t status;
+    if (inc_available(group)) {
+        status = inc_destroy(group, 0);
+        if (status != UCS_OK) {
+            ucs_info(" INC failed. INC destroy failed\n");
+        }
+    }
+#endif
 #if ENABLE_MT
     ucg_worker_h worker = group->worker;
     UCP_WORKER_THREAD_CS_ENTER_CONDITIONAL(worker);
@@ -305,6 +279,9 @@ ucs_status_t ucg_request_check_status(void *request)
     ucg_request_t *req = (ucg_request_t*)request - 1;
 
     if (req->flags & UCG_REQUEST_COMMON_FLAG_COMPLETED) {
+        if (req->flags & UCG_REQUEST_COMMON_FLAG_INC_FAIL) {
+            return UCS_ERR_INVALID_PARAM;
+        }
         ucs_assert(req->status != UCS_INPROGRESS);
         return req->status;
     }
@@ -324,146 +301,96 @@ ucs_status_t ucg_plan_select(ucg_group_h group, const char* planner_name,
                                      planner_name, &group->params, params, planc_p);
 }
 
-static int ucg_chk_noncontig_allreduce_plan(const ucg_collective_params_t *coll_params,
-                                            const ucg_group_params_t *group_params,
-                                            const ucg_plan_t *plan)
-{
-    int noncontig_allreduce;
-
-    if (coll_params->type.modifiers != ucg_predefined_modifiers[UCG_PRIMITIVE_ALLREDUCE]) {
-        return 0;
-    }
-
-    noncontig_allreduce = ucg_is_noncontig_allreduce(group_params, coll_params);
-    if (plan->is_noncontig_allreduce) {
-        return !noncontig_allreduce;
-    } else {
-        return noncontig_allreduce;
-    }
-}
-
-void ucg_get_cache_plan(unsigned int message_size_level, unsigned int coll_root,
-                        ucg_group_h group, ucg_collective_params_t *params, ucg_plan_t **cache_plan, unsigned root)
-{
-    ucg_plan_t *plan = group->cache[message_size_level][coll_root][params->plan_cache_index];
-    if (plan == NULL) {
-        *cache_plan = NULL;
-        return;
-    }
-
-    if (params->send.op_ext && !group->params.op_is_commute_f(params->send.op_ext) && !plan->support_non_commutative) {
-        *cache_plan = NULL;
-        return;
-    }
-
-    if (params->send.op_ext && !group->params.op_is_commute_f(params->send.op_ext) && params->send.count > 1
-        && plan->is_ring_plan_topo_type) {
-        *cache_plan = NULL;
-        return;
-    }
-
-    ucg_builtin_config_t *config = (ucg_builtin_config_t *)plan->planner->plan_config;
-    if (params->send.dt_len > config->large_datatype_threshold && !plan->support_large_datatype) {
-        *cache_plan = NULL;
-        return;
-    }
-
-    if (ucg_chk_noncontig_allreduce_plan(params, &group->params, plan)) {
-        *cache_plan = NULL;
-        return;
-    }
-
-    if (plan->is_ring_plan_topo_type && ucg_is_segmented_allreduce(params)) {
-        *cache_plan = NULL;
-        return;
-    }
-
-    if (plan != NULL && root != plan->type.root) {
-        *cache_plan = NULL;
-        return;
-    }
-
-    ucs_debug("select plan from cache: %p", plan);
-    *cache_plan = plan;
-}
-
-void ucg_update_group_cache(ucg_group_h group,
-                            unsigned int message_size_level,
-                            unsigned int coll_root,
-                            ucg_collective_params_t *params,
-                            ucg_plan_t *plan)
-{
-    if (group->cache[message_size_level][coll_root][params->plan_cache_index] != NULL) {
-        ucg_builtin_plan_t *builtin_plan = ucs_derived_of(group->cache[message_size_level][coll_root][params->plan_cache_index], ucg_builtin_plan_t);
-        (void)ucg_builtin_destroy_plan(builtin_plan, group);
-        group->cache[message_size_level][coll_root][params->plan_cache_index] = NULL;
-    }
-    group->cache[message_size_level][coll_root][params->plan_cache_index] = plan;
-}
-
-void ucg_log_coll_params(ucg_collective_params_t *params)
+void ucg_log_coll_params(const ucg_collective_params_t *params)
 {
     ucs_debug("ucg_collective_create OP: "
               "params={type=%u, root=%lu, send=[%p,%i,%lu,%p,%p], "
               "recv=[%p,%i,%lu,%p,%p], cb=%p, op=%p}",
-              (unsigned)params->type.modifiers, (uint64_t)params->type.root,
-              params->send.buf, params->send.count, params->send.dt_len,
-              params->send.dt_ext, params->send.displs,
-              params->recv.buf, params->recv.count, params->recv.dt_len,
-              params->recv.dt_ext, params->recv.displs,
-              params->comp_cb, params->recv.op_ext);
+              (unsigned)params->type.modifiers, (uint64_t)params->type.root, params->send.buf, params->send.count,
+              params->send.dt_len, params->send.dt_ext, params->send.displs, params->recv.buf, params->recv.count,
+              params->recv.dt_len, params->recv.dt_ext, params->recv.displs, params->comp_cb, params->recv.op_ext);
 }
 
-void ucg_collective_create_choose_algorithm(unsigned msg_size, unsigned *message_size_level)
+static inline ucs_status_t ucg_collective_check_const_length(const ucg_collective_params_t *coll_params)
 {
-    /* choose algorithm due to message size */
-    if (msg_size < UCG_GROUP_MED_MSG_SIZE) {
-        *message_size_level = 0;
-    } else {
-        *message_size_level = 1;
+    if (coll_params->send.count < 0) {
+        ucs_error("The send count cannot be less than 0.");
+        return UCS_ERR_INVALID_PARAM;
     }
+    return UCS_OK;
 }
 
+static inline ucs_status_t ucg_collective_check_counts(const int *counts,
+                                                       ucg_group_member_index_t member_count)
+{
+    ucg_group_member_index_t i;
+    for (i = 0; i < member_count; i++) {
+        if (counts[i] < 0) {
+            return UCS_ERR_INVALID_PARAM;
+        }
+    }
+    return UCS_OK;
+}
+
+STATIC_GTEST ucs_status_t ucg_collective_check_variable_length(ucg_group_h group,
+                                                               const ucg_collective_params_t *coll_params)
+{
+    ucs_status_t status;
+    ucg_group_member_index_t member_count = ucg_group_get_member_count(group);
+    status = ucg_collective_check_counts(coll_params->send.counts, member_count);
+    if (status != UCS_OK) {
+        ucs_error("The send counts cannot be less than 0.");
+        return status;
+    }
+    status = ucg_collective_check_counts(coll_params->recv.counts, member_count);
+    if (status != UCS_OK) {
+        ucs_error("The receive counts cannot be less than 0.");
+        return status;
+    }
+    return status;
+}
+
+static inline ucs_status_t ucg_collective_check_params(ucg_group_h group,
+                                                       const ucg_collective_params_t *coll_params)
+{
+    ucs_status_t status;
+    uint32_t is_variable_len = (uint32_t)coll_params->type.modifiers & UCG_GROUP_COLLECTIVE_MODIFIER_VARIABLE_LENGTH;
+    if (is_variable_len) {
+        status = ucg_collective_check_variable_length(group, coll_params);
+    } else {
+        status = ucg_collective_check_const_length(coll_params);
+    }
+    return status;
+}
+
+ucs_status_t ucg_collective_check_input(ucg_group_h group,
+                                        const ucg_collective_params_t *params,
+                                        const ucg_coll_h *coll)
+{
+    if (group == NULL || params == NULL || coll == NULL) {
+        return UCS_ERR_INVALID_PARAM;
+    }
+    ucs_status_t status = ucg_collective_check_params(group, params);
+    return status;
+}
 UCS_PROFILE_FUNC(ucs_status_t, ucg_collective_create,
         (group, params, coll), ucg_group_h group,
         ucg_collective_params_t *params, ucg_coll_h *coll)
 {
-    UCP_WORKER_THREAD_CS_ENTER_CONDITIONAL(group->worker);
-
-    /* check the recycling/cache for this collective */
+    ucg_plan_t *plan = NULL;
     ucg_op_t *op = NULL;
     ucs_status_t status;
-    if (group == NULL || params == NULL || coll == NULL || params->send.count < 0) {
-        status = UCS_ERR_INVALID_PARAM;
+    int algo;
+    UCP_WORKER_THREAD_CS_ENTER_CONDITIONAL(group->worker);
+
+    status = ucg_collective_check_input(group, params, coll);
+    if (status != UCS_OK) {
         goto out;
     }
 
-    /* find the plan of current root whether has been established */
-    ucg_group_member_index_t root = UCG_ROOT_RANK(params);
-    unsigned msg_size = params->send.count * params->send.dt_len;
-    unsigned coll_root;
-    unsigned message_size_level;
-    unsigned is_coll_root_found = 1;
+    algo = ucg_builtin_algo_decision(&group->params, params);
 
-    if (root >= group->params.member_count) {
-        status = UCS_ERR_INVALID_PARAM;
-        ucs_error("Invalid root[%ld] for communication group size[%ld]", root, group->params.member_count);
-        goto out;
-    }
-
-    /* root cache has been not found */
-    if (root != group->root_used[root % UCG_GROUP_MAX_ROOT_PARAM]) {
-        group->root_used[root % UCG_GROUP_MAX_ROOT_PARAM] = root;
-        is_coll_root_found = 0;
-    }
-    coll_root = root % UCG_GROUP_MAX_ROOT_PARAM;
-
-    ucg_collective_create_choose_algorithm(msg_size, &message_size_level);
-
-    ucg_plan_t *plan = NULL;
-    if (is_coll_root_found) {
-        ucg_get_cache_plan(message_size_level, coll_root, group, params, &plan, root);
-    }
+    plan = ucg_builtin_pcache_find(group, algo, params);
 
     if (ucs_likely(plan != NULL)) {
         ucs_list_for_each(op, &plan->op_head, list) {
@@ -489,7 +416,7 @@ UCS_PROFILE_FUNC(ucs_status_t, ucg_collective_create,
     UCS_PROFILE_CODE("ucg_plan") {
         ucs_trace_req("ucg_collective_create PLAN: planc=%s type=%x root=%lu",
                       &planc->name[0], params->type.modifiers, (uint64_t)params->type.root);
-        status = ucg_plan(planc, &params->type, params->send.count * params->send.dt_len, group, params, &plan);
+        status = ucg_plan(planc, group, algo, params, &plan);
     }
     if (status != UCS_OK) {
         goto out;
@@ -500,7 +427,8 @@ UCS_PROFILE_FUNC(ucs_status_t, ucg_collective_create,
     plan->type              = params->type;
     plan->group_id          = group->group_id;
     plan->am_mp             = &group->worker->am_mp;
-    ucg_update_group_cache(group, message_size_level, coll_root, params, plan);
+    plan->op_cnt            = 0;
+    ucg_builtin_pcache_update(group, plan, algo, params);
     ucs_list_head_init(&plan->op_head);
     UCS_STATS_UPDATE_COUNTER(group->stats, UCG_GROUP_STAT_PLANS_CREATED, 1);
 
@@ -512,9 +440,15 @@ plan_found:
     if (status != UCS_OK) {
         goto out;
     }
-
+    /* limit the length of op list in plan to avoid huge const in reuse check. */
+    while (plan->op_cnt >= UCG_GROUP_MAX_OPS_IN_PLAN) {
+        ucg_op_t*op_head = ucs_list_extract_head(&plan->op_head, ucg_op_t, list);
+        ucg_discard(op_head);
+        plan->op_cnt--;
+    }
     ucs_list_add_head(&plan->op_head, &op->list);
-    memcpy(&op->params, params, sizeof(*params));
+    plan->op_cnt++;
+    op->params = *params;
     op->plan = plan;
 
 op_found:
@@ -550,7 +484,7 @@ static UCS_F_ALWAYS_INLINE ucs_status_t ucg_collective_trigger(ucg_group_h group
 ucs_status_t ucg_collective_release_barrier(ucg_group_h group)
 {
     if (group->is_barrier_outstanding == 0) {
-        // current operation is not barrier.
+        /* current operation is not barrier */
         return UCS_OK;
     }
     group->is_barrier_outstanding = 0;
@@ -720,7 +654,11 @@ ucs_status_t ucg_plan_connect(ucg_group_h group, ucg_group_member_index_t index,
     ucg_groups_t *gctx = UCG_WORKER_TO_GROUPS_CTX(group->worker);
     int ret = 0;
     khiter_t iter = kh_get(ucg_groups_ep, &gctx->eps, global_index);
-    if (iter != kh_end(&gctx->eps)) {
+    int reuse_ep = 1;
+#if ENABLE_UCG_HICOLL
+    reuse_ep = (inc_available(group) == 0 || inc_used(&group->params) == 0);
+#endif
+    if (iter != kh_end(&gctx->eps) && reuse_ep) {
         /* Use the cached connection */
         ucp_ep = kh_value(&gctx->eps, iter);
     } else {
@@ -803,9 +741,11 @@ ucs_status_t ucg_worker_create(ucp_context_h context,
         return UCS_ERR_INVALID_PARAM;
     }
     ucs_info("ucg_worker_create");
-    /* Once  worker is created, the ifaces in the worker may initialize and register handlers
-    when it receives wireup messages. Therefore, ucg_builtin_am_handler should be registered before
-    the worker is created. */
+    /*
+     * Once  worker is created, the ifaces in the worker may initialize and register handlers
+     * when it receives wireup messages. Therefore, ucg_builtin_am_handler should be registered before
+     * the worker is created.
+     */
     ucp_am_handler_t* am_handler  = ucp_am_handlers + ucg_base_am_id;
     am_handler->features          = UCP_FEATURE_GROUPS;
     am_handler->cb                = ucg_builtin_am_handler;

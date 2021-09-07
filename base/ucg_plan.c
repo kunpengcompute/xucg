@@ -1,9 +1,7 @@
 /*
- * Copyright (C) Huawei Technologies Co., Ltd. 2019-2020.  ALL RIGHTS RESERVED.
- * See file LICENSE for terms.
+ * Copyright (C) Huawei Technologies Co., Ltd. 2019-2020. All rights reserved.
+ * Description: UCG plan
  */
-
-#include "ucg_plan.h"
 
 #include <ucg/api/ucg_mpi.h>
 #include <ucs/config/parser.h>
@@ -15,9 +13,10 @@
 #include <ucs/sys/string.h>
 #include <ucs/arch/cpu.h>
 
+#include "ucg_plan.h"
 UCS_LIST_HEAD(ucg_plan_components_list);
 
-/**
+/*
  * Keeps information about allocated configuration structure, to be used when
  * releasing the options.
  */
@@ -127,8 +126,8 @@ ucs_status_t ucg_plan_query(ucg_plan_desc_t **resources_p, unsigned *nums_p)
         }
 
         resources = tmp;
-        memcpy(resources + nums, planners,
-               sizeof(*planners) * num_plans);
+        memcpy(resources + nums, planners, sizeof(*planners) * num_plans);
+
         nums += num_plans;
         ucg_plan_free((void **)&planners);
     }
@@ -164,9 +163,8 @@ ucs_status_t ucg_plan_single(ucg_plan_component_t *planc,
                              ucg_plan_desc_t **resources_p,
                              unsigned *nums_p)
 {
-    ucg_plan_desc_t *resource;
+    ucg_plan_desc_t *resource = ucs_malloc(sizeof(*resource), "planner description");
 
-    resource = ucs_malloc(sizeof(*resource), "planner description");
     if (resource == NULL) {
         return UCS_ERR_NO_MEMORY;
     }

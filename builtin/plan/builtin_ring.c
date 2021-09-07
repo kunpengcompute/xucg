@@ -1,5 +1,5 @@
 /*
- * Copyright (C) Huawei Technologies Co., Ltd. 2019.  ALL RIGHTS RESERVED.
+ * Copyright (C) Huawei Technologies Co., Ltd. 2019-2021.  ALL RIGHTS RESERVED.
  * See file LICENSE for terms.
  */
 
@@ -34,16 +34,19 @@ ucs_status_t ucg_builtin_ring_connect(ucg_builtin_group_ctx_t *ctx,
     ucs_status_t status;
     uct_ep_h *next_ep              = (uct_ep_h*)(phase + step_idx);
     if (peer_index_src != peer_index_dst) {
-        phase->ep_cnt = 1; /* 1 sender and 1 receiver ,the phase->ep_cnt is the number of receiver */
-        unsigned phase_ep_index = 1; /* index: 0 for sender and 1 for receiver */
+         /* when np > 2, each phase of every rank in ring algorithm has two endpoints: 1 sender and 1 recveiver.
+          * ep_cnt = 2 is for storing two ucp_eps in ucg_builtin_connect()
+          */
+        const unsigned peer_cnt = 2;
+        phase->ep_cnt = peer_cnt;
         phase->multi_eps = next_ep++;
 
-        /* connected to src process for second EP, recv */
-        status = ucg_builtin_connect(ctx, peer_index_src, phase, phase_ep_index);
+        /* connected to src process for second EP, receiver store in phase->ucp_eps[1]  */
+        status = ucg_builtin_connect(ctx, peer_index_src, phase, 1);
         if (status != UCS_OK) {
             return status;
         }
-        phase_ep_index--;
+
         next_ep++;
 
         /* set threshold for receiver
@@ -51,16 +54,17 @@ ucs_status_t ucg_builtin_ring_connect(ucg_builtin_group_ctx_t *ctx,
         */
         ucg_builtin_ring_assign_recv_thresh(phase);
 
-        /* connected to dst process for first EP, send */
-        status = ucg_builtin_connect(ctx, peer_index_dst, phase, phase_ep_index);
+        /* connected to dst process for first EP, sender store in phase->ucp_eps[0] */
+        status = ucg_builtin_connect(ctx, peer_index_dst, phase, 0);
         if (status != UCS_OK) {
             return status;
         }
 
         /*
-        * while phase->ep_cnt is set to be 1. So phase->single_ep should
-        * point to multi_eps[0].
-        */
+         * phase->ep_cnt affects the number of iterations in case_send().
+         * "1" is written here because there is only one sender.
+         */
+        phase->ep_cnt = 1;
         phase->single_ep = phase->multi_eps[0];
     } else {
         phase->ep_cnt  = 1;
@@ -71,8 +75,8 @@ ucs_status_t ucg_builtin_ring_connect(ucg_builtin_group_ctx_t *ctx,
             return status;
         }
         /* set threshold for receiver
-            * for ring threshold for receiver and sender maybe not same!!!
-            */
+         * for ring threshold for receiver and sender maybe not same!!!
+         */
         ucg_builtin_ring_assign_recv_thresh(phase);
     }
 
@@ -81,12 +85,7 @@ ucs_status_t ucg_builtin_ring_connect(ucg_builtin_group_ctx_t *ctx,
 
 void ucg_builtin_ring_find_my_index(const ucg_group_params_t *group_params, unsigned proc_count, ucg_group_member_index_t *my_index)
 {
-    while ((*my_index < proc_count) &&
-           (group_params->distance[*my_index] !=
-           UCG_GROUP_MEMBER_DISTANCE_SELF)) {
-        (*my_index)++;
-    }
-    ucs_assert(*my_index != proc_count);
+    *my_index = group_params->member_index;
 }
 ucs_status_t ucg_builtin_ring_create(ucg_builtin_group_ctx_t *ctx,
                                      enum ucg_builtin_plan_topology_type plan_topo_type,
@@ -105,12 +104,12 @@ ucs_status_t ucg_builtin_ring_create(ucg_builtin_group_ctx_t *ctx,
 
     /* Allocate memory resources */
     /* when proc_count >2, the number of endpoints is 2, and when proc_count = 2, the number of endpoints is 1. */
-    size_t alloc_size =            sizeof(ucg_builtin_plan_t) +
-                                   (step_idx * sizeof(ucg_builtin_plan_phase_t)
-                                    + (INDEX_DOUBLE * step_idx * sizeof(uct_ep_h)));
+    size_t alloc_size = sizeof(ucg_builtin_plan_t) + (step_idx * sizeof(ucg_builtin_plan_phase_t)
+                        + (INDEX_DOUBLE * step_idx * sizeof(uct_ep_h)));
 
-    ucg_builtin_plan_t *ring       = (ucg_builtin_plan_t*)UCS_ALLOC_CHECK(alloc_size, "ring topology");
+    ucg_builtin_plan_t *ring = (ucg_builtin_plan_t*)UCS_ALLOC_CHECK(alloc_size, "ring topology");
     memset(ring, 0, alloc_size);
+
     ucg_builtin_plan_phase_t *phase = &ring->phss[0];
     ring->ep_cnt                   = step_idx * INDEX_DOUBLE;  /* the number of endpoints each step is always 2 for ring */
     ring->phs_cnt                  = step_idx;
@@ -153,6 +152,7 @@ ucs_status_t ucg_builtin_ring_create(ucg_builtin_group_ctx_t *ctx,
         /* the following endpoint is as same as phase(0) */
         *phase = phase_zero;
         phase->ucp_eps = NULL;
+        phase->ep_thresh = NULL;
 
         /* modify method and step_index in phase */
         if (step_idx < proc_count - 1) {
@@ -167,8 +167,6 @@ ucs_status_t ucg_builtin_ring_create(ucg_builtin_group_ctx_t *ctx,
     }
 
     ring->super.my_index = my_index;
-    ring->super.support_non_commutative = 0;
-    ring->super.support_large_datatype = 1;
     *plan_p = ring;
     return status;
 }

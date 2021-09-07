@@ -1,6 +1,6 @@
 /*
- * Copyright (C) Huawei Technologies Co., Ltd. 2019-2020.  ALL RIGHTS RESERVED.
- * See file LICENSE for terms.
+ * Copyright (c) Huawei Technologies Co., Ltd. 2019-2021.  All rights reserved.
+ * Description: UCG common header file
  */
 
 #ifndef UCG_H_
@@ -78,6 +78,7 @@ enum ucg_collective_modifiers {
 
     UCG_GROUP_COLLECTIVE_MODIFIER_ALLTOALL           = UCS_BIT(13), /* MPI_ALLTOALL */
     UCG_GROUP_COLLECTIVE_MODIFIER_ALLGATHER          = UCS_BIT(14), /* MPI_ALLGATHER */
+    UCG_GROUP_COLLECTIVE_MODIFIER_ALLTOALLV          = UCS_BIT(15), /* MPI_ALLTOALLV */
 
     UCG_GROUP_COLLECTIVE_MODIFIER_MASK               = UCS_MASK(16)
 };
@@ -86,6 +87,18 @@ typedef struct ucg_collective_type {
     enum ucg_collective_modifiers modifiers :16;
     ucg_group_member_index_t      root :48;
 } ucg_collective_type_t;
+
+typedef enum {
+    COLL_TYPE_BARRIER,
+    COLL_TYPE_BCAST,
+    COLL_TYPE_ALLREDUCE,
+    COLL_TYPE_ALLTOALLV,
+    /*
+    * Only collective operations that already
+    * be supported should be added above.
+    */
+    COLL_TYPE_NUMS
+} coll_type_t;
 
 enum UCS_S_PACKED ucg_group_member_distance {
     UCG_GROUP_MEMBER_DISTANCE_SELF = 0,
@@ -105,33 +118,48 @@ enum UCS_S_PACKED ucg_group_hierarchy_level {
 typedef int (*dt_convert_f)(void *dt_ext, ucp_datatype_t *ucp_datatype);
 typedef ptrdiff_t (*dt_span_f)(void *dt_ext, int count, ptrdiff_t *gap);
 
+typedef struct inc_params {
+    uint16_t comm_id;             /* INC comm id */
+    uint8_t switch_info_got;      /* indicates whether switch supports INC with under the current parameters */
+    uint8_t feature_used;         /* indicates whether the current collective operation is supported */
+    uint32_t spine_select;        /* selected spine ip in 2-layer networking */
+    uint8_t coll_operation_type;  /* supported collective operation */
+    uint16_t data_operation_type; /* supported  allreduce operation type */
+    uint16_t data_type;           /* supported collective data type */
+    uint16_t max_data_size;       /* max data size in INC without padding */
+    int node_under_tor;           /* node/socket num under the tor */
+    unsigned header_under_tor;    /* for now, the minimum rank under the tor */
+    uint8_t req_id;               /* Indicates the Nth collective operation in INC, 1-255, must be continuous increment */
+    /* rank id in MPI_COMM_WORLD, uniquely identify a task and communication with job_id, comm_id, cid */
+    int world_rank;
+    unsigned ppn;
+} inc_params_t;
+
+typedef enum ucg_group_member_distance (*rank_dist_f)(void *comm, int rank1, int rank2);
+
+typedef struct {
+    uint16_t ppn_local;  /* number of processes on my node */
+    uint16_t pps_local;  /* number of processes on my socket */
+    uint16_t ppn_max;    /* max number of processes on all nodes */
+    uint16_t node_nums;
+    uint16_t ppn_unbalance     : 1;
+    uint16_t pps_unbalance     : 1;
+    uint16_t nrank_uncontinue  : 1;
+    uint16_t srank_uncontinue  : 1;
+    uint16_t bind_to_none      : 1;
+    uint16_t reserved          : 7;
+    uint16_t rank_continuous_in_node  : 1;
+    uint16_t rank_continuous_in_sock  : 1;
+    uint16_t rank_balance_in_node     : 1;
+    uint16_t rank_balance_in_sock     : 1;
+} ucg_topo_args_t;
+
 typedef struct ucg_group_params {
     ucg_group_member_index_t member_count; /* number of group members */
+    ucg_group_member_index_t member_index; /* My member index within the group */
     uint32_t cid;                          /* Assign value to group_id */
 
-    char **topo_map; /* Global topology map, topo_map[i][j] means Distance between rank i and rank j. */
-
-    /*
-     * This array contains information about the process placement of different
-     * group members, which is used to select the best topology for collectives.
-     *
-     *
-     * For example, for 2 nodes, 3 sockets each, 4 cores per socket, each member
-     * should be passed the distance array contents as follows:
-     *   1st group member distance array:  0111222222223333333333333333
-     *   2nd group member distance array:  1011222222223333333333333333
-     *   3rd group member distance array:  1101222222223333333333333333
-     *   4th group member distance array:  1110222222223333333333333333
-     *   5th group member distance array:  2222011122223333333333333333
-     *   6th group member distance array:  2222101122223333333333333333
-     *   7th group member distance array:  2222110122223333333333333333
-     *   8th group member distance array:  2222111022223333333333333333
-     *    ...
-     *   12th group member distance array: 3333333333333333011122222222
-     *   13th group member distance array: 3333333333333333101122222222
-     *    ...
-     */
-    enum ucg_group_member_distance *distance;
+    ucg_topo_args_t topo_args;
 
     /* node index */
     uint16_t *node_index;
@@ -156,14 +184,19 @@ typedef struct ucg_group_params {
 
     /* Callback function for get rank in MPI_COMM_WORLD */
     ucg_group_member_index_t (*mpi_global_idx_f) (void *cb_group_obj, ucg_group_member_index_t index);
-
+    rank_dist_f mpi_rank_distance;
     dt_span_f mpi_datatype_span;
+
+    int (*get_operate_param_f)(void *mpi_op, void *mpi_dt, int *op, int *dt);
+
+    /* INC params */
+    inc_params_t inc_param;
     char is_socket_balance;
 } ucg_group_params_t;
 
 typedef struct ucg_collective {
     ucg_collective_type_t     type;    /* the type (and root) of the collective */
-    ucg_hash_index_t          plan_cache_index; /* the index of collective type in plan cache. */
+    coll_type_t               coll_type;
 
     struct {
         void                 *buf;     /* buffer location to use */
@@ -260,7 +293,13 @@ unsigned ucg_worker_progress(ucg_worker_h worker);
  * @param [in]  group       Group object to query.
  */
 const ucg_group_params_t* ucg_group_get_params(ucg_group_h group);
-
+/**
+ * @ingroup UCG_GROUP
+ * @brief Get group member count.
+ *
+ * @param [in]  group       Group object to query.
+ */
+ucg_group_member_index_t ucg_group_get_member_count(ucg_group_h group);
 
 /**
  * @ingroup UCG_GROUP
@@ -292,7 +331,9 @@ ucs_status_t ucg_collective_create(ucg_group_h group,
  * @return otherwise        - Operation was scheduled for send and can be
  *                          completed in any point in time. The request handle
  *                          is returned to the application in order to track
- *                          progress of the message.
+ *                          progress of the message. The application is
+ *                          responsible to release the handle using
+ *                          @ref ucg_request_free routine.
  */
 ucs_status_ptr_t ucg_collective_start_nb(ucg_coll_h coll);
 
@@ -345,9 +386,27 @@ void ucg_collective_destroy(ucg_coll_h coll);
  * @return Error code as defined by @ref ucs_status_t
  */
 ucs_status_t ucg_request_check_status(void *request);
-
+/**
+ * @ingroup UCG_GROUP
+ * @brief Cancel an outstanding communications request.
+ *
+ * @param [in]  worker      UCG worker.
+ * @param [in]  request     Non-blocking request to cancel.
+ *
+ * This routine tries to cancels an outstanding communication request.
+ */
 void ucg_request_cancel(ucg_worker_h worker, void *request);
-
+/**
+ * @ingroup UCG_GROUP
+ * @brief Release a communications request.
+ *
+ * @param [in]  request     Non-blocking request to release.
+ *
+ * This routine releases the non-blocking request back to the library, regardless
+ * of its current state. Communications operations associated with this request
+ * will make progress internally, however no further notifications or callbacks
+ * will be invoked for this request.
+ */
 void ucg_request_free(void *request);
 
 
@@ -364,6 +423,11 @@ ucs_status_t ucg_init(const ucp_params_t *params,
 ucs_status_t ucg_worker_create(ucp_context_h context,
                                const ucp_worker_params_t *params,
                                ucp_worker_h *worker_p);
+
+ucs_status_t ucg_collective_check_input(ucg_group_h group,
+                                        const ucg_collective_params_t *params,
+                                        const ucg_coll_h *coll);
+
 
 END_C_DECLS
 

@@ -1,6 +1,6 @@
 /*
- * Copyright (C) Huawei Technologies Co., Ltd. 2019-2020.  ALL RIGHTS RESERVED.
- * See file LICENSE for terms.
+ * Copyright (C) Huawei Technologies Co., Ltd. 2019-2021.  All rights reserved.
+ * Description: UCG plan component
  */
 
 #ifndef UCG_PLAN_COMPONENT_H_
@@ -101,10 +101,11 @@ typedef struct ucg_base_plan {
     /* Plan lookup - caching mechanism */
     ucg_collective_type_t    type;
     ucs_list_link_t          op_head;   /**< List of requests following this plan */
-
+    int                      op_cnt;
     /* Plan progress */
     ucg_plan_component_t    *planner;
     ucg_group_id_t           group_id;
+    short                    up_offset; /* In allreduce-tree algo, my position in my father's reduce buffer */
     ucg_group_member_index_t my_index;
     ucg_group_h              group;
     ucs_mpool_t             *am_mp;
@@ -113,14 +114,13 @@ typedef struct ucg_base_plan {
     /*  Attribute */
     int                      support_non_commutative;
     int                      support_large_datatype;
-    int                      is_noncontig_allreduce;
-    int                      is_ring_plan_topo_type;
+
 } ucg_plan_t;
 
 enum ucg_request_common_flags {
     UCG_REQUEST_COMMON_FLAG_COMPLETED = UCS_BIT(0),
-
-    UCG_REQUEST_COMMON_FLAG_MASK = UCS_MASK(1)
+    UCG_REQUEST_COMMON_FLAG_INC_FAIL = UCS_BIT(1),
+    UCG_REQUEST_COMMON_FLAG_MASK = UCS_MASK(2)
 };
 
 typedef struct ucg_request {
@@ -164,10 +164,8 @@ struct ucg_plan_component {
     unsigned               (*progress)(ucg_group_h group);
 
     /* plan a collective operation with this component */
-    ucs_status_t           (*plan)    (ucg_plan_component_t *plan_component,
-                                       const ucg_collective_type_t *coll_type,
-                                       const size_t msg_size,
-                                       ucg_group_h group,
+    ucs_status_t           (*plan)    (ucg_group_h group,
+                                       int algo_id,
                                        ucg_collective_params_t *coll_params,
                                        ucg_plan_t **plan_p);
     /* Prepare an operation to follow the given plan */
@@ -267,18 +265,6 @@ ucs_status_t ucg_plan_select(ucg_group_h group, const char* planner_name,
 
 /* Start pending operations after a barrier has been completed */
 ucs_status_t ucg_collective_release_barrier(ucg_group_h group);
-
-/* Check if the plan support non commutative operation. */
-static inline int ucg_plan_support_non_commutative(ucg_plan_t *plan)
-{
-    return plan->support_non_commutative;
-}
-
-/* Check if the plan support large datatype. */
-static inline int ucg_plan_support_large_datatype(ucg_plan_t *plan)
-{
-    return plan->support_large_datatype;
-}
 
 END_C_DECLS
 

@@ -1,6 +1,6 @@
 /*
- * Copyright (C) Huawei Technologies Co., Ltd. 2019-2020.  ALL RIGHTS RESERVED.
- * See file LICENSE for terms.
+ * Copyright (C) Huawei Technologies Co., Ltd. 2019-2021. All rights reserved.
+ * Description: Init function for MPI collective operations
  */
 
 #ifndef UCG_MPI_H_
@@ -24,6 +24,7 @@ enum ucg_predefined {
     UCG_PRIMITIVE_SCATTER,
     UCG_PRIMITIVE_ALLREDUCE,
     UCG_PRIMITIVE_ALLTOALL,
+    UCG_PRIMITIVE_ALLTOALLV,
     UCG_PRIMITIVE_REDUCE_SCATTER,
     UCG_PRIMITIVE_ALLGATHER,
     UCG_PRIMITIVE_ALLGATHERV,
@@ -45,6 +46,8 @@ static enum ucg_collective_modifiers ucg_predefined_modifiers[] = {
     [UCG_PRIMITIVE_ALLREDUCE]          = UCG_GROUP_COLLECTIVE_MODIFIER_AGGREGATE |
                                          UCG_GROUP_COLLECTIVE_MODIFIER_BROADCAST,
     [UCG_PRIMITIVE_ALLTOALL]           = UCG_GROUP_COLLECTIVE_MODIFIER_ALLTOALL,
+    [UCG_PRIMITIVE_ALLTOALLV]          = UCG_GROUP_COLLECTIVE_MODIFIER_ALLTOALLV |
+                                         UCG_GROUP_COLLECTIVE_MODIFIER_VARIABLE_LENGTH,
     [UCG_PRIMITIVE_REDUCE_SCATTER]     = UCG_GROUP_COLLECTIVE_MODIFIER_AGGREGATE |
                                          UCG_GROUP_COLLECTIVE_MODIFIER_SINGLE_SOURCE,
     [UCG_PRIMITIVE_ALLGATHER]          = UCG_GROUP_COLLECTIVE_MODIFIER_BROADCAST |
@@ -57,11 +60,6 @@ static enum ucg_collective_modifiers ucg_predefined_modifiers[] = {
                                          UCG_GROUP_COLLECTIVE_MODIFIER_VARIABLE_LENGTH |
                                          UCG_GROUP_COLLECTIVE_MODIFIER_VARIABLE_DATATYPE,
 };
-
-static ucg_hash_index_t UCS_F_ALWAYS_INLINE ucg_mpi_coll_hash(enum ucg_predefined mpi_coll_type)
-{
-    return (ucg_hash_index_t)mpi_coll_type;
-}
 
 #define UCG_COLL_PARAMS_BUF_R(_buf, _count, _dt_len, _dt_ext) \
     .buf    = (_buf),                                           \
@@ -96,7 +94,7 @@ static UCS_F_ALWAYS_INLINE ucs_status_t ucg_coll_##_lname##_init(__VA_ARGS__,  \
                     .modifiers = flags,                                        \
                     .root      = root,                                         \
             },                                                                 \
-            .plan_cache_index = ucg_mpi_coll_hash(UCG_PRIMITIVE_##_uname),     \
+            .coll_type = COLL_TYPE_##_uname,                                   \
             .send = {                                                          \
                     UCG_COLL_PARAMS_BUF##_stype _sargs                         \
             },                                                                 \
@@ -132,6 +130,14 @@ UCG_COLL_INIT_FUNC(_lname, _uname,                                              
                    int *rcounts, size_t len_rdtype,                             \
                    void *mpi_rdtype, int *rdispls)
 
+#define UCG_COLL_INIT_FUNC_SVN_RVN(_lname, _uname)                                \
+UCG_COLL_INIT_FUNC(_lname, _uname,                                                \
+                   _V, ((char*)sbuf, scounts,  len_sdtype,  mpi_sdtype, sdispls), \
+                   _V, (rbuf, rcounts, len_rdtype, mpi_rdtype, rdispls),          \
+                   const void *sbuf, int *scounts, size_t len_sdtype,             \
+                   void *mpi_sdtype, int *sdispls, void *rbuf, int *rcounts,       \
+                   size_t len_rdtype, void *mpi_rdtype, int *rdispls)
+
 #define UCG_COLL_INIT_FUNC_SWN_RWN(_lname, _uname)                                \
 UCG_COLL_INIT_FUNC(_lname, _uname,                                                \
                    _W, ((char*)sbuf, scounts, len_sdtypes, mpi_sdtypes, sdispls), \
@@ -141,11 +147,13 @@ UCG_COLL_INIT_FUNC(_lname, _uname,                                              
                    int *rcounts, size_t *len_rdtypes, void **mpi_rdtypes,         \
                    int *rdispls)
 
-
-
 UCG_COLL_INIT_FUNC_SR1_RR1(allreduce,          ALLREDUCE)
-UCG_COLL_INIT_FUNC_SR1_RR1(reduce,             REDUCE)
 UCG_COLL_INIT_FUNC_SR1_RR1(bcast,              BCAST)
+UCG_COLL_INIT_FUNC(barrier, BARRIER, _R, (0, 0, 0, 0), _R, (0, 0, 0, 0), int ign)
+UCG_COLL_INIT_FUNC_SVN_RVN(alltoallv,          ALLTOALLV)
+
+#ifdef UCG_COLL_ALREADY_SUPPORTED
+UCG_COLL_INIT_FUNC_SR1_RR1(reduce,             REDUCE)
 UCG_COLL_INIT_FUNC_SR1_RRN(gather,             GATHER)
 UCG_COLL_INIT_FUNC_SR1_RRN(scatter,            SCATTER)
 UCG_COLL_INIT_FUNC_SR1_RRN(allgather,          ALLGATHER)
@@ -153,7 +161,7 @@ UCG_COLL_INIT_FUNC_SR1_RVN(allgatherv,         ALLGATHERV)
 UCG_COLL_INIT_FUNC_SR1_RRN(alltoall,           ALLTOALL)
 UCG_COLL_INIT_FUNC_SWN_RWN(alltoallw,          ALLTOALLW)
 UCG_COLL_INIT_FUNC_SWN_RWN(neighbor_alltoallw, NEIGHBOR_ALLTOALLW)
-UCG_COLL_INIT_FUNC(barrier, BARRIER, _R, (0, 0, 0, 0), _R, (0, 0, 0, 0), int ign)
+#endif /* UCG_COLL_ALREADY_SUPPORTED */
 
 END_C_DECLS
 

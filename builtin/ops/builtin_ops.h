@@ -1,16 +1,15 @@
 /*
  * Copyright (C) Huawei Technologies Co., Ltd. 2019-2020.  ALL RIGHTS RESERVED.
- * See file LICENSE for terms.
+ * Notes: See file LICENSE for terms.
  */
 
 #ifndef UCG_BUILTIN_OPS_H_
 #define UCG_BUILTIN_OPS_H_
 
-BEGIN_C_DECLS
-
 #include "../plan/builtin_plan.h"
 #include <ucp/core/ucp_request.h>
 
+BEGIN_C_DECLS
 /*
  * The built-in collective operations are composed of one or more steps.
  * In each step, we apply a method to a subgroup of peer processes.
@@ -38,10 +37,6 @@ extern unsigned builtin_base_am_id;
 extern ucg_group_member_index_t g_myidx;
 extern unsigned num_procs;
 
-#ifndef MPI_IN_PLACE
-#define MPI_IN_PLACE ((void*)0x1)
-#endif
-
 typedef union ucg_builtin_header {
     struct {
         ucg_group_id_t group_id;
@@ -56,6 +51,11 @@ typedef union ucg_builtin_header {
     };
     uint64_t header;
 } ucg_builtin_header_t;
+
+typedef struct ucg_builtin_header_ext {
+    ucg_builtin_header_t header;
+    ucg_group_member_index_t src_rank;
+} UCS_S_PACKED ucg_builtin_header_ext_t;
 
 /*
  * The builtin operation
@@ -77,6 +77,7 @@ enum ucg_builtin_op_step_flags {
     UCG_BUILTIN_OP_STEP_FLAG_SEND_AM_SHORT      = UCS_BIT(9),
     UCG_BUILTIN_OP_STEP_FLAG_SEND_AM_BCOPY      = UCS_BIT(10),
     UCG_BUILTIN_OP_STEP_FLAG_SEND_AM_ZCOPY      = UCS_BIT(11),
+    UCG_BUILTIN_OP_STEP_FLAG_SEND_AM_DYNAMIC    = UCS_BIT(12),
 };
 
 enum ucg_builtin_op_step_displs_rule {
@@ -90,6 +91,21 @@ enum ucg_builtin_op_step_resend_flag {
     UCG_BUILTIN_OP_STEP_RESEND,
 };
 
+enum ucg_builtin_op_dt_option {
+    /* Option for non-contig dt */
+    UCG_BUILTIN_OP_DT_RECV,
+    UCG_BUILTIN_OP_DT_SEND,
+    UCG_BUILTIN_OP_DT_SWAP,
+};
+
+enum Plummer_step_modifier {
+    UCG_PLAN_PLUMMER_STEP_INTRA_GATHER_SEND_COUNTS    = 0,
+    UCG_PLAN_PLUMMER_STEP_INTRA_GATHER_SEND_BUFFERS   = 1,
+    UCG_PLAN_PLUMMER_STEP_INTRA_GATHER_RECV_COUNTS    = 2,
+    UCG_PLAN_PLUMMER_STEP_INTER_ALLTOALLV             = 3,
+    UCG_PLAN_PLUMMER_STEP_INTRA_SCATTER_RECV_BUFFERS  = 4,
+};
+
 /* Definitions of several callback functions, used during an operation */
 typedef struct ucg_builtin_op ucg_builtin_op_t;
 typedef struct ucg_builtin_request ucg_builtin_request_t;
@@ -99,7 +115,7 @@ typedef void         (*ucg_builtin_op_final_cb_t) (ucg_builtin_request_t *req);
 typedef void         (*ucg_builtin_comp_send_cb_t)(ucg_builtin_request_t *req);
 typedef int          (*ucg_builtin_comp_recv_cb_t)(ucg_builtin_request_t *req,
                                                    uint64_t offset,
-                                                   void *data,
+                                                   const void *data,
                                                    size_t length);
 
 typedef struct ucg_builtin_zcomp {
@@ -107,9 +123,30 @@ typedef struct ucg_builtin_zcomp {
     ucg_builtin_request_t     *req;
 } ucg_builtin_zcomp_t;
 
+typedef struct ucg_builtin_coll_params {
+    int8_t    *init_buf;
+    int       *counts;
+    int       *displs;
+} ucg_builtin_coll_params_t;
+
+ucg_builtin_coll_params_t *ucg_builtin_allocate_coll_params(unsigned local_member_cnt);
+void ucg_builtin_free_coll_params(ucg_builtin_coll_params_t **params);
+
+typedef struct ucg_builtin_zcopy_info {
+    uct_md_h              uct_md;
+    uct_mem_h             memh;
+    ucg_builtin_zcomp_t  *zcomp;
+    uint32_t              num_store;  /* < number of step's store zcopy messages */
+    uint32_t              zcopy_pending;
+} ucg_builtin_zcopy_info_t;
+
+typedef void *(*ucg_builtin_pack_rank_cb_t)(void *step, const void *send_buffer, size_t buffer_len,
+                                            size_t *new_buffer_len);
+typedef ucg_group_member_index_t (*ucg_builtin_unpack_rank_cb_t)(const void *send_buffer, size_t buffer_len);
+
 typedef struct ucg_builtin_op_step {
     uint16_t                   flags;            /* @ref enum ucg_builtin_op_step_flags */
-    uint8_t                    iter_ep;          /* iterator, somewhat volatile */
+    uint32_t                   iter_ep;          /* iterator, somewhat volatile */
     ucg_offset_t               iter_offset;      /* iterator, somewhat volatile */
     ucg_offset_t               remote_offset;    /*  for algorithm like ring    */
 #define UCG_BUILTIN_OFFSET_PIPELINE_READY   ((ucg_offset_t)-1)
@@ -119,11 +156,15 @@ typedef struct ucg_builtin_op_step {
     uct_md_h                   uct_md;
     ucg_builtin_plan_phase_t  *phase;
 
+    ucg_builtin_coll_params_t *send_coll_params;
+    ucg_builtin_coll_params_t *recv_coll_params;
+
     int8_t                    *send_buffer;
     int8_t                    *recv_buffer;
     size_t                     buffer_length;
     size_t                     buffer_length_recv;
     ucg_builtin_header_t       am_header;
+    ucg_builtin_header_ext_t   am_header_ext;   /* extended header with rank */
     uint32_t                   am_id;
     size_t                     buf_len_unit;   /* only for discrete buffer sending */
 
@@ -146,6 +187,13 @@ typedef struct ucg_builtin_op_step {
     ucg_builtin_comp_send_cb_t send_cb;
     ucg_builtin_comp_recv_cb_t recv_cb;
 
+    /* Fields intended for send and receive variable length */
+    struct {
+        int8_t                          *pack_rank_buffer;
+        ucg_builtin_pack_rank_cb_t       pack_rank_func;
+        ucg_builtin_unpack_rank_cb_t     unpack_rank_func;
+    } variable_length;
+
     /* Fields intended for non-contig datatypes */
     struct {
         int8_t                *contig_buffer;
@@ -160,6 +208,14 @@ typedef struct ucg_builtin_op_step {
         ucg_builtin_zcomp_t   *zcomp;
         uint32_t               num_store; /* < number of step's store zcopy messages */
     } zcopy;
+
+    /* for dynamic sending, the array of zcopy is used */
+    ucg_builtin_zcopy_info_t *zcopys;
+
+    /* Terminal or Waypoint node of the allreduce tree-algo need to
+       alloc the buffer to save the child rank value */
+    void                       *reduce_buff;
+    uint32_t                    rbuf_count; /* element count of the reduce_buff */
 } ucg_builtin_op_step_t;
 
 typedef struct ucg_builtin_comp_slot ucg_builtin_comp_slot_t;
@@ -174,6 +230,11 @@ struct ucg_builtin_op {
     dt_span_f                 dtspan_f;
     ucg_builtin_comp_slot_t  *slots;    /**< slots pointer, for faster initialization */
     ucs_list_link_t          *resend;   /**< resend pointer, for faster resend */
+    ucs_status_t              inc_init_status;
+    int8_t                   *temp_data_buffer; /**< temp buffer for reduce and scatter way-point*/
+    int8_t                   *temp_data_buffer1;  /**< temp buffer for reduce and scatter way-point*/
+    int8_t                   *temp_exchange_buffer;  /**< temp buffer exchange data */
+    int8_t                   *temp_exchange_buffer1; /**< temp buffer exchange data */
     ucg_builtin_op_step_t     steps[];  /**< steps required to complete the operation */
 };
 
@@ -189,9 +250,14 @@ struct ucg_builtin_request {
     ucg_request_t         *comp_req;  /**< completion status is written here */
     ucs_list_link_t        send_list; /**< membership in progress list */
     unsigned               recv_comp; /**< if recv is complete, only use in r1s */
+    ucs_status_t           inc_req_status;
+    ucs_status_t           ladd_req_status;
+    ucs_status_t           plummer_req_status;
+    unsigned               is_send_cb_called; /**< whether send_cb has been called */
 };
 
-ucs_status_t ucg_builtin_step_create (ucg_builtin_plan_phase_t *phase,
+ucs_status_t ucg_builtin_step_create (ucg_builtin_op_t *op,
+                                      ucg_builtin_plan_phase_t *phase,
                                       ucp_datatype_t send_dtype,
                                       ucp_datatype_t recv_dtype,
                                       unsigned extra_flags,
@@ -217,6 +283,9 @@ void ucg_builtin_swap_net_recv(char *netdata, size_t length, size_t offset,
 
 size_t ucg_builtin_get_dt_len(ucp_dt_generic_t *dt_gen);
 
+ucs_status_t ucg_builtin_step_alloc_pack_rank_buffer(ucg_builtin_op_step_t *step,
+                                                     size_t buffer_length);
+void ucg_builtin_step_free_pack_rank_buffer(ucg_builtin_op_step_t *step);
 /*
  * Incoming messages are processed for one of the collective operations
  * currently outstanding - arranged in as a window (think: TCP) of slots.
@@ -226,9 +295,13 @@ size_t ucg_builtin_get_dt_len(ucp_dt_generic_t *dt_gen);
  * a "header", a.k.a. "immediate value" (see UCT API), which refers to the
  * location to apply (write or reduce) the payload within the local buffer.
  */
+
+typedef void (*ucg_desc_release_func_t)(void *);
+
 typedef struct ucg_builtin_comp_desc {
     ucp_recv_desc_t      super;
-    char                 padding[UCP_WORKER_HEADROOM_PRIV_SIZE];
+    ucg_desc_release_func_t release;
+    char                 padding[UCP_WORKER_HEADROOM_PRIV_SIZE - sizeof(ucg_desc_release_func_t)];
     ucg_builtin_header_t header;
     char                 data[0];
 } ucg_builtin_comp_desc_t;
@@ -265,7 +338,7 @@ struct ucg_builtin_comp_slot {
  * is 0 but expected be 1. So we use UCG_DT_IS_CONTIG instead.
  */
 #define UCG_DT_IS_CONTIG(_params, _datatype) \
-    ((_params->send.dt_len) ? (UCP_DT_IS_CONTIG(_datatype)) : 1)
+    (((_params)->send.dt_len) ? (UCP_DT_IS_CONTIG(_datatype)) : 1)
 
 END_C_DECLS
 

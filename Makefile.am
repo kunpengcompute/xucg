@@ -7,10 +7,12 @@ if HAVE_UCG
 
 SUBDIRS = base builtin hicoll
 
+UCG_VERSION=2:0:1
+
 lib_LTLIBRARIES    = libucg.la
 libucg_la_CFLAGS   = $(BASE_CFLAGS)
 libucg_la_CPPFLAGS = $(BASE_CPPFLAGS)
-libucg_la_LDFLAGS  = -ldl -version-info $(SOVERSION)
+libucg_la_LDFLAGS  = -ldl -version-info $(UCG_VERSION)
 libucg_ladir       = $(includedir)/ucg
 libucg_la_SOURCES  =
 libucg_la_LIBADD   = \

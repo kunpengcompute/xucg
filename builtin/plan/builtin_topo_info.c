@@ -1,5 +1,5 @@
 /*
- * Copyright (C) Huawei Technologies Co., Ltd. 2019.  ALL RIGHTS RESERVED.
+ * Copyright (C) Huawei Technologies Co., Ltd. 2019-2021.  ALL RIGHTS RESERVED.
  * See file LICENSE for terms.
  */
 
@@ -16,22 +16,7 @@
 ucs_status_t ucg_builtin_find_myself(const ucg_group_params_t *group_params,
                                      ucg_group_member_index_t *myrank)
 {
-    /* find my own rank */
-    unsigned member_idx;
-    ucg_group_member_index_t init_myrank = (ucg_group_member_index_t) - 1;
-    *myrank = init_myrank;
-    for (member_idx = 0; member_idx < group_params->member_count; member_idx++) {
-        ucs_assert(group_params->distance[member_idx] < UCG_GROUP_MEMBER_DISTANCE_LAST);
-        if (group_params->distance[member_idx] == UCG_GROUP_MEMBER_DISTANCE_SELF) {
-            *myrank = member_idx;
-            break;
-        }
-    }
-
-    if (*myrank == init_myrank) {
-        ucs_error("No member with distance==UCP_GROUP_MEMBER_DISTANCE_SELF found");
-        return UCS_ERR_INVALID_PARAM;
-    }
+    *myrank = group_params->member_index;
     return UCS_OK;
 }
 
@@ -115,7 +100,7 @@ ucs_status_t ucg_builtin_topology_info_create(ucg_builtin_topology_info_params_t
     unsigned node_idx;
     unsigned ppn_idx = 0;
     ucg_group_member_index_t myrank = 0;
-    /* initalization */
+    /* initialization */
     topo_params->node_cnt = 0;
     topo_params->ppn_cnt = 0;
 
@@ -180,7 +165,7 @@ ucs_status_t ucg_builtin_check_ppn(const ucg_group_params_t *group_params,
     }
     node_cnt++;
 
-    /* ppn array: record ppn vaule in every single node */
+    /* ppn array: record ppn value in every single node */
     size_t alloc_size = sizeof(unsigned) * node_cnt;
     unsigned *ppn_array = (unsigned *)UCS_ALLOC_CHECK(alloc_size, "ppn array");
     memset(ppn_array, 0, alloc_size);
@@ -199,5 +184,66 @@ ucs_status_t ucg_builtin_check_ppn(const ucg_group_params_t *group_params,
 
     ucs_free(ppn_array);
     ppn_array = NULL;
+    return UCS_OK;
+}
+
+/* check  nap support or not */
+/* the cases can use nap should be ppn > 1 and power of 2 or power of ppn */
+ucs_status_t ucg_builtin_check_nap(const ucg_group_params_t *group_params)
+{
+    ucg_group_member_index_t member_idx;
+    volatile unsigned node_cnt = 0;
+    unsigned node_idx;
+    unsigned ppn;
+    /* node count */
+    for (member_idx = 0; member_idx < group_params->member_count; member_idx++) {
+        node_idx = group_params->node_index[member_idx];
+        if (node_cnt < node_idx) {
+            node_cnt = node_idx;
+        }
+    }
+    node_cnt++;
+
+    /* ppn array: record ppn value in every single node */
+    size_t alloc_size = sizeof(unsigned) * node_cnt;
+    unsigned *ppn_array = (unsigned *)UCS_ALLOC_CHECK(alloc_size, "ppn array");
+    memset(ppn_array, 0, alloc_size);
+    for (member_idx = 0; member_idx < group_params->member_count; member_idx++) {
+        node_idx = group_params->node_index[member_idx];
+        ppn_array[node_idx]++;
+    }
+
+    /* check balance ppn or not */
+    for (node_idx = 0; node_idx < (node_cnt - 1); node_idx++) {
+        if (ppn_array[node_idx] != ppn_array[node_idx + 1]) {
+            ucs_free(ppn_array);
+            ppn_array = NULL;
+            return UCS_ERR_UNSUPPORTED;
+        }
+    }
+
+    /* check ppn with 1 */
+    ppn = ppn_array[0];
+    ucs_free(ppn_array);
+    ppn_array = NULL;
+    if (ppn <= 1) {
+        return UCS_ERR_UNSUPPORTED;
+    }
+
+    /* check node count is power of 2 */
+    if (!(node_cnt & (node_cnt -1 ))) {
+        return UCS_OK;
+    } else {
+        return UCS_ERR_UNSUPPORTED;
+    }
+}
+
+ucs_status_t ucg_builtin_check_non_aware_Raben(const ucg_group_params_t *group_params)
+{
+    const unsigned even_factor = 2;
+    /* Raben does not support odd number of processes */
+    if (group_params->member_count % even_factor != 0) {
+        return UCS_ERR_UNSUPPORTED;
+    }
     return UCS_OK;
 }

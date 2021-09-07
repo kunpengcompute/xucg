@@ -17,6 +17,19 @@ AS_IF([test "x$enable_fault_tolerance" = xyes],
        AC_DEFINE([ENABLE_FAULT_TOLERANCE], [1], [Enable fault-tolerance])],
       [:])
 
+#
+# Enable ucg-hicoll
+#
+AC_ARG_ENABLE([ucg-hicoll],
+              [AS_HELP_STRING([--enable-ucg-hicoll],
+                              [Enable ucg-hicoll, default: NO])],
+              [],
+              [enable_ucg_hicoll=no])
+
+AS_IF([test "x$enable_ucg_hicoll" = xyes],
+      [AS_MESSAGE([enabling with ucg-hicoll])
+       AC_DEFINE([ENABLE_UCG_HICOLL], [1], [Enable ucg-hicoll])],
+      [:])
 
 # Set special flags for API incompatiblity detection (below)
 SAVE_CPPFLAGS="$CPPFLAGS"
@@ -55,4 +68,3 @@ AC_DEFINE_UNQUOTED([ucg_MODULES], ["${ucg_modules}"], [UCG loadable modules])
 AC_CONFIG_FILES([src/ucg/Makefile
                  src/ucg/api/ucg_version.h
                  src/ucg/base/ucg_version.c])
-

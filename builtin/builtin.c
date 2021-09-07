@@ -1,17 +1,19 @@
 /*
- * Copyright (C) Huawei Technologies Co., Ltd. 2019.  ALL RIGHTS RESERVED.
- * See file LICENSE for terms.
+ * Copyright (C) Huawei Technologies Co., Ltd. 2019-2021.  ALL RIGHTS RESERVED.
+ * Description: Algorithm acceleration component architecture of UCG
+ * Notes: See file LICENSE for terms.
  */
 
 #include <string.h>
 #include <ucs/debug/memtrack.h>
-#include <ucg/api/ucg_plan_component.h>
 #include <ucs/profile/profile.h>
+#include <ucg/api/ucg_mpi.h>
+#include <ucg/base/ucg_group.h>
+#include <ucg/api/ucg_plan_component.h>
 
 #include "ops/builtin_ops.h"
 #include "plan/builtin_plan.h"
-#include <ucg/api/ucg_mpi.h>
-#include <ucg/base/ucg_group.h>
+#include "plan/builtin_plan_cache.h"
 
 #define CACHE_SIZE 1000
 #define RECURSIVE_FACTOR 2
@@ -26,7 +28,16 @@ static ucs_config_field_t ucg_builtin_config_table[] = {
 
     {"BMTREE_", "", NULL, ucs_offsetof(ucg_builtin_config_t, bmtree),
      UCS_CONFIG_TYPE_TABLE(ucg_builtin_binomial_tree_config_table)},
+#if ENABLE_UCG_HICOLL
+    {"INC_", "", NULL, ucs_offsetof(ucg_builtin_config_t, inc),
+    UCS_CONFIG_TYPE_TABLE(ucg_inc_config_table)},
 
+    {"NAP_", "", NULL, ucs_offsetof(ucg_builtin_config_t, NAP),
+    UCS_CONFIG_TYPE_TABLE(ucg_builtin_NAP_config_table)},
+
+    {"LADD_THEROTTLED_FACTOR", "0", "throttle factor",
+    ucs_offsetof(ucg_builtin_config_t, throttle_factor), UCS_CONFIG_TYPE_UINT},
+#endif
     {"BCAST_ALGORITHM", "0", "Bcast algorithm",
      ucs_offsetof(ucg_builtin_config_t, bcast_algorithm), UCS_CONFIG_TYPE_DOUBLE},
 
@@ -35,6 +46,12 @@ static ucs_config_field_t ucg_builtin_config_table[] = {
 
     {"BARRIER_ALGORITHM", "0", "Barrier algorithm",
      ucs_offsetof(ucg_builtin_config_t, barrier_algorithm), UCS_CONFIG_TYPE_DOUBLE},
+
+    {"ALLTOALLV_ALGORITHM", "0", "Alltoallv algorithm",
+    ucs_offsetof(ucg_builtin_config_t, alltoallv_algorithm), UCS_CONFIG_TYPE_DOUBLE},
+
+    {"TREES_", "", NULL, ucs_offsetof(ucg_builtin_config_t, trees),
+    UCS_CONFIG_TYPE_TABLE(ucg_builtin_trees_config_table)},
 
     {"MAX_MSG_LIST_SIZE", "40", "Largest loop count of msg process function",
      ucs_offsetof(ucg_builtin_config_t, max_msg_list_size), UCS_CONFIG_TYPE_UINT},
@@ -58,6 +75,11 @@ static ucs_config_field_t ucg_builtin_config_table[] = {
     {"LARGE_DATATYPE_THRESHOLD", "32", "Large datatype threshold",
      ucs_offsetof(ucg_builtin_config_t, large_datatype_threshold), UCS_CONFIG_TYPE_UINT},
 
+    /* To ensure consistency of allreduce calculation results,you need to enable this flag.
+    By default, this function is disabled. If this flag is enabled, the performance of the
+    allreduce tree algorithm interface decreases by 5%. */
+    {"REDUCE_CONSISTENCY", "n", "reduce consistency flag",
+    ucs_offsetof(ucg_builtin_config_t, reduce_consistency), UCS_CONFIG_TYPE_BOOL},
     {NULL}
 };
 
@@ -70,8 +92,12 @@ struct ucg_builtin_algorithm ucg_algo = {
     .topo         = 0,
     .topo_level   = UCG_GROUP_HIERARCHY_LEVEL_NODE,
     .ring         = 0,
+    .NAP          = 0,
     .pipeline     = 0,
     .feature_flag = UCG_ALGORITHM_SUPPORT_COMMON_FEATURE,
+    .binary_block = 0,
+    .ladd         = 0,
+    .plummer      = 0,
 };
 
 struct ucg_builtin_group_ctx {
@@ -84,26 +110,127 @@ struct ucg_builtin_group_ctx {
     ucs_list_link_t           plan_head;    /* for resource release */
     ucg_builtin_config_t     *config;
 
-    ucg_builtin_comp_slot_t   slots[UCG_BUILTIN_MAX_CONCURRENT_OPS];
+    ucg_builtin_comp_slot_t   *slots;
 };
-
-typedef struct ucg_builtin_am_buffer {
-    int group_id;
-    char used;
-    void *data;
-    size_t length;
-    unsigned am_flags;
-} ucg_builtin_am_buffer_t;
 
 typedef struct ucg_builtin_ctx {
     unsigned slots_total;
-    unsigned slots_used;
-    ucg_builtin_am_buffer_t buffer;
-    ucg_builtin_comp_slot_t *slots[];
+    ucg_builtin_comp_slot_t **slots;
 } ucg_builtin_ctx_t;
 
+static ucg_builtin_comp_slot_t *ucg_builtin_alloc_slot()
+{
+    ucg_builtin_comp_slot_t *slot =
+        ucs_malloc(sizeof(ucg_builtin_comp_slot_t) * UCG_BUILTIN_MAX_CONCURRENT_OPS, "ucg_msg_slot");
+    if (slot == NULL) {
+        return NULL;
+    }
+
+    unsigned i;
+    for (i = 0; i < UCG_BUILTIN_MAX_CONCURRENT_OPS; i++) {
+        ucs_list_head_init(&slot[i].msg_head);
+        slot[i].mp = NULL;
+        slot[i].cb = NULL;
+        slot[i].coll_id = 0;
+        slot[i].step_idx = 0;
+    }
+    return slot;
+}
+
+static void ucg_builtin_free_slot(ucg_builtin_comp_slot_t *slot)
+{
+    if (!ucs_list_is_empty(&slot->msg_head)) {
+        ucs_warn("massage head is not empty!");
+    }
+    ucs_free(slot);
+}
+
+static ucs_status_t ucg_builtin_init_ctx(ucg_builtin_ctx_t **ctx)
+{
+    /* The applied memory is reclaimed by the operating system. */
+    (*ctx) = UCS_ALLOC_CHECK(sizeof(ucg_builtin_ctx_t), "alloc ucg_builtin_ctx_t");
+
+    (*ctx)->slots_total = 0;
+    (*ctx)->slots       = NULL;
+    return UCS_OK;
+}
+
+static ucs_status_t ucg_builtin_extend_slots(ucg_builtin_ctx_t *ctx, unsigned max_size)
+{
+    if (ctx->slots_total >= max_size) {
+        return UCS_OK;
+    }
+    size_t slots_size = max_size * sizeof(ucg_builtin_comp_slot_t *);
+    ucg_builtin_comp_slot_t **new_slots = ucs_realloc(ctx->slots, slots_size, "ucg_msg_slots");
+    if (new_slots == NULL) {
+        return UCS_ERR_NO_MEMORY;
+    }
+    ctx->slots = new_slots;
+    unsigned i;
+    for (i = ctx->slots_total; i < max_size; i++) {
+        ctx->slots[i] = ucg_builtin_alloc_slot();
+        if (ctx->slots[i] == NULL) {
+            goto cleanup;
+        }
+    }
+    ctx->slots_total = max_size;
+    return UCS_OK;
+
+cleanup:
+    while((i--) > ctx->slots_total) {
+        ucg_builtin_free_slot(ctx->slots[i]);
+        ctx->slots[i] = NULL;
+    }
+    return UCS_ERR_NO_MEMORY;
+}
+
+static ucg_builtin_ctx_t *ucg_builtin_get_ctx(ucg_worker_h worker)
+{
+    ucg_builtin_ctx_t **ctx = UCG_WORKER_TO_COMPONENT_CTX(ucg_builtin_component, worker);
+    if (*ctx == NULL) {
+        ucs_status_t status = ucg_builtin_init_ctx(ctx);
+        if (status != UCS_OK) {
+            return NULL;
+        }
+    }
+    return (*ctx);
+}
+
+static ucg_builtin_comp_slot_t *ucg_builtin_get_slot(ucg_worker_h worker, unsigned group_id)
+{
+    ucg_builtin_ctx_t *ctx = ucg_builtin_get_ctx(worker);
+    if (ctx == NULL) {
+        return NULL;
+    }
+    if (ctx->slots_total <= group_id) {
+        return NULL;
+    }
+    return ctx->slots[group_id];
+}
+
+static ucg_builtin_comp_slot_t *ucg_builtin_set_slot(ucg_worker_h worker, unsigned group_id, ucs_mpool_t *group_am_mp)
+{
+    ucg_builtin_ctx_t *ctx = ucg_builtin_get_ctx(worker);
+    if (ctx == NULL) {
+        return NULL;
+    }
+    if (ctx->slots_total <= group_id) {
+        ucs_status_t status = ucg_builtin_extend_slots(ctx, group_id + 1);
+        if (status != UCS_OK) {
+            return NULL;
+        }
+    }
+
+    unsigned i;
+    for (i = 0; i < UCG_BUILTIN_MAX_CONCURRENT_OPS; i++) {
+        ucg_builtin_comp_slot_t *slot = &ctx->slots[group_id][i];
+        slot->mp = group_am_mp;
+
+    }
+    return ctx->slots[group_id];
+}
 /*
- *
+ * fix white-box review
  */
 void ucg_builtin_free(void **p)
 {
@@ -140,6 +267,10 @@ enum ucg_builtin_plan_topology_type ucg_builtin_choose_type(enum ucg_collective_
             return UCG_PLAN_RECURSIVE;
         } else if (ucg_algo.ring) {
             return UCG_PLAN_RING;
+        } else if (ucg_algo.NAP) {
+            return UCG_PLAN_NAP;
+        } else if (ucg_algo.binary_block) {
+            return UCG_PLAN_BINARY_BLOCK;
         } else {
             return UCG_PLAN_TREE_FANIN_FANOUT;
         }
@@ -149,15 +280,20 @@ enum ucg_builtin_plan_topology_type ucg_builtin_choose_type(enum ucg_collective_
         return UCG_PLAN_BRUCK;
     }
 
+    if (flags & ucg_predefined_modifiers[UCG_PRIMITIVE_ALLTOALLV]) {
+        return ucg_algo.plummer ? UCG_PLAN_ALLTOALLV_PLUMMER : UCG_PLAN_ALLTOALLV_LADD;
+    }
+
     if (flags & UCG_GROUP_COLLECTIVE_MODIFIER_ALLGATHER) {
-        if (ucg_algo.bruck) {
-            return UCG_PLAN_BRUCK;
-        } else {
-            return UCG_PLAN_RECURSIVE;
-        }
+        return ucg_algo.bruck ? UCG_PLAN_BRUCK : UCG_PLAN_RECURSIVE;
     }
 
     return UCG_PLAN_TREE_FANIN_FANOUT;
+}
+
+static inline void ucg_builtin_release_desc_self(void *desc)
+{
+    ucs_free(desc);
 }
 
 static ucs_status_t ucg_builtin_am_process(ucg_builtin_comp_slot_t *slot, void *data, size_t length,
@@ -173,9 +309,11 @@ static ucs_status_t ucg_builtin_am_process(ucg_builtin_comp_slot_t *slot, void *
 
         if ((slot->req.step->flags & UCG_BUILTIN_OP_STEP_FLAG_SEND_AM_ZCOPY) &&
             (slot->req.step->flags & UCG_BUILTIN_OP_STEP_FLAG_RECV_AFTER_SEND)) {
+             /* receive from "multiple" EPs with "multiple" fragments */
+            unsigned recv_zcopy_cnt = slot->req.step->fragments_recv * slot->req.step->phase->ep_cnt;
             /* Zcopy recv before sending finished, store msg */
-            if (slot->req.pending > slot->req.step->fragments_recv) {
-                if (++slot->req.step->zcopy.num_store > slot->req.step->fragments_recv) {
+            if (slot->req.pending > recv_zcopy_cnt) {
+                if (++slot->req.step->zcopy.num_store > recv_zcopy_cnt) {
                     /* recv msg from step - step index = step now index + 256, store msg without count */
                     slot->req.step->zcopy.num_store--;
                 }
@@ -214,12 +352,29 @@ am_handler_store:
     if (am_flags & UCT_CB_PARAM_FLAG_DESC) {
         desc = (ucg_builtin_comp_desc_t*)((char*)data -
                 offsetof(ucg_builtin_comp_desc_t, header));
+        desc->release = uct_iface_release_desc;
         ret = UCS_INPROGRESS;
     } else {
-        /* Cannot use existing descriptor - must allocate my own... */
-        desc = (ucg_builtin_comp_desc_t*)ucs_mpool_get_inline(slot->mp);
-        if (desc == NULL) {
-            return UCS_ERR_NO_MEMORY;
+        if (slot->mp == NULL) {
+            desc = ucs_malloc(sizeof(ucg_builtin_comp_desc_t) + (length - sizeof(ucg_builtin_header_t)),
+                "alloc builtin comp desc");
+            if (desc == NULL) {
+                /* The UCT layer does not detect other error status codes and only identifies
+                   whether the status is UCS_INPROGRESS and then process. We do not need UCT
+                   desc, just return UCS_OK. */
+                return UCS_OK;
+            }
+            desc->release = ucg_builtin_release_desc_self;
+        } else {
+            /* Cannot use existing descriptor - must allocate my own... */
+            desc = (ucg_builtin_comp_desc_t*)ucs_mpool_get_inline(slot->mp);
+            if (desc == NULL) {
+               /* The UCT layer does not detect other error status codes and only identifies
+                   whether the status is UCS_INPROGRESS and then process. We do not need UCT
+                   desc, just return UCS_OK. */
+                return UCS_OK;
+            }
+            desc->release = ucs_mpool_put_inline;
         }
         memcpy(&desc->header, data, length);
         ret = UCS_OK;
@@ -238,28 +393,20 @@ UCS_PROFILE_FUNC(ucs_status_t, ucg_builtin_am_handler,
                  (arg, data, length, am_flags),
                  void *arg, void *data, size_t length, unsigned am_flags)
 {
+    ucg_worker_h worker           = (ucg_worker_h)arg;
     ucg_builtin_header_t *header  = data;
-    ucg_builtin_ctx_t **ctx       = UCG_WORKER_TO_COMPONENT_CTX(ucg_builtin_component, arg);
     ucg_builtin_comp_slot_t *slot = NULL;
     ucg_group_id_t group_id       = header->group_id;
     ucs_assert(length >= sizeof(header));
-    if ((*ctx)->slots_total > group_id) {
-        slot = &(*ctx)->slots[group_id][header->coll_id % UCG_BUILTIN_MAX_CONCURRENT_OPS];
-        if (slot != NULL) {
-            return ucg_builtin_am_process(slot, data, length, am_flags);
+
+    slot = ucg_builtin_get_slot(worker, group_id);
+    if (slot == NULL) {
+        slot = ucg_builtin_set_slot(worker, group_id, NULL);
+        if (slot == NULL) {
+            ucs_fatal("Message abandoned, collection operation cannot be performed.");
         }
     }
-    /* rank A and rank B both creating a new group, This is creates a "race condition",
-    where A maybe sends a message to B before B finished creating the group.
-    At this point, we will encounter the situation that slots_total and group_id are equal.
-    Therefore, we need to store the message and process it when B creates the group. */
-    ucg_builtin_am_buffer_t *buffer = &(*ctx)->buffer;
-    buffer->data                    = data;
-    buffer->group_id                = group_id;
-    buffer->length                  = length;
-    buffer->am_flags                = am_flags;
-    buffer->used                    = 1;
-    return (am_flags & UCT_CB_PARAM_FLAG_DESC) ? UCS_INPROGRESS : UCS_OK;
+    return ucg_builtin_am_process(&slot[header->coll_id % UCG_BUILTIN_MAX_CONCURRENT_OPS], data, length, am_flags);
 }
 
 void ucg_builtin_msg_dump(ucp_worker_h worker, uct_am_trace_type_t type,
@@ -272,7 +419,6 @@ void ucg_builtin_msg_dump(ucp_worker_h worker, uct_am_trace_type_t type,
              (uint64_t)header->remote_offset, length - sizeof(*header));
 }
 
-
 static ucs_status_t ucg_builtin_init_plan_config(ucg_plan_component_t *plan_component)
 {
     ucg_builtin_config_t *config = (ucg_builtin_config_t*)plan_component->plan_config;
@@ -280,21 +426,21 @@ static ucs_status_t ucg_builtin_init_plan_config(ucg_plan_component_t *plan_comp
     config->pipelining = 0;
     config->recursive.factor = RECURSIVE_FACTOR;
 
-    /* K-nomial tree algorithm require all K vaule is bigger than 1 */
+    /* K-nomial tree algorithm require all K value is bigger than 1 */
     if (config->bmtree.degree_inter_fanout <= 1 || config->bmtree.degree_inter_fanin <= 1 ||
         config->bmtree.degree_intra_fanout <= 1 || config->bmtree.degree_intra_fanin <= 1) {
-        ucs_info("K-nomial tree algorithm require all K vaule is bigger than one, switch to default parameter sets");
+        ucs_info("K-nomial tree algorithm require all K value is bigger than one, switch to default parameter sets");
         config->bmtree.degree_inter_fanout = DEFAULT_INTER_KVALUE;
         config->bmtree.degree_inter_fanin  = DEFAULT_INTER_KVALUE;
         config->bmtree.degree_intra_fanout = DEFAULT_INTRA_KVALUE;
         config->bmtree.degree_intra_fanin  = DEFAULT_INTRA_KVALUE;
     }
 
-    ucs_info("plan %s bcast %u allreduce %u barrier %u "
-             "inter_fanout %u inter_fanin %u intra_fanout %u intra_fanin %u",
+    ucs_info("plan %s bcast %u allreduce %u barrier %u alltoallv %u"
+             " inter_fanout %u inter_fanin %u intra_fanout %u intra_fanin %u",
              plan_component->name, (unsigned)config->bcast_algorithm, (unsigned)config->allreduce_algorithm,
-             (unsigned)config->barrier_algorithm, config->bmtree.degree_inter_fanout, config->bmtree.degree_inter_fanin,
-             config->bmtree.degree_intra_fanout, config->bmtree.degree_intra_fanin);
+             (unsigned)config->barrier_algorithm, (unsigned)config->alltoallv_algorithm, config->bmtree.degree_inter_fanout,
+             config->bmtree.degree_inter_fanin, config->bmtree.degree_intra_fanout, config->bmtree.degree_intra_fanin);
 
     return UCS_OK;
 }
@@ -307,23 +453,6 @@ static ucs_status_t ucg_builtin_create(ucg_plan_component_t *plan_component,
                                        ucs_mpool_t *group_am_mp,
                                        const ucg_group_params_t *group_params)
 {
-    /* Create or expand the per-worker context - for the AM-handler's sake */
-    ucg_builtin_ctx_t **bctx =
-            UCG_WORKER_TO_COMPONENT_CTX(ucg_builtin_component, worker);
-    if ((ucs_unlikely(*bctx == NULL)) ||
-        (ucs_likely((*bctx)->slots_total <= group_id))) {
-        void *temp = *bctx;
-        size_t bctx_size = sizeof(**bctx) + ((group_id + 1) * sizeof(void*));
-        *bctx = ucs_realloc(temp, bctx_size, "builtin_context");
-        if (ucs_unlikely(*bctx == NULL)) {
-            *bctx = temp;
-            return UCS_ERR_NO_MEMORY;
-        }
-        (*bctx)->slots_total = group_id + 1;
-        (*bctx)->slots_used  = (temp == NULL) ? 0 : (*bctx)->slots_used;
-    } else {
-        (*bctx)->slots_used++;
-    }
     /* Fill in the information in the per-group context */
     ucg_builtin_group_ctx_t *gctx =
             UCG_GROUP_TO_COMPONENT_CTX(ucg_builtin_component, group);
@@ -336,24 +465,14 @@ static ucs_status_t ucg_builtin_create(ucg_plan_component_t *plan_component,
     ucs_list_head_init(&gctx->send_head);
     ucs_list_head_init(&gctx->plan_head);
 
-    int i;
-    for (i = 0; i < UCG_BUILTIN_MAX_CONCURRENT_OPS; i++) {
-        ucs_list_head_init(&gctx->slots[i].msg_head);
-        gctx->slots[i].mp       = group_am_mp;
-        gctx->slots[i].cb       = NULL;
-        gctx->slots[i].coll_id  = i;
-        gctx->slots[i].step_idx = 0;
+    gctx->slots = ucg_builtin_set_slot(worker, group_id, group_am_mp);
+    if (gctx->slots == NULL) {
+        return UCS_ERR_NO_RESOURCE;
     }
 
-    /* Link the two contexts */
-    (*bctx)->slots[group_id] = gctx->slots;
-
-    if ((*bctx)->buffer.used == 1 && (*bctx)->buffer.group_id == group_id) {
-        ucg_builtin_am_buffer_t *buffer = &(*bctx)->buffer;
-        ucg_builtin_header_t *header    = buffer->data;
-        (void)ucg_builtin_am_process(&gctx->slots[header->coll_id], buffer->data,
-                                     buffer->length, buffer->am_flags);
-        buffer->used = 0;
+    if (ucg_builtin_pcache_init(group)) {
+        ucs_error("plan cache init fail");
+        return UCS_ERR_NO_MEMORY;
     }
 
     return ucg_builtin_init_plan_config(plan_component);
@@ -365,6 +484,7 @@ static void ucg_builtin_clean_phases(ucg_builtin_plan_t *plan)
     for (i = 0; i < plan->phs_cnt; i++) {
         ucg_builtin_free((void **)&plan->phss[i].recv_cache_buffer);
         ucg_builtin_free((void **)&plan->phss[i].ucp_eps);
+        ucg_builtin_free((void **)&plan->phss[i].ep_thresh);
     }
 
 #if ENABLE_DEBUG_DATA
@@ -410,21 +530,11 @@ ucs_status_t ucg_builtin_destroy_plan(ucg_builtin_plan_t *plan, ucg_group_h grou
     return UCS_OK;
 }
 
-void ucg_builtin_release_comp_desc(ucg_builtin_comp_desc_t *desc)
-{
-    if (desc->super.flags == UCT_CB_PARAM_FLAG_DESC) {
-        uct_iface_release_desc(desc);
-    } else {
-        ucs_mpool_put_inline(desc);
-    }
-}
-
 static void ucg_builtin_destroy(ucg_group_h group)
 {
     ucg_builtin_group_ctx_t *gctx = UCG_GROUP_TO_COMPONENT_CTX(ucg_builtin_component, group);
-    ucg_builtin_ctx_t **bctx = UCG_WORKER_TO_COMPONENT_CTX(ucg_builtin_component, group->worker);
-    (*bctx)->slots[group->group_id] = NULL;
     unsigned i;
+    ucg_builtin_pcache_destroy(group);
     for (i = 0; i < UCG_BUILTIN_MAX_CONCURRENT_OPS; i++) {
         if (gctx->slots[i].cb != NULL) {
             ucs_debug("Collective operation #%u has been left incomplete (Group #%u)",
@@ -437,15 +547,9 @@ static void ucg_builtin_destroy(ucg_group_h group)
                                           ucg_builtin_comp_desc_t, super.tag_list[0]);
             ucs_debug("Collective operation #%u has %u bytes left pending for step #%u (Group #%u)",
                       desc->header.coll_id, desc->super.length, desc->header.step_idx, desc->header.group_id);
-            ucg_builtin_release_comp_desc(desc);
+            desc->release(desc);
+            desc = NULL;
         }
-    }
-
-    if (group->params.topo_map) {
-        for (i = 0; i < group->params.member_count; i++) {
-            ucg_builtin_free((void **)&group->params.topo_map[i]);
-        }
-        ucg_builtin_free((void **)&group->params.topo_map);
     }
 
     while (!ucs_list_is_empty(&gctx->plan_head)) {
@@ -493,173 +597,15 @@ ucs_mpool_ops_t ucg_builtin_plan_mpool_ops = {
     .obj_cleanup   = ucs_empty_function
 };
 
-void ucg_builtin_plan_decision_in_unsupport_allreduce_case_check_msg_size(const size_t msg_size)
-{
-    if (msg_size < UCG_GROUP_MED_MSG_SIZE) {
-        /* Node-aware Recursive */
-        ucg_builtin_allreduce_algo_switch(UCG_ALGORITHM_ALLREDUCE_NODE_AWARE_RECURSIVE_AND_BMTREE, &ucg_algo);
-    } else {
-        /* Ring */
-        ucg_builtin_allreduce_algo_switch(UCG_ALGORITHM_ALLREDUCE_RING, &ucg_algo);
-    }
-}
-
-void ucg_builtin_plan_decision_in_unsupport_allreduce_case(const size_t msg_size,
-                                                           const ucg_group_params_t *group_params,
-                                                           const enum ucg_collective_modifiers modifiers,
-                                                           const ucg_collective_params_t *coll_params)
-{
-    if (modifiers == ucg_predefined_modifiers[UCG_PRIMITIVE_ALLREDUCE]) {
-        if (coll_params->send.op_ext && !group_params->op_is_commute_f(coll_params->send.op_ext)) {
-            /* Ring */
-            ucg_builtin_allreduce_algo_switch(UCG_ALGORITHM_ALLREDUCE_RING, &ucg_algo);
-            ucs_debug("non-commutative operation, select Ring.");
-        } else {
-            ucg_builtin_plan_decision_in_unsupport_allreduce_case_check_msg_size(msg_size);
-        }
-    }
-}
-
-void ucg_builtin_plan_decision_in_unsupport_bcast_case(const size_t msg_size,
-                                                       const ucg_group_params_t *group_params,
-                                                       const enum ucg_collective_modifiers modifiers,
-                                                       const ucg_collective_params_t *coll_params)
-{
-    if (modifiers == ucg_predefined_modifiers[UCG_PRIMITIVE_BCAST]) {
-        /* Node-aware Binomial tree (DEFAULT) */
-        ucg_builtin_bcast_algo_switch(UCG_ALGORITHM_BCAST_NODE_AWARE_BMTREE, &ucg_algo);
-    }
-}
-
-void ucg_builtin_plan_decision_in_unsupport_barrier_case(const size_t msg_size,
-                                                         const ucg_group_params_t *group_params,
-                                                         const enum ucg_collective_modifiers modifiers,
-                                                         const ucg_collective_params_t *coll_params)
-{
-    if (modifiers == ucg_predefined_modifiers[UCG_PRIMITIVE_BARRIER]) {
-        /* Node-aware Recursive (DEFAULT) */
-        ucg_builtin_barrier_algo_switch(UCG_ALGORITHM_BARRIER_NODE_AWARE_RECURSIVE_AND_BMTREE, &ucg_algo);
-    }
-}
-
-/* change algorithm in unsupport case */
-void ucg_builtin_plan_decision_in_unsupport_case(const size_t msg_size,
-                                                 const ucg_group_params_t *group_params,
-                                                 const enum ucg_collective_modifiers modifiers,
-                                                 const ucg_collective_params_t *coll_params)
-{
-    /* choose algorithm due to message size */
-    ucg_builtin_plan_decision_in_unsupport_allreduce_case(msg_size, group_params, modifiers, coll_params);
-    ucg_builtin_plan_decision_in_unsupport_bcast_case(msg_size, group_params, modifiers, coll_params);
-    ucg_builtin_plan_decision_in_unsupport_barrier_case(msg_size, group_params, modifiers, coll_params);
-}
-
-void ucg_builtin_plan_decision_in_noncommutative_largedata_case_recusive(const size_t msg_size, enum ucg_builtin_allreduce_algorithm *allreduce_algo_decision)
-{
-    /* Recusive */
-    if (allreduce_algo_decision != NULL) {
-        *allreduce_algo_decision = UCG_ALGORITHM_ALLREDUCE_RECURSIVE;
-    }
-    ucg_builtin_allreduce_algo_switch(UCG_ALGORITHM_ALLREDUCE_RECURSIVE, &ucg_algo);
-    ucs_debug("non-commutative operation, select recurisive");
-}
-
-void ucg_builtin_plan_decision_in_noncommutative_largedata_case_ring(const size_t msg_size, enum ucg_builtin_allreduce_algorithm *allreduce_algo_decision)
-{
-    /* Ring */
-    if (allreduce_algo_decision != NULL) {
-        *allreduce_algo_decision = UCG_ALGORITHM_ALLREDUCE_RING;
-    }
-    ucg_builtin_allreduce_algo_switch(UCG_ALGORITHM_ALLREDUCE_RING, &ucg_algo);
-    ucs_debug("non-commutative operation, select Ring.");
-}
-
-void ucg_builtin_plan_decision_in_noncommutative_largedata_case(const size_t msg_size, enum ucg_builtin_allreduce_algorithm *allreduce_algo_decision)
-{
-    if (msg_size < UCG_GROUP_MED_MSG_SIZE) {
-        ucg_builtin_plan_decision_in_noncommutative_largedata_case_recusive(msg_size, allreduce_algo_decision);
-    } else {
-        ucg_builtin_plan_decision_in_noncommutative_largedata_case_ring(msg_size, allreduce_algo_decision);
-    }
-}
-
-void ucg_builtin_plan_decision_in_noncommutative_many_counts_case()
-{
-    ucg_builtin_allreduce_algo_switch(UCG_ALGORITHM_ALLREDUCE_RECURSIVE, &ucg_algo);
-    ucs_debug("non-commutative operation with more than one send count, select recurisive");
-}
-
-void ucg_builtin_allreduce_decision_fixed(const size_t msg_size,
-                                          const ucg_group_params_t *group_params,
-                                          const ucg_collective_params_t *coll_params,
-                                          const unsigned large_datatype_threshold,
-                                          const int is_unbalanced_ppn,
-                                          enum ucg_builtin_allreduce_algorithm *allreduce_algo_decision)
-{
-    unsigned is_large_datatype = (coll_params->send.dt_len > large_datatype_threshold);
-    unsigned is_non_commutative = coll_params->send.op_ext
-        && !group_params->op_is_commute_f(coll_params->send.op_ext);
-    if (is_large_datatype || is_non_commutative) {
-        ucg_builtin_plan_decision_in_noncommutative_largedata_case(msg_size, allreduce_algo_decision);
-    } else if (msg_size >= UCG_GROUP_MED_MSG_SIZE) {
-        /* Ring */
-        *allreduce_algo_decision = UCG_ALGORITHM_ALLREDUCE_RING;
-        ucg_builtin_allreduce_algo_switch(*allreduce_algo_decision, &ucg_algo);
-    } else if (is_unbalanced_ppn) {
-        /* Node-aware Recursive */
-        *allreduce_algo_decision = UCG_ALGORITHM_ALLREDUCE_NODE_AWARE_RECURSIVE_AND_BMTREE;
-        ucg_builtin_allreduce_algo_switch(*allreduce_algo_decision, &ucg_algo);
-    } else {
-        /* Node-aware Kinomial tree (DEFAULT) */
-        *allreduce_algo_decision = UCG_ALGORITHM_ALLREDUCE_NODE_AWARE_KMTREE;
-        ucg_builtin_allreduce_algo_switch(*allreduce_algo_decision, &ucg_algo);
-    }
-}
-
-void plan_decision_fixed(const size_t msg_size,
-                         const ucg_group_params_t *group_params,
-                         const enum ucg_collective_modifiers modifiers,
-                         const ucg_collective_params_t *coll_params,
-                         const unsigned large_datatype_threshold,
-                         const int is_unbalanced_ppn,
-                         enum ucg_builtin_bcast_algorithm *bcast_algo_decision,
-                         enum ucg_builtin_allreduce_algorithm *allreduce_algo_decision,
-                         enum ucg_builtin_barrier_algorithm *barrier_algo_decision)
-{
-    *bcast_algo_decision = UCG_ALGORITHM_BCAST_AUTO_DECISION;
-    *allreduce_algo_decision = UCG_ALGORITHM_ALLREDUCE_AUTO_DECISION;
-    *barrier_algo_decision = UCG_ALGORITHM_BARRIER_AUTO_DECISION;
-    /* choose algorithm due to message size */
-    if (modifiers == ucg_predefined_modifiers[UCG_PRIMITIVE_ALLREDUCE]) {
-        ucg_builtin_allreduce_decision_fixed(msg_size, group_params, coll_params, large_datatype_threshold,
-                                             is_unbalanced_ppn, allreduce_algo_decision);
-    }
-    if (modifiers == ucg_predefined_modifiers[UCG_PRIMITIVE_BCAST]) {
-        /* Node-aware Binomial tree (DEFAULT) */
-        *bcast_algo_decision = UCG_ALGORITHM_BCAST_NODE_AWARE_KMTREE;
-        ucg_builtin_bcast_algo_switch(*bcast_algo_decision, &ucg_algo);
-    }
-    if (modifiers == ucg_predefined_modifiers[UCG_PRIMITIVE_BARRIER]) {
-        /* Node-aware Recursive (DEFAULT) */
-        if (is_unbalanced_ppn) {
-            /* Node-aware Recursive */
-            *barrier_algo_decision = UCG_ALGORITHM_BARRIER_NODE_AWARE_RECURSIVE_AND_BMTREE;
-            ucg_builtin_barrier_algo_switch(*barrier_algo_decision, &ucg_algo);
-        } else {
-            /* Node-aware Kinomial tree (DEFAULT) */
-            *barrier_algo_decision = UCG_ALGORITHM_BARRIER_NODE_AWARE_KMTREE;
-            ucg_builtin_barrier_algo_switch(*barrier_algo_decision, &ucg_algo);
-        }
-    }
-}
-
 void ucg_builtin_fillin_algo(struct ucg_builtin_algorithm *algo,
                              unsigned bmtree,
                              unsigned kmtree,
                              unsigned kmtree_intra,
                              unsigned recursive,
                              unsigned topo,
-                             unsigned ring)
+                             unsigned ring,
+                             unsigned NAP,
+                             unsigned binary_block)
 {
     algo->bmtree = bmtree;
     algo->kmtree = kmtree;
@@ -667,18 +613,23 @@ void ucg_builtin_fillin_algo(struct ucg_builtin_algorithm *algo,
     algo->recursive = recursive;
     algo->topo = topo;
     algo->ring = ring;
+    algo->NAP  = NAP;
+    algo->binary_block = binary_block;
 }
 
 static void ucg_builtin_init_algo(struct ucg_builtin_algorithm *algo)
 {
-    ucg_builtin_fillin_algo(algo, 1, 0, 0, 1, 0, 0);
+    ucg_builtin_fillin_algo(algo, 1, 0, 0, 1, 0, 0, 0, 0);
     algo->bruck        = 1,
     algo->topo_level   = UCG_GROUP_HIERARCHY_LEVEL_NODE,
     algo->pipeline     = 0;
     algo->feature_flag = UCG_ALGORITHM_SUPPORT_COMMON_FEATURE;
+    algo->inc          = 0;
+    algo->ladd         = 0;
+    algo->plummer      = 0;
 }
 
-ucs_status_t ucg_builtin_bcast_algo_switch(const enum ucg_builtin_bcast_algorithm bcast_algo_decision,
+void ucg_builtin_bcast_algo_switch(const enum ucg_builtin_bcast_algorithm bcast_algo_decision,
                                            struct ucg_builtin_algorithm *algo)
 {
     algo->topo_level = UCG_GROUP_HIERARCHY_LEVEL_NODE;
@@ -686,277 +637,206 @@ ucs_status_t ucg_builtin_bcast_algo_switch(const enum ucg_builtin_bcast_algorith
     algo->bruck = 1;
     switch (bcast_algo_decision) {
         case UCG_ALGORITHM_BCAST_BMTREE:
-            ucg_builtin_fillin_algo(algo, 1, 0, 0, 0, 0, 0);
+            ucg_builtin_fillin_algo(algo, 1, 0, 0, 0, 0, 0, 0, 0);
             algo->feature_flag |= UCG_ALGORITHM_SUPPORT_RANK_FEATURE;
             break;
         case UCG_ALGORITHM_BCAST_NODE_AWARE_BMTREE:
-            ucg_builtin_fillin_algo(algo, 1, 0, 0, 0, 1, 0);
+            ucg_builtin_fillin_algo(algo, 1, 0, 0, 0, 1, 0, 0, 0);
             algo->feature_flag |= UCG_ALGORITHM_SUPPORT_RANK_FEATURE;
             break;
         case UCG_ALGORITHM_BCAST_NODE_AWARE_KMTREE_AND_BMTREE:
-            ucg_builtin_fillin_algo(algo, 1, 1, 0, 0, 1, 0);
+            ucg_builtin_fillin_algo(algo, 1, 1, 0, 0, 1, 0, 0, 0);
             break;
         case UCG_ALGORITHM_BCAST_NODE_AWARE_KMTREE:
-            ucg_builtin_fillin_algo(algo, 1, 1, 1, 0, 1, 0);
+            ucg_builtin_fillin_algo(algo, 1, 1, 1, 0, 1, 0, 0, 0);
+            break;
+        case UCG_ALGORITHM_BCAST_NODE_AWARE_INC:
+            ucg_builtin_fillin_algo(algo, 1, 0, 0, 0, 1, 0, 0, 0);
+            algo->inc = 1;
             break;
         default:
-            ucg_builtin_bcast_algo_switch(UCG_ALGORITHM_BCAST_NODE_AWARE_KMTREE, algo);
+            ucg_builtin_bcast_algo_switch(UCG_ALGORITHM_BCAST_NODE_AWARE_KMTREE_AND_BMTREE, algo);
             break;
     }
-    return UCS_OK;
 }
 
-ucs_status_t ucg_builtin_barrier_algo_switch(const enum ucg_builtin_barrier_algorithm barrier_algo_decision,
+void ucg_builtin_barrier_algo_switch(const enum ucg_builtin_barrier_algorithm barrier_algo_decision,
                                              struct ucg_builtin_algorithm *algo)
 {
     algo->topo_level = UCG_GROUP_HIERARCHY_LEVEL_NODE;
     algo->bruck = 1;
     switch (barrier_algo_decision) {
         case UCG_ALGORITHM_BARRIER_RECURSIVE:
-            ucg_builtin_fillin_algo(algo, 0, 0, 0, 1, 0, 0);
+            ucg_builtin_fillin_algo(algo, 0, 0, 0, 1, 0, 0, 0, 0);
             algo->feature_flag |= UCG_ALGORITHM_SUPPORT_RANK_FEATURE;
             algo->feature_flag |= UCG_ALGORITHM_SUPPORT_BIND_TO_NONE;
             break;
         case UCG_ALGORITHM_BARRIER_NODE_AWARE_RECURSIVE_AND_BMTREE:
-            ucg_builtin_fillin_algo(algo, 1, 0, 0, 0, 1, 0);
+            ucg_builtin_fillin_algo(algo, 1, 0, 0, 0, 1, 0, 0, 0);
             algo->feature_flag |= UCG_ALGORITHM_SUPPORT_RANK_FEATURE;
             algo->feature_flag |= UCG_ALGORITHM_SUPPORT_BIND_TO_NONE;
             break;
         case UCG_ALGORITHM_BARRIER_SOCKET_AWARE_RECURSIVE_AND_BMTREE:
-            ucg_builtin_fillin_algo(algo, 1, 0, 0, 0, 1, 0);
+            ucg_builtin_fillin_algo(algo, 1, 0, 0, 0, 1, 0, 0, 0);
             algo->topo_level = UCG_GROUP_HIERARCHY_LEVEL_SOCKET;
             break;
         case UCG_ALGORITHM_BARRIER_NODE_AWARE_RECURSIVE_AND_KMTREE:
-            ucg_builtin_fillin_algo(algo, 1, 0, 1, 0, 1, 0);
+            ucg_builtin_fillin_algo(algo, 1, 0, 1, 0, 1, 0, 0, 0);
             algo->topo_level = UCG_GROUP_HIERARCHY_LEVEL_NODE;
             algo->feature_flag |= UCG_ALGORITHM_SUPPORT_BIND_TO_NONE;
             break;
         case UCG_ALGORITHM_BARRIER_SOCKET_AWARE_RECURSIVE_AND_KMTREE:
-            ucg_builtin_fillin_algo(algo, 1, 0, 1, 0, 1, 0);
+            ucg_builtin_fillin_algo(algo, 1, 0, 1, 0, 1, 0, 0, 0);
             algo->topo_level = UCG_GROUP_HIERARCHY_LEVEL_SOCKET;
             break;
         case UCG_ALGORITHM_BARRIER_NODE_AWARE_KMTREE:
-            ucg_builtin_fillin_algo(algo, 1, 1, 1, 0, 1, 0);
+            ucg_builtin_fillin_algo(algo, 1, 1, 1, 0, 1, 0, 0, 0);
             algo->topo_level = UCG_GROUP_HIERARCHY_LEVEL_NODE;
             algo->feature_flag |= UCG_ALGORITHM_SUPPORT_BIND_TO_NONE;
             break;
         case UCG_ALGORITHM_BARRIER_SOCKET_AWARE_KMTREE:
-            ucg_builtin_fillin_algo(algo, 1, 1, 1, 0, 1, 0);
+            ucg_builtin_fillin_algo(algo, 1, 1, 1, 0, 1, 0, 0, 0);
             algo->topo_level = UCG_GROUP_HIERARCHY_LEVEL_SOCKET;
+            break;
+        case UCG_ALGORITHM_BARRIER_NODE_AWARE_INC:
+            ucg_builtin_fillin_algo(algo, 1, 0, 0, 0, 1, 0, 0, 0);
+            algo->topo_level = UCG_GROUP_HIERARCHY_LEVEL_NODE;
+            algo->inc = 1;
+            break;
+        case UCG_ALGORITHM_BARRIER_SOCKET_AWARE_INC:
+            ucg_builtin_fillin_algo(algo, 1, 0, 0, 0, 1, 0, 0, 0);
+            algo->topo_level = UCG_GROUP_HIERARCHY_LEVEL_SOCKET;
+            algo->inc = 1;
+            break;
+        case UCG_ALGORITHM_BARRIER_NAP:
+            ucg_builtin_fillin_algo(algo, 0, 0, 0, 0, 1, 0, 1, 0);
+            algo->topo_level = UCG_GROUP_HIERARCHY_LEVEL_NODE;
             break;
         default:
             ucg_builtin_barrier_algo_switch(UCG_ALGORITHM_BARRIER_NODE_AWARE_KMTREE, algo);
             break;
     }
-    return UCS_OK;
 }
 
-ucs_status_t ucg_builtin_allreduce_algo_switch(const enum ucg_builtin_allreduce_algorithm allreduce_algo_decision,
+void ucg_builtin_allreduce_algo_switch(const enum ucg_builtin_allreduce_algorithm allreduce_algo_decision,
                                                struct ucg_builtin_algorithm *algo)
 {
     algo->topo_level = UCG_GROUP_HIERARCHY_LEVEL_NODE;
     algo->bruck = 1;
     switch (allreduce_algo_decision) {
         case UCG_ALGORITHM_ALLREDUCE_RECURSIVE:
-            ucg_builtin_fillin_algo(algo, 0, 0, 0, 1, 0, 0);
-            algo->feature_flag |= UCG_ALGORITHM_SUPPORT_RANK_FEATURE;
-            algo->feature_flag |= UCG_ALGORITHM_SUPPORT_ALLREDUCE_RARE_FEATURE;
-            algo->feature_flag |= UCG_ALGORITHM_SUPPORT_BIND_TO_NONE;
+            ucg_builtin_fillin_algo(algo, 0, 0, 0, 1, 0, 0, 0, 0);
+            algo->feature_flag |= UCG_ALGORITHM_SUPPORT_RANK_FEATURE |
+                                  UCG_ALGORITHM_SUPPORT_ALLREDUCE_RARE_FEATURE |
+                                  UCG_ALGORITHM_SUPPORT_BIND_TO_NONE;
             break;
         case UCG_ALGORITHM_ALLREDUCE_NODE_AWARE_RECURSIVE_AND_BMTREE:
-            ucg_builtin_fillin_algo(algo, 1, 0, 0, 0, 1, 0);
+            ucg_builtin_fillin_algo(algo, 1, 0, 0, 0, 1, 0, 0, 0);
             algo->topo_level = UCG_GROUP_HIERARCHY_LEVEL_NODE;
-            algo->feature_flag |= UCG_ALGORITHM_SUPPORT_RANK_FEATURE;
-            algo->feature_flag |= UCG_ALGORITHM_SUPPORT_BIND_TO_NONE;
+            algo->feature_flag |= UCG_ALGORITHM_SUPPORT_RANK_FEATURE |
+                                  UCG_ALGORITHM_SUPPORT_BIND_TO_NONE;
             break;
         case UCG_ALGORITHM_ALLREDUCE_SOCKET_AWARE_RECURSIVE_AND_BMTREE:
-            ucg_builtin_fillin_algo(algo, 1, 0, 0, 0, 1, 0);
+            ucg_builtin_fillin_algo(algo, 1, 0, 0, 0, 1, 0, 0, 0);
             algo->topo_level = UCG_GROUP_HIERARCHY_LEVEL_SOCKET;
             break;
         case UCG_ALGORITHM_ALLREDUCE_RING:
-            ucg_builtin_fillin_algo(algo, 0, 0, 0, 0, 0, 1);
-            algo->feature_flag |= UCG_ALGORITHM_SUPPORT_RANK_FEATURE;
-            algo->feature_flag |= UCG_ALGORITHM_SUPPORT_ALLREDUCE_RARE_FEATURE;
-            algo->feature_flag |= UCG_ALGORITHM_SUPPORT_BIND_TO_NONE;
+            ucg_builtin_fillin_algo(algo, 0, 0, 0, 0, 0, 1, 0, 0);
+            algo->feature_flag |= UCG_ALGORITHM_SUPPORT_RANK_FEATURE |
+                                  UCG_ALGORITHM_SUPPORT_ALLREDUCE_RARE_FEATURE |
+                                  UCG_ALGORITHM_SUPPORT_BIND_TO_NONE;
             break;
         case UCG_ALGORITHM_ALLREDUCE_NODE_AWARE_RECURSIVE_AND_KMTREE:
-            ucg_builtin_fillin_algo(algo, 1, 0, 1, 0, 1, 0);
+            ucg_builtin_fillin_algo(algo, 1, 0, 1, 0, 1, 0, 0, 0);
             algo->topo_level = UCG_GROUP_HIERARCHY_LEVEL_NODE;
             algo->feature_flag |= UCG_ALGORITHM_SUPPORT_BIND_TO_NONE;
             break;
         case UCG_ALGORITHM_ALLREDUCE_SOCKET_AWARE_RECURSIVE_AND_KMTREE:
-            ucg_builtin_fillin_algo(algo, 1, 0, 1, 0, 1, 0);
+            ucg_builtin_fillin_algo(algo, 1, 0, 1, 0, 1, 0, 0, 0);
             algo->topo_level = UCG_GROUP_HIERARCHY_LEVEL_SOCKET;
             break;
         case UCG_ALGORITHM_ALLREDUCE_NODE_AWARE_KMTREE:
-            ucg_builtin_fillin_algo(algo, 1, 1, 1, 0, 1, 0);
+            ucg_builtin_fillin_algo(algo, 1, 1, 1, 0, 1, 0, 0, 0);
             algo->topo_level = UCG_GROUP_HIERARCHY_LEVEL_NODE;
             algo->feature_flag |= UCG_ALGORITHM_SUPPORT_BIND_TO_NONE;
             break;
         case UCG_ALGORITHM_ALLREDUCE_SOCKET_AWARE_KMTREE:
-            ucg_builtin_fillin_algo(algo, 1, 1, 1, 0, 1, 0);
+            ucg_builtin_fillin_algo(algo, 1, 1, 1, 0, 1, 0, 0, 0);
+            algo->topo_level = UCG_GROUP_HIERARCHY_LEVEL_SOCKET;
+            break;
+        case UCG_ALGORITHM_ALLREDUCE_NODE_AWARE_INC:
+            ucg_builtin_fillin_algo(algo, 1, 0, 0, 0, 1, 0, 0, 0);
+            algo->topo_level = UCG_GROUP_HIERARCHY_LEVEL_NODE;
+            algo->inc = 1;
+            break;
+        case UCG_ALGORITHM_ALLREDUCE_SOCKET_AWARE_INC:
+            ucg_builtin_fillin_algo(algo, 1, 0, 0, 0, 1, 0, 0, 0);
+            algo->topo_level = UCG_GROUP_HIERARCHY_LEVEL_SOCKET;
+            algo->inc = 1;
+            break;
+        case UCG_ALGORITHM_ALLREDUCE_NAP:
+            ucg_builtin_fillin_algo(algo, 0, 0, 0, 0, 1, 0, 1, 0);
+            algo->topo_level = UCG_GROUP_HIERARCHY_LEVEL_NODE;
+            break;
+        case UCG_ALGORITHM_ALLREDUCE_RABENSEIFNER_BINARY_BLOCK:
+            ucg_builtin_fillin_algo(algo, 0, 0, 0, 0, 0, 0, 0, 1);
+            algo->feature_flag |= UCG_ALGORITHM_SUPPORT_RANK_FEATURE;
+            break;
+        case UCG_ALGORITHM_ALLREDUCE_NODE_AWARE_RABENSEIFNER_BINARY_BLOCK:
+            ucg_builtin_fillin_algo(algo, 0, 0, 0, 0, 1, 0, 0, 1);
+            algo->topo_level = UCG_GROUP_HIERARCHY_LEVEL_NODE;
+            break;
+        case UCG_ALGORITHM_ALLREDUCE_SOCKET_AWARE_RABENSEIFNER_BINARY_BLOCK:
+            ucg_builtin_fillin_algo(algo, 0, 0, 0, 0, 1, 0, 0, 1);
             algo->topo_level = UCG_GROUP_HIERARCHY_LEVEL_SOCKET;
             break;
         default:
             ucg_builtin_allreduce_algo_switch(UCG_ALGORITHM_ALLREDUCE_NODE_AWARE_KMTREE, algo);
             break;
     }
-    return UCS_OK;
 }
 
-void ucg_builtin_check_algorithm_param_size(ucg_builtin_config_t *config)
+void ucg_builtin_alltoallv_algo_switch(const enum ucg_builtin_alltoallv_algorithm alltoallv_algo_decision,
+                                       struct ucg_builtin_algorithm *algo)
 {
-    if (((int)config->allreduce_algorithm >= UCG_ALGORITHM_ALLREDUCE_LAST) || ((int)config->allreduce_algorithm < UCG_ALGORITHM_ALLREDUCE_AUTO_DECISION)) {
-        ucs_info("Param UCX_BUILTIN_ALLREDUCE_ALGORITHM=%d is invalid parameter, switch to default algorithm.", (int)config->allreduce_algorithm);
-    }
-    if (((int)config->bcast_algorithm >= UCG_ALGORITHM_BCAST_LAST) || ((int)config->bcast_algorithm < UCG_ALGORITHM_BCAST_AUTO_DECISION)) {
-        ucs_info("Param UCX_BUILTIN_BCAST_ALGORITHM=%d is invalid parameter, switch to default algorithm.", (int)config->bcast_algorithm);
-    }
-    if (((int)config->barrier_algorithm >= UCG_ALGORITHM_BARRIER_LAST) || ((int)config->barrier_algorithm < UCG_ALGORITHM_BARRIER_AUTO_DECISION)) {
-        ucs_info("Param UCX_BUILTIN_BARRIER_ALGORITHM=%d is invalid parameter, switch to default algorithm.", (int)config->barrier_algorithm);
-    }
-}
-
-void ucg_builtin_check_algorithm_param_type(ucg_builtin_config_t *config)
-{
-    if ((config->allreduce_algorithm - (int)config->allreduce_algorithm) != 0) {
-        ucs_info("Param UCX_BUILTIN_ALLREDUCE_ALGORITHM=%lf is not unsigned integer, switch to unsigned integer '%d'.", config->allreduce_algorithm, (int)config->allreduce_algorithm);
-    }
-    if ((config->bcast_algorithm - (int)config->bcast_algorithm) != 0) {
-        ucs_info("Param UCX_BUILTIN_BCAST_ALGORITHM=%lf is not unsigned integer, switch to unsigned integer '%d'.", config->bcast_algorithm, (int)config->bcast_algorithm);
-    }
-    if ((config->barrier_algorithm - (int)config->barrier_algorithm) != 0) {
-        ucs_info("Param UCX_BUILTIN_BARRIER_ALGORITHM=%lf is not unsigned integer, switch to unsigned integer '%d'.", config->barrier_algorithm, (int)config->barrier_algorithm);
-    }
-}
-
-enum choose_ops_mask ucg_builtin_plan_choose_ops(ucg_plan_component_t *plan_component, enum ucg_collective_modifiers ops_type_choose)
-{
-    ucg_builtin_config_t *config = (ucg_builtin_config_t *)plan_component->plan_config;
-    ucg_builtin_check_algorithm_param_type(config);
-    ucg_builtin_check_algorithm_param_size(config);
-
-    enum ucg_builtin_bcast_algorithm bcast_algo_decision = (enum ucg_builtin_bcast_algorithm)config->bcast_algorithm;
-    enum ucg_builtin_allreduce_algorithm allreduce_algo_decision = (enum ucg_builtin_allreduce_algorithm)
-            config->allreduce_algorithm;
-    enum ucg_builtin_barrier_algorithm barrier_algo_decision = (enum ucg_builtin_barrier_algorithm)
-            config->barrier_algorithm;
-    enum choose_ops_mask result = OPS_AUTO_DECISION;
-
-    if (!(bcast_algo_decision | allreduce_algo_decision | barrier_algo_decision)) {
-        return OPS_AUTO_DECISION;
-    }
-
-    if (ops_type_choose == ucg_predefined_modifiers[UCG_PRIMITIVE_BCAST]) {
-        if (bcast_algo_decision >= UCG_ALGORITHM_BCAST_LAST || bcast_algo_decision <= UCG_ALGORITHM_BCAST_AUTO_DECISION) {
-            return OPS_AUTO_DECISION;
-        }
-        result = OPS_BCAST;
-    }
-
-    if (ops_type_choose == ucg_predefined_modifiers[UCG_PRIMITIVE_ALLREDUCE]) {
-        if (allreduce_algo_decision >= UCG_ALGORITHM_ALLREDUCE_LAST || allreduce_algo_decision <= UCG_ALGORITHM_ALLREDUCE_AUTO_DECISION) {
-            return OPS_AUTO_DECISION;
-        }
-        result = OPS_ALLREDUCE;
-    }
-
-    if (ops_type_choose == ucg_predefined_modifiers[UCG_PRIMITIVE_BARRIER]) {
-        if (barrier_algo_decision >= UCG_ALGORITHM_BARRIER_LAST || barrier_algo_decision <= UCG_ALGORITHM_BARRIER_AUTO_DECISION) {
-            return OPS_AUTO_DECISION;
-        }
-        result = OPS_BARRIER;
-    }
-
-    return result;
-}
-
-void ucg_builtin_check_continuous_number_by_sort(ucg_group_member_index_t *array,
-                                                 unsigned array_len,
-                                                 unsigned *discont_flag)
-{
-    ucg_group_member_index_t member_idx;
-    unsigned idx, idx2;
-    /* bubble sort */
-    for (idx = 0; idx < array_len - 1; idx++) {
-        for (idx2 = 0; idx2 < array_len - 1 - idx; idx2++) {
-            if (array[idx2] > array[idx2 + 1]) {
-                member_idx =  array[idx2 + 1];
-                array[idx2 + 1] = array[idx2];
-                array[idx2] = member_idx;
-            }
-        }
-    }
-    /* discontinous or not */
-    for (idx = 0; idx < array_len - 1; idx++) {
-        if (array[idx + 1] - array[idx] != 1) {
-            *discont_flag = 1;
+    algo->topo_level   = UCG_GROUP_HIERARCHY_LEVEL_NODE;
+    algo->feature_flag |= UCG_ALGORITHM_SUPPORT_RANK_FEATURE;
+    algo->bruck = 0;
+    switch (alltoallv_algo_decision) {
+        case UCG_ALGORITHM_ALLTOALLV_LADD:
+            ucg_builtin_fillin_algo(algo, 0, 0, 0, 0, 0, 0, 0, 0);
+            algo->ladd = 1;
             break;
-        }
+        case UCG_ALGORITHM_ALLTOALLV_NODE_AWARE_PLUMMER:
+            ucg_builtin_fillin_algo(algo, 0, 0, 0, 0, 1, 0, 0, 0);
+            algo->plummer = 1;
+            break;
+        default:
+            ucg_builtin_alltoallv_algo_switch(UCG_ALGORITHM_ALLTOALLV_LADD, algo);
+            break;
     }
 }
 
-static void ucg_builtin_prepare_rank_same_unit(const ucg_group_params_t *group_params,
-                                               enum ucg_group_member_distance domain_distance,
-                                               ucg_group_member_index_t *rank_same_unit)
+enum ucg_group_member_distance ucg_builtin_get_distance(const ucg_group_params_t *group_params,
+                                               ucg_group_member_index_t rank1,
+                                               ucg_group_member_index_t rank2)
 {
-    unsigned idx, member_idx;
-    enum ucg_group_member_distance next_distance;
-    for (idx = 0, member_idx = 0; member_idx < group_params->member_count; member_idx++) {
-        next_distance = group_params->distance[member_idx];
-        if (ucs_likely(next_distance <= domain_distance)) {
-            rank_same_unit[idx++] = member_idx;
-        }
-    }
-}
-
-ucs_status_t ucg_builtin_check_continuous_number_no_topo_map(const ucg_group_params_t *group_params,
-                                                             enum ucg_group_member_distance domain_distance,
-                                                             unsigned *discont_flag)
-{
-    unsigned ppx = ucg_builtin_calculate_ppx(group_params, domain_distance);
-
-    /* store rank number in same unit */
-    size_t alloc_size = ppx * sizeof(ucg_group_member_index_t);
-    ucg_group_member_index_t *rank_same_unit = (ucg_group_member_index_t*)UCS_ALLOC_CHECK(alloc_size, "rank number");
-    memset(rank_same_unit, 0, alloc_size);
-    ucg_builtin_prepare_rank_same_unit(group_params, domain_distance, rank_same_unit);
-
-    ucg_builtin_check_continuous_number_by_sort(rank_same_unit, ppx, discont_flag);
-    ucg_builtin_free((void **)&rank_same_unit);
-    return UCS_OK;
+    return group_params->mpi_rank_distance(group_params->cb_group_obj, rank1, rank2);
 }
 
 ucs_status_t ucg_builtin_check_continuous_number(const ucg_group_params_t *group_params,
                                                  enum ucg_group_member_distance domain_distance,
                                                  unsigned *discont_flag)
 {
-    if (group_params->topo_map == NULL) {
-        return ucg_builtin_check_continuous_number_no_topo_map(group_params, domain_distance, discont_flag);
+    if (domain_distance == UCG_GROUP_MEMBER_DISTANCE_SOCKET) {
+        *discont_flag = group_params->topo_args.srank_uncontinue;
+    } else {
+        *discont_flag = group_params->topo_args.nrank_uncontinue;
     }
-
-    char domain_distance_ch = (char)domain_distance;
-    /* Check the topo distance in each line and find all ranks in the same node
-       Make sure the ranks in the same node is continuous. */
-    for (unsigned i = 0; i < group_params->member_count; i++) {
-        int last_same_unit_rank = -1;
-        for (unsigned j = 0; j < group_params->member_count; j++) {
-            if (group_params->topo_map[i][j] > domain_distance_ch) {
-                continue;
-            }
-
-            if (last_same_unit_rank != -1 && j - last_same_unit_rank != 1) {
-                *discont_flag = 1;
-                return UCS_OK;
-            }
-            last_same_unit_rank = j;
-        }
-    }
-    *discont_flag = 0;
     return UCS_OK;
 }
 
-ucs_status_t choose_distance_from_topo_aware_level(enum ucg_group_member_distance *domain_distance)
+void choose_distance_from_topo_aware_level(enum ucg_group_member_distance *domain_distance)
 {
     switch (ucg_algo.topo_level) {
         case UCG_GROUP_HIERARCHY_LEVEL_NODE:
@@ -971,21 +851,6 @@ ucs_status_t choose_distance_from_topo_aware_level(enum ucg_group_member_distanc
         default:
             break;
     }
-    return UCS_OK;
-}
-
-void ucg_builtin_non_commutative_operation(const ucg_group_params_t *group_params, const ucg_collective_params_t *coll_params, struct ucg_builtin_algorithm *algo, const size_t msg_size)
-{
-    if (coll_params->send.op_ext && !group_params->op_is_commute_f(coll_params->send.op_ext) &&
-        !(algo->feature_flag & UCG_ALGORITHM_SUPPORT_NON_COMMUTATIVE_OPS)) {
-        if (coll_params->send.count > 1) {
-            ucg_builtin_plan_decision_in_noncommutative_many_counts_case();
-            ucs_info("Current algorithm does not support many counts non-commutative operation, and switch to Recursive doubling which may have unexpected performance");
-        } else {
-            ucg_builtin_plan_decision_in_noncommutative_largedata_case(msg_size, NULL);
-            ucs_info("Current algorithm does not support non commutative operation, and switch to Recursive doubling or Ring Algorithm which may have unexpected performance");
-        }
-    }
 }
 
 int ucg_builtin_op_can_reuse(const ucg_plan_t *plan, const ucg_op_t *op,
@@ -999,6 +864,10 @@ int ucg_builtin_op_can_reuse(const ucg_plan_t *plan, const ucg_op_t *op,
         return 0;
     }
 
+    /* Alltoallv does not consider op reuse. */
+    if (params->type.modifiers == ucg_predefined_modifiers[UCG_PRIMITIVE_ALLTOALLV])  {
+        return 0;
+    }
     if (params->send.count > 0) {
         builtin_plan->convert_f(params->send.dt_ext, &send_dtype);
         if (!UCG_DT_IS_CONTIG(params, send_dtype)) {
@@ -1009,258 +878,66 @@ int ucg_builtin_op_can_reuse(const ucg_plan_t *plan, const ucg_op_t *op,
     return 1;
 }
 
-void ucg_builtin_update_op(const ucg_plan_t *plan, ucg_op_t *op,
-                           const ucg_collective_params_t *params)
-{
-    ucp_datatype_t send_dtype = UCP_DATATYPE_CONTIG;
-    ucp_datatype_t recv_dtype = UCP_DATATYPE_CONTIG;
-    ucg_builtin_plan_t *builtin_plan = (ucg_builtin_plan_t *)plan;
-    ucg_builtin_op_t *builtin_op = (ucg_builtin_op_t *)op;
-
-    builtin_op->send_dt = NULL;
-    builtin_op->recv_dt = NULL;
-    if (params->send.count > 0 && params->send.dt_len > 0) {
-        builtin_plan->convert_f(params->send.dt_ext, &send_dtype);
-        if (!UCG_DT_IS_CONTIG(params, send_dtype)) {
-            builtin_op->send_dt = ucp_dt_generic(send_dtype);
-        }
-    }
-
-    if (params->recv.count > 0 && params->recv.dt_len > 0) {
-        builtin_plan->convert_f(params->recv.dt_ext, &recv_dtype);
-        if (!UCG_DT_IS_CONTIG(params, recv_dtype)) {
-            builtin_op->recv_dt = ucp_dt_generic(recv_dtype);
-        }
-    }
-}
-
-int ucg_is_noncontig_allreduce(const ucg_group_params_t *group_params,
-                               const ucg_collective_params_t *coll_params)
-{
-    ucp_datatype_t ucp_datatype;
-
-    if (coll_params->type.modifiers == ucg_predefined_modifiers[UCG_PRIMITIVE_ALLREDUCE] &&
-        coll_params->send.count > 0 && coll_params->send.dt_len > 0) {
-        group_params->mpi_dt_convert(coll_params->send.dt_ext, &ucp_datatype);
-        if (!UCP_DT_IS_CONTIG(ucp_datatype)) {
-            ucs_debug("allreduce non-contiguous datatype");
-            return 1;
-        }
-    }
-
-    return 0;
-}
-
-int ucg_is_noncommutative_allreduce(const ucg_group_params_t *group_params,
-                                    const ucg_collective_params_t *coll_params)
-{
-    return coll_params->type.modifiers == ucg_predefined_modifiers[UCG_PRIMITIVE_ALLREDUCE] &&
-           coll_params->send.op_ext && !group_params->op_is_commute_f(coll_params->send.op_ext);
-}
-
-#define UCT_MIN_SHORT_ONE_LEN 80
-#define UCT_MIN_BCOPY_ONE_LEN 1000
-int ucg_is_segmented_allreduce(const ucg_collective_params_t *coll_params)
-{
-    int count = coll_params->send.count;
-    size_t dt_len = coll_params->send.dt_len;
-
-    if (coll_params->type.modifiers == ucg_predefined_modifiers[UCG_PRIMITIVE_ALLREDUCE]) {
-        if (dt_len > UCT_MIN_BCOPY_ONE_LEN) {
-            return 1;
-        }
-
-        if (dt_len > UCT_MIN_SHORT_ONE_LEN && (dt_len * count) < UCG_GROUP_MED_MSG_SIZE) {
-            return 1;
-        }
-    }
-
-    return 0;
-}
-
-/*
-   Deal with all unsupport special case.
-*/
-ucs_status_t ucg_builtin_change_unsupport_algo(struct ucg_builtin_algorithm *algo,
-                                               const ucg_group_params_t *group_params,
-                                               const size_t msg_size,
-                                               const ucg_collective_params_t *coll_params,
-                                               const enum ucg_collective_modifiers ops_type_choose,
-                                               enum choose_ops_mask ops_choose,
-                                               ucg_builtin_config_t *config)
-{
-    ucs_status_t status;
-
-    /* Currently, only algorithm 1 supports non-contiguous datatype for allreduce */
-    if (ucg_is_noncontig_allreduce(group_params, coll_params)) {
-        ucg_builtin_allreduce_algo_switch(UCG_ALGORITHM_ALLREDUCE_RECURSIVE, &ucg_algo);
-        ucs_info("allreduce non-contiguous datatype, select algo%d:recursive", UCG_ALGORITHM_ALLREDUCE_RECURSIVE);
-        return UCS_OK;
-    }
-
-    /* Currently, only algorithm 1 supports non-commutative op for allreduce */
-    if (ucg_is_noncommutative_allreduce(group_params, coll_params)) {
-        ucg_builtin_allreduce_algo_switch(UCG_ALGORITHM_ALLREDUCE_RECURSIVE, &ucg_algo);
-        ucs_info("non-commutative allreduce, select algo%d:recursive", UCG_ALGORITHM_ALLREDUCE_RECURSIVE);
-        return UCS_OK;
-    }
-
-    /* Special Case 1 : bind-to none */
-    if (!(algo->feature_flag & UCG_ALGORITHM_SUPPORT_BIND_TO_NONE) && (group_params->is_bind_to_none)) {
-        ucg_builtin_plan_decision_in_unsupport_case(msg_size, group_params, ops_type_choose, coll_params);
-        ucs_info("Current algorithm don't support bind-to none case, switch to default algorithm");
-    }
-
-    /* Special Case 2 : unbalance ppn */
-    unsigned is_ppn_unbalance = 0;
-    status = ucg_builtin_check_ppn(group_params, &is_ppn_unbalance);
-    if (status != UCS_OK) {
-        return status;
-    }
-
-    if (is_ppn_unbalance && (!(algo->feature_flag & UCG_ALGORITHM_SUPPORT_UNBALANCE_PPN))) {
-        ucg_builtin_plan_decision_in_unsupport_case(msg_size, group_params, ops_type_choose, coll_params);
-        ucs_info("Current algorithm don't support ppn unbalance case, switch to default algorithm");
-    }
-
-    /* Special Case 3 : discontinuous rank */
-    unsigned is_discontinuous_rank = 0;
-    enum ucg_group_member_distance domain_distance = UCG_GROUP_MEMBER_DISTANCE_HOST;
-    status = choose_distance_from_topo_aware_level(&domain_distance);
-    if (status != UCS_OK) {
-        return status;
-    }
-    status = ucg_builtin_check_continuous_number(group_params, domain_distance, &is_discontinuous_rank);
-    if (status != UCS_OK) {
-        return status;
-    }
-
-    if (is_discontinuous_rank && (!(algo->feature_flag & UCG_ALGORITHM_SUPPORT_DISCONTINOUS_RANK))) {
-        ucg_builtin_plan_decision_in_unsupport_case(msg_size, group_params, ops_type_choose, coll_params);
-        ucs_info("Current algorithm demand rank number is continous. Switch default algorithm whose performance may be not the best");
-    }
-
-    if (ops_choose == OPS_ALLREDUCE) {
-        /* Special Case 4 : non-commutative operation */
-        ucg_builtin_non_commutative_operation(group_params, coll_params, algo, msg_size);
-
-        /* Special Case 5 : large datatype */
-        if (coll_params->send.dt_len > config->large_datatype_threshold &&
-            !(algo->feature_flag & UCG_ALGORITHM_SUPPORT_LARGE_DATATYPE)) {
-                ucg_builtin_plan_decision_in_noncommutative_largedata_case(msg_size, NULL);
-                ucs_info("Current algorithm does not support large datatype, and switch to Recursive doubling or Ring Algorithm which may have unexpected performance");
-        }
-    }
-
-    /* The allreduce result is wrong when phase->segmented=1 and using ring algorithm, must avoid it */
-    if (ucg_algo.ring && ucg_is_segmented_allreduce(coll_params)) {
-        ucg_builtin_allreduce_algo_switch(UCG_ALGORITHM_ALLREDUCE_RECURSIVE, &ucg_algo);
-        ucs_info("ring algorithm does not support segmented phase, select recursive algorithm");
-        return UCS_OK;
-    }
-
-    return status;
-}
-
 void ucg_builtin_log_algo()
 {
-    ucs_info("bmtree %u kmtree %u kmtree_intra %u recur %u bruck %u topo %u level %u ring %u pipe %u",
-             ucg_algo.bmtree, ucg_algo.kmtree, ucg_algo.kmtree_intra, ucg_algo.recursive, ucg_algo.bruck,
-             ucg_algo.topo, (unsigned)ucg_algo.topo_level, ucg_algo.ring, ucg_algo.pipeline);
+    ucs_info("bmtree %u kmtree %u kmtree_intra %u recur %u bruck %u topo %u "
+             "level %u ring %u pipe %u nap %u binary_block %u ladd %u plummer %u ",ucg_algo.bmtree, ucg_algo.kmtree,
+             ucg_algo.kmtree_intra, ucg_algo.recursive, ucg_algo.bruck, ucg_algo.topo, (unsigned)ucg_algo.topo_level,
+             ucg_algo.ring, ucg_algo.pipeline, ucg_algo.NAP, ucg_algo.binary_block, ucg_algo.ladd, ucg_algo.plummer);
 }
 
-ucs_status_t ucg_builtin_algorithm_decision(const ucg_collective_type_t *coll_type,
-                                            const size_t msg_size,
-                                            const ucg_group_params_t *group_params,
-                                            const ucg_collective_params_t *coll_params,
-                                            ucg_plan_component_t *plan_component)
+static void ucg_builtin_plan_create(ucg_builtin_plan_t *plan,
+                                    enum ucg_builtin_plan_topology_type plan_topo_type,
+                                    ucg_collective_params_t *coll_params,
+                                    ucg_builtin_group_ctx_t *builtin_ctx)
 {
-    ucg_collective_type_t *coll = (ucg_collective_type_t *)coll_type;
-    enum ucg_collective_modifiers ops_type_choose = coll->modifiers;
-    ucg_builtin_config_t *config = (ucg_builtin_config_t *)plan_component->plan_config;
-    enum ucg_builtin_bcast_algorithm bcast_algo_decision = (enum ucg_builtin_bcast_algorithm)config->bcast_algorithm;
-    enum ucg_builtin_allreduce_algorithm allreduce_algo_decision = (enum ucg_builtin_allreduce_algorithm)
-            config->allreduce_algorithm;
-    enum ucg_builtin_barrier_algorithm barrier_algo_decision = (enum ucg_builtin_barrier_algorithm)
-            config->barrier_algorithm;
+    plan->convert_f = builtin_ctx->group_params->mpi_dt_convert;
+    plan->dtspan_f = builtin_ctx->group_params->mpi_datatype_span;
+    plan->resend = &builtin_ctx->send_head;
+    plan->slots = &builtin_ctx->slots[0];
+    plan->am_id = builtin_ctx->am_id;
+}
 
-    ucs_status_t status;
-
-    /* default algorithm choosen:
-       Bcast :     3
-       Allreduce : small message : 2
-                   big   message : 4
-       Barrier   : 2
-    */
-    enum choose_ops_mask ops_choose = ucg_builtin_plan_choose_ops(plan_component, ops_type_choose);
-    ucs_info("choose ops: %d, bcast mode: %u, allreduce mode: %u, barrier mode: %u",
-             ops_choose, bcast_algo_decision, allreduce_algo_decision, barrier_algo_decision);
-
-    /* unblanced ppn or not */
-    unsigned is_ppn_unbalance = 0;
-    status = ucg_builtin_check_ppn(group_params, &is_ppn_unbalance);
-    if (status != UCS_OK) {
-        ucs_error("Error in check ppn");
-        return status;
-    }
-    ucs_info("ppn unbalance: %u", is_ppn_unbalance);
-
-    switch (ops_choose) {
-        case OPS_AUTO_DECISION:
-            /* Auto algorithm decision: according to is_ppn_unbalance/data/msg_size etc */
-            plan_decision_fixed(msg_size, group_params, ops_type_choose, coll_params, config->large_datatype_threshold, is_ppn_unbalance,
-                                &bcast_algo_decision, &allreduce_algo_decision, &barrier_algo_decision);
+STATIC_GTEST void ucg_builtin_set_algo(coll_type_t ctype, int algo_id, ucg_builtin_algo_t *algo)
+{
+    ucg_builtin_init_algo(algo);
+    switch (ctype) {
+        case COLL_TYPE_BARRIER:
+            ucg_builtin_barrier_algo_switch(algo_id, algo);
             break;
 
-        case OPS_BCAST:
-            ucg_builtin_bcast_algo_switch(bcast_algo_decision, &ucg_algo);
-            allreduce_algo_decision = UCG_ALGORITHM_ALLREDUCE_AUTO_DECISION;
-            barrier_algo_decision = UCG_ALGORITHM_BARRIER_AUTO_DECISION;
+        case COLL_TYPE_BCAST:
+            ucg_builtin_bcast_algo_switch(algo_id, algo);
             break;
 
-        case OPS_ALLREDUCE:
-            ucg_builtin_allreduce_algo_switch(allreduce_algo_decision, &ucg_algo);
-            bcast_algo_decision = UCG_ALGORITHM_BCAST_AUTO_DECISION;
-            barrier_algo_decision = UCG_ALGORITHM_BARRIER_AUTO_DECISION;
+        case COLL_TYPE_ALLREDUCE:
+            ucg_builtin_allreduce_algo_switch(algo_id, algo);
             break;
 
-        case OPS_BARRIER:
-            ucg_builtin_barrier_algo_switch(barrier_algo_decision, &ucg_algo);
-            bcast_algo_decision = UCG_ALGORITHM_BCAST_AUTO_DECISION;
-            allreduce_algo_decision = UCG_ALGORITHM_ALLREDUCE_AUTO_DECISION;
+        case COLL_TYPE_ALLTOALLV:
+            ucg_builtin_alltoallv_algo_switch(algo_id, algo);
             break;
 
         default:
+            ucs_error("invalid collective type %d", ctype);
             break;
     }
 
-    /* One API to deal with all special case */
-    status = ucg_builtin_change_unsupport_algo(&ucg_algo, group_params, msg_size, coll_params, ops_type_choose, ops_choose, config);
     ucg_builtin_log_algo();
-
-    return UCS_OK;
 }
 
-static ucs_status_t ucg_builtin_plan(ucg_plan_component_t *plan_component,
-                                     const ucg_collective_type_t *coll_type,
-                                     const size_t msg_size,
-                                     ucg_group_h group,
+static ucs_status_t ucg_builtin_plan(ucg_group_h group, int algo_id,
                                      ucg_collective_params_t *coll_params,
                                      ucg_plan_t **plan_p)
 {
-    ucs_status_t status;
-    ucg_builtin_plan_t *plan = NULL;
     ucg_builtin_group_ctx_t *builtin_ctx = UCG_GROUP_TO_COMPONENT_CTX(ucg_builtin_component, group);
-
-    ucg_builtin_init_algo(&ucg_algo);
-
-    status = ucg_builtin_algorithm_decision(coll_type, msg_size, builtin_ctx->group_params, coll_params, plan_component);
-
-    if (status != UCS_OK) {
-        return status;
-    }
-
-    enum ucg_builtin_plan_topology_type plan_topo_type = ucg_builtin_choose_type(coll_type->modifiers);
+    ucg_plan_component_t *plan_component = &ucg_builtin_component;
+    ucg_collective_type_t *coll_type = &coll_params->type;
+    enum ucg_builtin_plan_topology_type plan_topo_type;
+    ucg_builtin_plan_t *plan = NULL;
+    ucs_status_t status;
+    ucg_builtin_set_algo(coll_params->coll_type, algo_id, &ucg_algo);
+    plan_topo_type = ucg_builtin_choose_type(coll_type->modifiers);
 
     ucs_debug("plan topo type: %d", plan_topo_type);
 
@@ -1276,6 +953,26 @@ static ucs_status_t ucg_builtin_plan(ucg_plan_component_t *plan_component,
                                              builtin_ctx->group_params, coll_type, &plan);
             break;
 
+        case UCG_PLAN_BINARY_BLOCK:
+            status = ucg_builtin_binary_block_create(builtin_ctx, plan_topo_type, plan_component->plan_config,
+                                             builtin_ctx->group_params, coll_type, &plan);
+            break;
+#if ENABLE_UCG_HICOLL
+        case UCG_PLAN_NAP:
+            status = ucg_builtin_NAP_create(builtin_ctx, plan_topo_type, plan_component->plan_config,
+                                             builtin_ctx->group_params, coll_type, &plan);
+            break;
+
+        case UCG_PLAN_ALLTOALLV_LADD:
+            status = ucg_builtin_throttled_scatter_create(builtin_ctx, plan_topo_type, plan_component->plan_config,
+                                             builtin_ctx->group_params, coll_params, &plan);
+            break;
+
+        case UCG_PLAN_ALLTOALLV_PLUMMER:
+            status = ucg_builtin_Plummer_create(builtin_ctx, plan_topo_type, plan_component->plan_config,
+                                             builtin_ctx->group_params, coll_type, coll_params, &plan);
+            break;
+#endif
         default:
             status = ucg_builtin_binomial_tree_create(builtin_ctx, plan_topo_type, plan_component->plan_config,
                                                       builtin_ctx->group_params, coll_type, &plan);
@@ -1299,19 +996,13 @@ static ucs_status_t ucg_builtin_plan(ucg_plan_component_t *plan_component,
     }
 
     ucs_list_add_head(&builtin_ctx->plan_head, &plan->list);
-    plan->super.is_noncontig_allreduce = (plan_topo_type != UCG_PLAN_RECURSIVE) ? 0 :
-                      ucg_is_noncontig_allreduce(builtin_ctx->group_params, coll_params);
-    plan->super.is_ring_plan_topo_type = (plan_topo_type == UCG_PLAN_RING);
-    plan->convert_f = builtin_ctx->group_params->mpi_dt_convert;
-    plan->dtspan_f  = builtin_ctx->group_params->mpi_datatype_span;
-    plan->resend    = &builtin_ctx->send_head;
-    plan->slots     = &builtin_ctx->slots[0];
-    plan->am_id     = builtin_ctx->am_id;
+    ucg_builtin_plan_create(plan, plan_topo_type, coll_params, builtin_ctx);
+    plan->ucg_algo = ucg_algo;
     *plan_p         = (ucg_plan_t*)plan;
     return UCS_OK;
 }
 
-static void ucg_builtin_print(ucg_plan_t *plan, const ucg_collective_params_t *coll_params)
+STATIC_GTEST void ucg_builtin_print(ucg_plan_t *plan, const ucg_collective_params_t *coll_params)
 {
     unsigned major_version, minor_version, release_number;
     ucp_get_version(&major_version, &minor_version, &release_number);
@@ -1320,20 +1011,14 @@ static void ucg_builtin_print(ucg_plan_t *plan, const ucg_collective_params_t *c
     printf("plan name: %s\n", plan->planner->name);
 }
 
-void  ucg_builtin_set_phase_thresh_max_short(ucg_builtin_group_ctx_t *ctx,
+STATIC_GTEST void  ucg_builtin_set_phase_thresh_max_short(ucg_builtin_group_ctx_t *ctx,
                                              ucg_builtin_plan_phase_t *phase)
 {
-    if (phase->ep_attr->cap.am.max_short < sizeof(ucg_builtin_header_t)) {
-        phase->send_thresh.max_short_one = 0;
-    } else {
-        phase->send_thresh.max_short_one = phase->ep_attr->cap.am.max_short - sizeof(ucg_builtin_header_t);
-    }
 
-    if (phase->send_thresh.max_short_one == 0) {
-        phase->send_thresh.max_short_max = 0;
-    } else {
-        phase->send_thresh.max_short_max = ctx->config->short_max_tx;
-    }
+    phase->send_thresh.max_short_one = (phase->ep_attr->cap.am.max_short < sizeof(ucg_builtin_header_t)) ?
+        0 : (phase->ep_attr->cap.am.max_short - sizeof(ucg_builtin_header_t));
+
+    phase->send_thresh.max_short_max = (phase->send_thresh.max_short_one == 0) ? 0 : ctx->config->short_max_tx;
 
     if (phase->send_thresh.max_short_one > phase->send_thresh.max_short_max) {
         phase->send_thresh.max_short_one = phase->send_thresh.max_short_max;
@@ -1370,19 +1055,14 @@ void  ucg_builtin_set_phase_thresholds(ucg_builtin_group_ctx_t *ctx,
     phase->send_thresh.initialized = 1;
 
     if (!phase->recv_thresh.initialized) {
-        phase->recv_thresh.max_short_one = phase->send_thresh.max_short_one;
-        phase->recv_thresh.max_short_max = phase->send_thresh.max_short_max;
-        phase->recv_thresh.max_bcopy_one = phase->send_thresh.max_bcopy_one;
-        phase->recv_thresh.max_bcopy_max = phase->send_thresh.max_bcopy_max;
-        phase->recv_thresh.max_zcopy_one = phase->send_thresh.max_zcopy_one;
-        phase->recv_thresh.md_attr_cap_max_reg = phase->send_thresh.md_attr_cap_max_reg;
+        phase->recv_thresh = phase->send_thresh;
         phase->recv_thresh.initialized = 1;
     }
 }
 
 void ucg_builtin_log_phase_info(ucg_builtin_plan_phase_t *phase, ucg_group_member_index_t idx)
 {
-    ucs_debug("phase create: %p, dest %" PRIu64 ", short_one %zu, short_max %zu, bcopy_one %zu, bcopy_max %zu, zcopy_one %zu, max_reg %zu",
+    ucs_info("phase create: %p, dest %" PRIu64 ", short_one %zu, short_max %zu, bcopy_one %zu, bcopy_max %zu, zcopy_one %zu, max_reg %zu",
                phase, idx, phase->send_thresh.max_short_one, phase->send_thresh.max_short_max, phase->send_thresh.max_bcopy_one, phase->send_thresh.max_bcopy_max, phase->send_thresh.max_zcopy_one, phase->md_attr->cap.max_reg);
 }
 
@@ -1392,13 +1072,17 @@ ucs_status_t ucg_builtin_connect(ucg_builtin_group_ctx_t *ctx,
 {
     uct_ep_h ep;
     ucp_ep_h ucp_ep;
+    unsigned alloc_cnt;
     ucs_status_t status = ucg_plan_connect(ctx->group, idx, &ep,
                                            &phase->ep_attr, &phase->md, &phase->md_attr, &ucp_ep);
     if (ucs_unlikely(status != UCS_OK)) {
         return status;
     }
     if (phase->ucp_eps == NULL) {
-        phase->ucp_eps = UCS_ALLOC_CHECK(sizeof(ucp_ep_h) * phase->ep_cnt, "ucp_eps");
+        alloc_cnt = (phase_ep_index != UCG_BUILTIN_CONNECT_SINGLE_EP && phase_ep_index >= phase->ep_cnt) ?
+                    (phase_ep_index + 1) : phase->ep_cnt;
+        phase->ucp_eps = UCS_ALLOC_CHECK(sizeof(ucp_ep_h) * alloc_cnt, "ucp_eps");
+        phase->ep_thresh = UCS_ALLOC_CHECK(sizeof(ucg_builtin_tl_threshold_t) * alloc_cnt, "uct_ep thresh");
     }
     phase->ucp_eps[(phase_ep_index == UCG_BUILTIN_CONNECT_SINGLE_EP) ? 0 : phase_ep_index] = ucp_ep;
 
@@ -1423,6 +1107,8 @@ ucs_status_t ucg_builtin_connect(ucg_builtin_group_ctx_t *ctx,
         if (phase->method != UCG_PLAN_METHOD_ALLGATHER_BRUCK &&
             phase->method != UCG_PLAN_METHOD_ALLTOALL_BRUCK &&
             phase->method != UCG_PLAN_METHOD_REDUCE_SCATTER_RING &&
+            phase->method != UCG_PLAN_METHOD_INC &&
+            phase->method != UCG_PLAN_METHOD_ALLTOALLV_LADD &&
             phase->method != UCG_PLAN_METHOD_ALLGATHER_RING) {
             ucs_assert(phase_ep_index < phase->ep_cnt);
         }
@@ -1431,9 +1117,32 @@ ucs_status_t ucg_builtin_connect(ucg_builtin_group_ctx_t *ctx,
 
     /* Set the thresholds */
     ucg_builtin_set_phase_thresholds(ctx, phase);
+    phase->ep_thresh[(phase_ep_index != UCG_BUILTIN_CONNECT_SINGLE_EP) ? phase_ep_index : 0] = phase->send_thresh;
     ucg_builtin_log_phase_info(phase, idx);
 
     return status;
+}
+
+ucg_group_member_index_t ucg_builtin_get_local_index(ucg_group_member_index_t global_index,
+                                                    const ucg_group_member_index_t *local_members,
+                                                    ucg_group_member_index_t member_cnt)
+{
+    ucg_group_member_index_t local_index = 0;
+
+    ucg_group_member_index_t i;
+    for (i = 0; i < member_cnt ; i++) {
+        if (local_members[i] == global_index) {
+            local_index = i;
+            break;
+        }
+    }
+    return local_index;
+}
+
+/* Get the -x UCX_BUILTIN_REDUCE_CONSISTENCY config value */
+int ucg_is_allreduce_consistency(const ucg_builtin_group_ctx_t *ctx)
+{
+    return ctx->config->reduce_consistency;
 }
 
 UCG_PLAN_COMPONENT_DEFINE(ucg_builtin_component, "builtin",

@@ -1,6 +1,6 @@
 /*
- * Copyright (C) Huawei Technologies Co., Ltd. 2019.  ALL RIGHTS RESERVED.
- * See file LICENSE for terms.
+ * Copyright (C) Huawei Technologies Co., Ltd. 2019-2021.  ALL RIGHTS RESERVED.
+ * Description: Binomial-tree and K-tree algorithm
  */
 
 #include "builtin_plan.h"
@@ -24,18 +24,6 @@
  */
 #define MAX_PHASES 10 /* till now, binomial tree can only support 2^MAX_PHASES process at most */
 
-typedef struct ucg_builtin_binomial_tree_params {
-    ucg_builtin_group_ctx_t *ctx;
-    const ucg_group_params_t *group_params;
-    const ucg_collective_type_t *coll_type;
-    enum ucg_builtin_plan_topology_type topo_type;
-    ucg_group_member_index_t root;
-    int tree_degree_inter_fanout;
-    int tree_degree_inter_fanin;
-    int tree_degree_intra_fanout;
-    int tree_degree_intra_fanin;
-} ucg_builtin_binomial_tree_params_t;
-
 ucs_config_field_t ucg_builtin_binomial_tree_config_table[] = {
     {"DEGREE_INTER_FANOUT", "8", "k-nomial tree degree for inter node with fanout process.\n",
      ucs_offsetof(ucg_builtin_binomial_tree_config_t, degree_inter_fanout), UCS_CONFIG_TYPE_UINT},
@@ -54,16 +42,11 @@ ucs_config_field_t ucg_builtin_binomial_tree_config_table[] = {
 unsigned ucg_builtin_calculate_ppx(const ucg_group_params_t *group_params,
                                    enum ucg_group_member_distance domain_distance)
 {
-    unsigned member_idx;
-    unsigned ppx = 0;
-    for (member_idx = 0; member_idx < group_params->member_count; member_idx++) {
-        enum ucg_group_member_distance next_distance = group_params->distance[member_idx];
-        ucs_assert(next_distance < UCG_GROUP_MEMBER_DISTANCE_LAST);
-        if (ucs_likely(next_distance <= domain_distance)) {
-            ppx++;
-        }
+    if (domain_distance == UCG_GROUP_MEMBER_DISTANCE_SOCKET) {
+        return group_params->topo_args.pps_local;
+    } else {
+        return group_params->topo_args.ppn_local;
     }
-    return ppx;
 }
 
 /*
@@ -75,7 +58,7 @@ enum ucg_builtin_tree_direction {
     UCG_PLAN_RIGHT_MOST_TREE
 };
 
-static ucs_status_t ucg_builtin_bmtree_algo_build_left(unsigned rank,
+static void ucg_builtin_bmtree_algo_build_left(unsigned rank,
                                                        unsigned root,
                                                        unsigned size,
                                                        ucg_group_member_index_t *up, unsigned *up_cnt,
@@ -113,10 +96,9 @@ static ucs_status_t ucg_builtin_bmtree_algo_build_left(unsigned rank,
     }
 
     *down_cnt = num_child;
-    return UCS_OK;
 }
 
-static ucs_status_t ucg_builtin_bmtree_algo_build_right(unsigned rank,
+static void ucg_builtin_bmtree_algo_build_right(unsigned rank,
                                                         unsigned root,
                                                         unsigned size,
                                                         ucg_group_member_index_t *up, unsigned *up_cnt,
@@ -149,7 +131,6 @@ static ucs_status_t ucg_builtin_bmtree_algo_build_right(unsigned rank,
     }
 
     *down_cnt = num_child;
-    return UCS_OK;
 }
 
 
@@ -177,7 +158,7 @@ static ucs_status_t ucg_builtin_get_rank(const ucg_group_member_index_t *member_
 
     /* if and only if one myrank or root */
     if (root_num != 1 || rank_num != 1) {
-        ucs_error("Invaild member list: has %u myself and %u root/subroot", rank_num, root_num);
+        ucs_error("Invalid member list: has %u myself and %u root/subroot", rank_num, root_num);
         return UCS_ERR_INVALID_PARAM;
     }
 
@@ -200,15 +181,15 @@ ucs_status_t ucg_builtin_bmtree_algo_build(const ucg_group_member_index_t *membe
         return status;
     }
 
-    /* Notes: rank & root both correpsonds index in member_list */
+    /* Notes: rank & root both corresponds index in member_list */
     if (direction == UCG_PLAN_LEFT_MOST_TREE) {
         /* left-most Binomial Tree */
-        (void)ucg_builtin_bmtree_algo_build_left(rank, root, size, up, up_cnt, down, down_cnt);
+        ucg_builtin_bmtree_algo_build_left(rank, root, size, up, up_cnt, down, down_cnt);
     } else if (direction == UCG_PLAN_RIGHT_MOST_TREE) {
         /* right-most Binomial Tree */
-        (void)ucg_builtin_bmtree_algo_build_right(rank, root, size, up, up_cnt, down, down_cnt);
+        ucg_builtin_bmtree_algo_build_right(rank, root, size, up, up_cnt, down, down_cnt);
     } else {
-        ucs_error("Invaild tree direction");
+        ucs_error("Invalid tree direction");
         return UCS_ERR_INVALID_PARAM;
     }
 
@@ -246,8 +227,7 @@ static ucs_status_t ucg_builtin_kmtree_algo_build_left(unsigned rank,
 
     while (mask < size) {
         if (vrank % (degree * mask)) {
-            up[0] = vrank / (degree * mask) * (degree * mask);
-            up[0] = (up[0] + root) % size;
+            up[0] = (vrank / (degree * mask) * (degree * mask) + root) % size;
             *up_cnt = 1;
             break;
         }
@@ -296,8 +276,7 @@ static ucs_status_t ucg_builtin_kmtree_algo_build_right(unsigned rank,
     /* find parent */
     while (mask < size) {
         if (vrank % (degree * mask)) {
-            up[0] = vrank / (degree * mask) * (degree * mask);
-            up[0] = (up[0] + root) % size;
+            up[0] = (vrank / (degree * mask) * (degree * mask) + root) % size;
             *up_cnt = 1;
             break;
         }
@@ -349,15 +328,17 @@ ucs_status_t ucg_builtin_kmtree_algo_build(const ucg_group_member_index_t *membe
 
     if (direction == UCG_PLAN_LEFT_MOST_TREE) {
         /* leftmost k-nomial tree for fanout */
-        (void)ucg_builtin_kmtree_algo_build_left(rank, root, size, degree, up, up_cnt, down, down_cnt);
+        status = ucg_builtin_kmtree_algo_build_left(rank, root, size, degree, up, up_cnt, down, down_cnt);
     } else if (direction == UCG_PLAN_RIGHT_MOST_TREE) {
         /* right-most k-nomial tree for fanin */
-        (void)ucg_builtin_kmtree_algo_build_right(rank, root, size, degree, up, up_cnt, down, down_cnt);
+        status = ucg_builtin_kmtree_algo_build_right(rank, root, size, degree, up, up_cnt, down, down_cnt);
     } else {
         ucs_error("Invaild tree direction");
         return UCS_ERR_INVALID_PARAM;
     }
-
+    if (status != UCS_OK) {
+        return status;
+    }
     unsigned idx;
     /* convert index to real rank */
     for (idx = 0; idx < *up_cnt; idx++) {
@@ -378,8 +359,9 @@ ucs_status_t ucg_builtin_connect_leader(ucg_group_member_index_t my_index, unsig
                                         ucg_group_member_index_t *down_fanin, unsigned *down_fanin_cnt)
 {
     ucs_status_t status = UCS_OK;
+    ucs_assert(ppx > 0);
     if (ppx_last_level % ppx != 0) {
-        ucs_error("cheak ppn and ppx in last topo level");
+        ucs_error("check ppn and ppx in last topo level");
         return UCS_ERR_INVALID_PARAM;
     }
 
@@ -508,7 +490,7 @@ static void ucg_builtin_get_node_leaders_normal_level(ucg_group_member_index_t m
     }
 }
 
-static ucs_status_t ucg_builtin_get_node_leaders(const uint16_t *node_index, ucg_group_member_index_t member_count,
+static void ucg_builtin_get_node_leaders(const uint16_t *node_index, ucg_group_member_index_t member_count,
                                                  enum ucg_group_hierarchy_level level, unsigned ppx,
                                                  ucg_group_member_index_t *leaders)
 {
@@ -517,8 +499,6 @@ static ucs_status_t ucg_builtin_get_node_leaders(const uint16_t *node_index, ucg
     } else {
         ucg_builtin_get_node_leaders_normal_level(member_count, ppx, leaders);
     }
-
-    return UCS_OK;
 }
 
 static ucs_status_t ucg_builtin_tree_inter_fanin_connect(const ucg_builtin_binomial_tree_params_t *params,
@@ -533,7 +513,8 @@ static ucs_status_t ucg_builtin_tree_inter_fanin_connect(const ucg_builtin_binom
 {
     ucs_status_t status = UCS_OK;
     /* Establish the connection between the parent and children */
-    enum ucg_builtin_plan_method_type fanin_method = ucg_builtin_calculate_plan_method_type(mod, UCG_GROUP_COLLECTIVE_MODIFIER_AGGREGATE, up_fanin_cnt, down_fanin_cnt);
+    enum ucg_builtin_plan_method_type fanin_method = ucg_builtin_calculate_plan_method_type(mod,
+        UCG_GROUP_COLLECTIVE_MODIFIER_AGGREGATE, up_fanin_cnt, down_fanin_cnt);
 
     /* ==== FANIN phase ==== */
     /* only recv (recv_terminal) */
@@ -555,9 +536,9 @@ static ucs_status_t ucg_builtin_tree_inter_fanin_connect(const ucg_builtin_binom
         for (member_idx = down_fanin_cnt; member_idx < down_fanin_cnt + up_fanin_cnt; member_idx++) {
             down_fanin[member_idx] = up_fanin[member_idx - down_fanin_cnt];
         }
-        down_fanin_cnt = down_fanin_cnt + up_fanin_cnt;
+
         status = ucg_builtin_binomial_tree_connect_phase((*phase)++, params, tree->phs_cnt, eps, down_fanin,
-                                                         down_fanin_cnt, fanin_method);
+                                                         down_fanin_cnt + up_fanin_cnt, fanin_method);
     }
     return status;
 }
@@ -573,7 +554,8 @@ static ucs_status_t ucg_builtin_tree_inter_fanout_connect(const ucg_builtin_bino
                                                           ucg_builtin_plan_t *tree)
 {
     ucs_status_t status = UCS_OK;
-    enum ucg_builtin_plan_method_type fanout_method = ucg_builtin_calculate_plan_method_type(mod, UCG_GROUP_COLLECTIVE_MODIFIER_BROADCAST, up_cnt, down_cnt);
+    enum ucg_builtin_plan_method_type fanout_method = ucg_builtin_calculate_plan_method_type(mod,
+        UCG_GROUP_COLLECTIVE_MODIFIER_BROADCAST, up_cnt, down_cnt);
 
     /* ==== FANOUT phase ==== */
     /* only recv (recv_terminal) */
@@ -600,8 +582,8 @@ static ucs_status_t ucg_builtin_tree_inter_fanout_connect(const ucg_builtin_bino
         for (member_idx = up_cnt; member_idx < up_cnt + down_cnt; member_idx++) {
             up[member_idx] = down[member_idx - up_cnt];
         }
-        up_cnt = up_cnt + down_cnt;
-        status = ucg_builtin_binomial_tree_connect_phase(phase, params, tree->phs_cnt + 1, eps, up, up_cnt,
+
+        status = ucg_builtin_binomial_tree_connect_phase(phase, params, tree->phs_cnt + 1, eps, up, up_cnt + down_cnt,
                                                          fanout_method);
     }
 
@@ -620,6 +602,7 @@ static ucs_status_t ucg_builtin_tree_inter_fanin_fanout_create(const ucg_builtin
                                                                ucg_builtin_plan_t *tree)
 {
     ucs_status_t status = UCS_OK;
+    ucs_assert(ppx > 0);
     /* Calculate the number of binomial tree steps for inter-node only */
     if (my_index % ppx == local_root && node_count > 1) {
         ucg_group_member_index_t up[MAX_PEERS] = { 0 };
@@ -639,6 +622,7 @@ static ucs_status_t ucg_builtin_tree_inter_fanin_fanout_create(const ucg_builtin
         ucg_group_member_index_t *member_list =
             (ucg_group_member_index_t *)(UCS_ALLOC_CHECK(alloc_size, "member list"));
         memset(member_list, 0, alloc_size);
+
         for (idx = 0; idx < size; idx++) {
             member_list[idx] = (params->root % ppx) + ppx * idx;
         }
@@ -689,7 +673,6 @@ static ucs_status_t ucg_builtin_binomial_tree_inter_fanout_connect(const ucg_bui
     /* Receive from parents */
     if (up_cnt == 1 && down_cnt == 0) {
         /* Connect this phase to its peers */
-        ucs_assert(up_cnt == 1); /* sanity check: not multi-root */
         status = ucg_builtin_binomial_tree_connect_phase(phase, params, 0, eps, up, up_cnt, fanout_method);
     }
 
@@ -707,8 +690,8 @@ static ucs_status_t ucg_builtin_binomial_tree_inter_fanout_connect(const ucg_bui
         for (member_idx = up_cnt; member_idx < up_cnt + down_cnt; member_idx++) {
             up[member_idx] = down[member_idx - up_cnt];
         }
-        up_cnt = up_cnt + down_cnt;
-        status = ucg_builtin_binomial_tree_connect_phase(phase, params, 0, eps, up, up_cnt, fanout_method);
+
+        status = ucg_builtin_binomial_tree_connect_phase(phase, params, 0, eps, up, up_cnt + down_cnt, fanout_method);
     }
     return status;
 }
@@ -729,6 +712,7 @@ static ucs_status_t ucg_builtin_prepare_inter_fanout_member_idx(const ucg_builti
     ucg_group_member_index_t *member_list =
         (ucg_group_member_index_t *)(UCS_ALLOC_CHECK(alloc_size, "member list"));
     memset(member_list, 0, alloc_size);
+
     for (idx = 0; idx < size; idx++) {
         if (is_use_topo_info) {
             member_list[idx] = topo_params->subroot_array[idx];
@@ -845,14 +829,14 @@ static ucs_status_t ucg_builtin_binomial_tree_inter_create(enum ucg_builtin_plan
                                                            unsigned *step_inc_cnt)
 {
     ucs_status_t status = UCS_OK;
-    unsigned factor = 2;
+    const unsigned factor = 2;
     switch (topo_type) {
         case UCG_PLAN_RECURSIVE:
             if (is_subroot && node_count > 1) {
                 unsigned phs_cnt = tree->phs_cnt;
                 ucg_group_member_index_t *node_leaders = UCS_ALLOC_CHECK(node_count * sizeof(ucg_group_member_index_t),
                                                                          "recursive ranks");
-                (void)ucg_builtin_get_node_leaders(params->group_params->node_index,
+                ucg_builtin_get_node_leaders(params->group_params->node_index,
                                                    params->group_params->member_count,
                                                    ucg_algo.topo_level, ppx, node_leaders);
                 ucg_builtin_recursive_connect(params->ctx, my_index, node_leaders, node_count, factor, 0, tree);
@@ -862,7 +846,7 @@ static ucs_status_t ucg_builtin_binomial_tree_inter_create(enum ucg_builtin_plan
             } else {
                 *phs_inc_cnt = 0;
             }
-            (void)ucg_builtin_recursive_compute_steps(my_index_local, node_count, factor, step_inc_cnt);
+            ucg_builtin_recursive_compute_steps(my_index_local, node_count, factor, step_inc_cnt);
             ucs_debug("phase inc: %d step inc: %d", *phs_inc_cnt, *step_inc_cnt);
             break;
         case UCG_PLAN_TREE_FANIN_FANOUT: /* for inter allreduce, another choice is reduce+bcast with k-nominal tree */
@@ -916,13 +900,14 @@ static ucs_status_t ucg_builtin_binomial_tree_add_inter(
     enum ucg_collective_modifiers mod = params->coll_type->modifiers;
 
     unsigned node_idx;
+    unsigned member_idx;
     unsigned is_subroot =  0;
 
-    /* node-aware: using subroot_array and node_cnt to support unblance ppn case */
+    /* node-aware: using subroot_array and node_cnt to support unbalance ppn case */
     size_t alloc_size = sizeof(ucg_group_member_index_t) * topo_params->node_cnt;
     ucg_group_member_index_t *subroot_array = (ucg_group_member_index_t *)UCS_ALLOC_CHECK(alloc_size, "subroot array");
 
-    for (unsigned member_idx = 0; member_idx < topo_params->node_cnt; member_idx++) {
+    for (member_idx = 0; member_idx < topo_params->node_cnt; member_idx++) {
         subroot_array[member_idx] = topo_params->subroot_array[member_idx];
     }
 
@@ -944,8 +929,8 @@ static ucs_status_t ucg_builtin_binomial_tree_add_inter(
     }
 
     if (node_count == 1) {
-        phs_inc_cnt = 0;
-        step_inc_cnt = 0;
+        *phs_inc_cnt = 0;
+        *step_inc_cnt = 0;
         ucs_free(subroot_array);
         subroot_array = NULL;
         return UCS_OK;
@@ -1087,12 +1072,22 @@ static ucs_status_t ucg_builtin_binomial_tree_connect_fanin_fanout(ucg_builtin_p
 
     if (params->topo_type == UCG_PLAN_TREE_FANIN_FANOUT) {
         inter_node_topo_type = (ucg_algo.kmtree == 1) ? UCG_PLAN_TREE_FANIN_FANOUT : UCG_PLAN_RECURSIVE;
+#if ENABLE_UCG_HICOLL
+        if (ucg_algo.inc && inc_used(params->group_params)) {
+            inter_node_topo_type = UCG_PLAN_INC;
+        }
+#endif
         /* For fanin-fanout (e.g. allreduce) - copy existing connections */
         /* recursive or k-nomial tree for inter-nodes */
         /* especially for k-nomial tree, socket-aware algorithm (topo_level) ppx should be replaced by real ppn */
         if (inter_node_topo_type == UCG_PLAN_RECURSIVE && ucg_algo.topo_level == UCG_GROUP_HIERARCHY_LEVEL_L3CACHE) {
             status = ucg_builtin_binomial_tree_add_inter(tree, &tree->phss[(ppx > 1) ? 1 : 0], params, eps,
                 inter_node_topo_type, &phs_inc_cnt, &step_inc_cnt, (ppx != 1) ? pps : ppx, topo_params);
+        } else if (inter_node_topo_type == UCG_PLAN_INC) {
+#if ENABLE_UCG_HICOLL
+            status = ucg_builtin_add_inc(tree, &tree->phss[ppx > 1 ? 1 : 0], params, eps, &phs_inc_cnt, &step_inc_cnt,
+                (ucg_algo.kmtree == 1 && ucg_algo.topo_level && ppx != 1) ? ppx * SPN : ppx, ucg_algo.topo_level);
+#endif
         } else {
             status = ucg_builtin_binomial_tree_add_inter(tree, &tree->phss[(ppx > 1) ? 1 : 0], params, eps,
                                                          inter_node_topo_type, &phs_inc_cnt, &step_inc_cnt,
@@ -1132,9 +1127,23 @@ static ucs_status_t ucg_builtin_topo_tree_connect_fanout(ucg_builtin_plan_t *tre
     unsigned step_inc_cnt = 0;
     enum ucg_builtin_plan_topology_type inter_node_topo_type;
     inter_node_topo_type = UCG_PLAN_TREE_FANOUT;
-    /* binomial tree for inter-nodes */
-    status = ucg_builtin_binomial_tree_add_inter(tree, &tree->phss[0], params, eps, inter_node_topo_type,
-        &phs_inc_cnt, &step_inc_cnt, ppx, topo_params);
+
+    int can_use_inc = 0;
+#if ENABLE_UCG_HICOLL
+    can_use_inc = ucg_algo.inc && inc_used(params->group_params);
+#endif
+    if (can_use_inc) {
+        inter_node_topo_type = UCG_PLAN_INC;
+#if ENABLE_UCG_HICOLL
+        status = ucg_builtin_add_inc(tree, &tree->phss[0], params, eps, &phs_inc_cnt, &step_inc_cnt, ppx,
+                                     ucg_algo.topo_level);
+#endif
+    } else {
+        /* binomial tree for inter-nodes */
+        status = ucg_builtin_binomial_tree_add_inter(tree, &tree->phss[0], params, eps, inter_node_topo_type,
+                                                    &phs_inc_cnt, &step_inc_cnt, ppx, topo_params);
+    }
+
     if (status != UCS_OK) {
         return status;
     }
@@ -1150,7 +1159,7 @@ static ucs_status_t ucg_builtin_topo_tree_connect_fanout(ucg_builtin_plan_t *tre
     return status;
 }
 
-static ucs_status_t ucg_builtin_non_topo_tree_connect_fanout(ucg_builtin_plan_t *tree,
+STATIC_GTEST ucs_status_t ucg_builtin_non_topo_tree_connect_fanout(ucg_builtin_plan_t *tree,
                                                              const ucg_builtin_binomial_tree_params_t *params,
                                                              ucg_group_member_index_t *up,
                                                              unsigned up_cnt,
@@ -1336,6 +1345,14 @@ static ucs_status_t ucg_builtin_kinomial_tree_build_intra(const ucg_builtin_bino
             up_fanin, up_fanin_cnt, down_fanin, down_fanin_cnt);
     }
 
+    if (ucg_builtin_need_calate_position(params->coll_type, *up_fanin_cnt, params->ctx, UCG_PLAN_TREE_FANIN)) {
+        int degree = ((params->group_params->node_index[rank] == params->group_params->node_index[up_fanin[0]])
+            ? params->tree_degree_intra_fanin : params->tree_degree_inter_fanin);
+        short upOffset = ucg_get_tree_buffer_pos(rank, up_fanin[0], root, *ppx, degree, member_list);
+        tree->super.up_offset = ((upOffset == -1) ? *down_fanin_cnt : upOffset);
+        ucs_debug("degree:%d, myrank:%lu, uprank:%lu, offset:%d, down_fanin_cnt:%u, root:%u, size:%u",
+                   degree, rank, up_fanin[0], tree->super.up_offset, *down_fanin_cnt, root, *ppx);
+    }
     return status;
 }
 
@@ -1366,7 +1383,8 @@ ucs_status_t ucg_builtin_bmtree_algo_build_fanin_fanout(const ucg_group_member_i
     return status;
 }
 
-static ucs_status_t ucg_builtin_binomial_tree_build_intra(ucg_group_member_index_t *member_list,
+static ucs_status_t ucg_builtin_binomial_tree_build_intra(const ucg_builtin_binomial_tree_params_t *params,
+                                                          ucg_group_member_index_t *member_list,
                                                           unsigned root,
                                                           ucg_group_member_index_t rank,
                                                           ucg_group_member_index_t *up,
@@ -1402,6 +1420,14 @@ static ucs_status_t ucg_builtin_binomial_tree_build_intra(ucg_group_member_index
         status = ucg_builtin_connect_leader(tree->super.my_index, *ppx, *pps, up, up_cnt, down, down_cnt,
             up_fanin, up_fanin_cnt, down_fanin, down_fanin_cnt);
     }
+
+    if (ucg_builtin_need_calate_position(params->coll_type, *up_fanin_cnt, params->ctx, UCG_PLAN_TREE_FANIN)) {
+        int degree = ((params->group_params->node_index[rank] == params->group_params->node_index[up_fanin[0]])
+            ? params->tree_degree_intra_fanin : params->tree_degree_inter_fanin);
+        tree->super.up_offset = ucg_get_tree_buffer_pos(rank, up_fanin[0], root, *ppx, degree, member_list);
+        ucs_debug("degree:%d, myrank:%lu, uprank:%lu, offset:%d, root:%u, size:%u",
+                   degree, rank, up_fanin[0], tree->super.up_offset, root, *ppx);
+    }
     return status;
 }
 
@@ -1432,7 +1458,8 @@ static void ucg_builtin_prepare_member_idx(const ucg_builtin_binomial_tree_param
         k = 0;
         ucg_group_member_index_t member_idx;
         for (member_idx = 0; member_idx < params->group_params->member_count; member_idx++) {
-            if (ucs_likely(params->group_params->distance[member_idx] <= domain_distance)) {
+            if (ucg_builtin_get_distance(params->group_params, params->group_params->member_index,
+                                         member_idx) <= domain_distance) {
                 member_list[k++] = member_idx;
             }
         }
@@ -1468,28 +1495,15 @@ static ucs_status_t ucg_builtin_topo_tree_build(const ucg_builtin_binomial_tree_
 
     /*
         Socket-aware algorithm:
-            special case 1: socket unbalance case in socket-aware algorithm; ( ppn = 2 * pps or ppn = pps is OK for socket-aware)
+            special case 1: socket unbalance case in socket-aware algorithm;
+               ( ppn = 2 * pps or ppn = pps is OK for socket-aware)
             special case 2: allreduce algo(8) ppx = 1 or pps = ppn;
             solution: change topo-aware level: socket -> node.
     */
-    /* case 1 */
-    if (ucg_algo.topo_level == UCG_GROUP_HIERARCHY_LEVEL_SOCKET) {
-        if (!params->group_params->is_socket_balance) {
-            ucs_info("Warning: process number in every socket must be same in socket-aware algorithm, please make sure ppn "
-                    "must be even and '--map-by socket' included. Switch to corresponding node-aware algorithm already.");
-            ucg_algo.topo_level = UCG_GROUP_HIERARCHY_LEVEL_NODE;
-            status = choose_distance_from_topo_aware_level(&domain_distance);
-            if (status != UCS_OK) {
-                return status;
-            }
-            *ppx = *ppn;
-        }
-    }
-
     /* case 2 */
     if (ucg_algo.topo_level == UCG_GROUP_HIERARCHY_LEVEL_SOCKET && ucg_algo.kmtree && (*ppx == 1 || *pps == *ppn)) {
         ucg_algo.topo_level = UCG_GROUP_HIERARCHY_LEVEL_NODE;
-        status = choose_distance_from_topo_aware_level(&domain_distance);
+        choose_distance_from_topo_aware_level(&domain_distance);
         *ppx = *ppn;
     }
 
@@ -1510,7 +1524,7 @@ static ucs_status_t ucg_builtin_topo_tree_build(const ucg_builtin_binomial_tree_
                                                            up_cnt, down, down_cnt, up_fanin,
                                                            up_fanin_cnt, down_fanin, down_fanin_cnt, ppx, ppn, tree);
         } else {
-            status = ucg_builtin_binomial_tree_build_intra(member_list, root, rank, up,
+            status = ucg_builtin_binomial_tree_build_intra(params, member_list, root, rank, up,
                                                            up_cnt, down, down_cnt, up_fanin, up_fanin_cnt,
                                                            down_fanin, down_fanin_cnt, ppx, pps, ppn, tree);
         }
@@ -1546,7 +1560,8 @@ static ucs_status_t ucg_builtin_binomial_tree_algo_build(ucg_group_member_index_
         return status;
     }
 
-    status = ucg_builtin_bmtree_algo_build(member_list, size, rank, root, UCG_PLAN_RIGHT_MOST_TREE, up_fanin, up_fanin_cnt, down_fanin, down_fanin_cnt);
+    status = ucg_builtin_bmtree_algo_build(member_list, size, rank, root, UCG_PLAN_RIGHT_MOST_TREE, up_fanin,
+                                           up_fanin_cnt, down_fanin, down_fanin_cnt);
     ucs_free(member_list);
     member_list = NULL;
     return status;
@@ -1577,7 +1592,7 @@ static ucs_status_t ucg_builtin_tree_build(const ucg_builtin_binomial_tree_param
         /* socket-aware:  ppx = pps (processes per socket) */
         /* L3cache-aware: ppx = ppl (processes per L3cache) */
         enum ucg_group_member_distance domain_distance = UCG_GROUP_MEMBER_DISTANCE_HOST;
-        status = choose_distance_from_topo_aware_level(&domain_distance);
+        choose_distance_from_topo_aware_level(&domain_distance);
         *ppx = ucg_builtin_calculate_ppx(params->group_params, domain_distance);
         *ppn = ucg_builtin_calculate_ppx(params->group_params, UCG_GROUP_MEMBER_DISTANCE_HOST);
         *pps = ucg_builtin_calculate_ppx(params->group_params, UCG_GROUP_MEMBER_DISTANCE_SOCKET);
@@ -1668,7 +1683,8 @@ static ucs_status_t ucg_builtin_binomial_tree_build(const ucg_builtin_binomial_t
     tree->super.my_index = rank;
 
     /* topology information obtain from ompi layer */
-    ucg_builtin_topology_info_params_t *topo_params = (ucg_builtin_topology_info_params_t *)UCS_ALLOC_CHECK(sizeof(ucg_builtin_topology_info_params_t), "topo params");
+    ucg_builtin_topology_info_params_t *topo_params = (ucg_builtin_topology_info_params_t *)UCS_ALLOC_CHECK(
+        sizeof(ucg_builtin_topology_info_params_t), "topo params");
     status = ucg_builtin_topology_info_create(topo_params, params->group_params, params->root);
     if (status != UCS_OK) {
         ucg_builtin_binomial_tree_free_topo_info(&topo_params);
@@ -1691,13 +1707,14 @@ static ucs_status_t ucg_builtin_binomial_tree_build(const ucg_builtin_binomial_t
 
     /* fill in the tree phases while establishing the connections */
     status = ucg_builtin_binomial_tree_connect(tree, params,
-                                               alloc_size, up, up_cnt, down, down_cnt, up_fanin, up_fanin_cnt, down_fanin, down_fanin_cnt, ppx, pps, topo_params);
+                                               alloc_size, up, up_cnt, down, down_cnt, up_fanin, up_fanin_cnt,
+                                               down_fanin, down_fanin_cnt, ppx, pps, topo_params);
 
     ucg_builtin_binomial_tree_free_topo_info(&topo_params);
     return status;
 }
 
-static UCS_F_NOINLINE void ucg_calcu_node_cnt(unsigned *node_cnt, const ucg_group_params_t *group_params)
+static void ucg_calcu_node_cnt(unsigned *node_cnt, const ucg_group_params_t *group_params)
 {
     ucg_group_member_index_t member_idx;
     unsigned node_idx;
@@ -1709,15 +1726,6 @@ static UCS_F_NOINLINE void ucg_calcu_node_cnt(unsigned *node_cnt, const ucg_grou
         }
     }
     (*node_cnt)++;
-}
-
-static unsigned ucg_tree_degree_set(unsigned param, unsigned config)
-{
-    if (param > config) {
-        return param;
-    } else {
-        return config;
-    }
 }
 
 ucs_status_t ucg_builtin_binomial_tree_create(ucg_builtin_group_ctx_t *ctx,
@@ -1745,8 +1753,8 @@ ucs_status_t ucg_builtin_binomial_tree_create(ucg_builtin_group_ctx_t *ctx,
         .topo_type = plan_topo_type,
         .group_params = group_params,
         .root = coll_type->root,
-        .tree_degree_inter_fanout = ucg_tree_degree_set(node_cnt - 1, config->bmtree.degree_inter_fanout),
-        .tree_degree_inter_fanin  = ucg_tree_degree_set(node_cnt - 1, config->bmtree.degree_inter_fanin),
+        .tree_degree_inter_fanout = config->bmtree.degree_inter_fanout,
+        .tree_degree_inter_fanin  = config->bmtree.degree_inter_fanin,
         .tree_degree_intra_fanout = config->bmtree.degree_intra_fanout,
         .tree_degree_intra_fanin  = config->bmtree.degree_intra_fanin
     };
@@ -1762,7 +1770,5 @@ ucs_status_t ucg_builtin_binomial_tree_create(ucg_builtin_group_ctx_t *ctx,
     /* Reduce the allocation size according to actual usage */
     *plan_p = tree;
     ucs_assert(*plan_p != NULL); /* only reduces size - should never fail */
-    (*plan_p)->super.support_non_commutative = 0;
-    (*plan_p)->super.support_large_datatype = 0;
     return UCS_OK;
 }

@@ -1,0 +1,10 @@
+/*
+ * Copyright (c) Huawei Technologies Co., Ltd. 2022-2022. All rights reserved.
+ */
+
+#ifndef UCG_CPU_H_
+#define UCG_CPU_H_
+
+#define UCG_CACHE_LINE_SIZE @CACHE_LINE_SIZE@
+
+#endif

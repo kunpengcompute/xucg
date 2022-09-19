@@ -36,5 +36,10 @@ depcomp
 .dirstamp
 *.lo
 *.o
-api/ucg_version.h
-base/ucg_version.c
+src/ucg/api/ucg_version.h
+src/util/ucg_cpu.h
+build
+docs/html
+3rd/
+.vscode/
+*.patch

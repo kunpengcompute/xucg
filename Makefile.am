@@ -7,7 +7,7 @@ if HAVE_UCG
 
 SUBDIRS = base builtin
 
-UCG_VERSION=3:0:2
+UCG_VERSION=3:1:2
 
 lib_LTLIBRARIES    = libucg.la
 libucg_la_CFLAGS   = $(BASE_CFLAGS)

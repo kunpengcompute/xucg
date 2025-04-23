@@ -12,13 +12,14 @@ endif()
 
 if(SUPPORT_CMAKE3 MATCHES "ON")
     cmake_policy(SET CMP0048 NEW)
-    project(xucg VERSION 25.0.0)
+    project(xucg VERSION 25.1.0)
 else()
     project(xucg C CXX)
     set(PROJECT_VERSION_MAJOR 25)
-    set(PROJECT_VERSION_MINOR 0)
+    set(PROJECT_VERSION_MINOR 1)
     set(PROJECT_VERSION_PATCH 0)
 endif()
+set(PROJECT_VERSION_PATCH_SPECIAL "RC1")
 
 # Define options
 option(UCG_BUILD_TOOLS "Build ucg tools" ON)

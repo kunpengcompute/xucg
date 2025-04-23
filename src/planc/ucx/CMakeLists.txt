@@ -12,7 +12,7 @@ if (UCG_BUILD_PLANC_UCX MATCHES "ON")
     add_library(ucg_planc_ucx SHARED ${SRCS})
     set_target_properties(ucg_planc_ucx
                           PROPERTIES VERSION
-                          ${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR}.${PROJECT_VERSION_PATCH}
+                          ${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR}.${PROJECT_VERSION_PATCH_SPECIAL}
                           SOVERSION
                           ${PROJECT_VERSION_MAJOR})
 

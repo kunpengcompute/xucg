@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Huawei Technologies Co., Ltd. 2022-2025. All rights reserved.
+ * Copyright (c) Huawei Technologies Co., Ltd. 2022-2024. All rights reserved.
  */
 
 #include "ucg_context.h"
@@ -416,12 +416,6 @@ static int ucg_context_progress(ucg_context_h context)
 {
     ucg_context_lock(context);
     int count = 0;
-
-    if (ucs_list_is_empty(&context->plist)) {
-        ucg_context_unlock(context);
-        return count;
-    }
-
     ucg_request_t *req = NULL;
     ucg_request_t *tmp_req = NULL;
     ucg_list_for_each_safe(req, tmp_req, &context->plist, list) {

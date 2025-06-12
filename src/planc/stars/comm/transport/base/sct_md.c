@@ -167,7 +167,9 @@ ucs_status_t sct_md_iface_config_read(sct_md_h md, const char *tl_name,
     ucs_status_t status;
     sct_tl_t *tl;
 
-    UCG_CHECK_NULL_INVALID(tl_name);
+    if (tl_name == NULL) {
+        return UCS_ERR_INVALID_PARAM;
+    }
 
     status = sct_md_query(md, &md_attr);
     if (status != UCS_OK) {

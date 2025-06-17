@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Huawei Technologies Co., Ltd. 2024-2024. All rights reserved.
+ * Copyright (c) Huawei Technologies Co., Ltd. 2024-2025. All rights reserved.
  */
 
 #include "rc_offload_md.h"
@@ -124,9 +124,20 @@ ucs_status_t sct_rc_ofd_md_open(uct_md_h uct_md, struct ibv_device *ibv_device,
         goto err_free_rdma_params;
     }
 
+    ucg_status = ucg_mpool_init(&md->notify_params_pool, 0, sizeof(write_notify_trans_param_t),
+                                0, UCG_CACHE_LINE_SIZE, UCG_ELEMS_PER_CHUNK,
+                                UINT_MAX, NULL, "event_trans_parm_t_pool");
+    if (ucg_unlikely(ucg_status != UCG_OK)) {
+        status = UCS_ERR_NO_RESOURCE;
+        goto err_free_notify_params;
+    }
+
     md->super.dev.flags = sct_ib_device_spec(&md->super.dev)->flags;
     *p_md = &md->super;
     return UCS_OK;
+
+err_free_notify_params:
+    ucg_mpool_cleanup(&md->notify_params_pool, 1);
 
 err_free_rdma_params:
     ucg_mpool_cleanup(&md->rdma_params_pool, 1);
@@ -145,6 +156,7 @@ void sct_rc_ofd_md_cleanup(sct_ib_md_t *ibmd)
     sct_rc_ofd_md_t *md = ucs_derived_of(ibmd, sct_rc_ofd_md_t);
     ucg_mpool_cleanup(&md->rdma_params_pool, 1);
     ucg_mpool_cleanup(&md->event_params_pool, 1);
+    ucg_mpool_cleanup(&md->notify_params_pool, 1);
     sct_stars_unload();
 }
 

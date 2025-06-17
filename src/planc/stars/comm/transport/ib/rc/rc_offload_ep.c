@@ -176,6 +176,60 @@ ucs_status_t sct_rc_ofd_ep_wait_notify(sct_ep_h tl_ep, sct_ofd_req_h req, sct_wa
     return UCS_OK;
 }
 
+static void sct_rc_ofd_ep_set_notify_parm(sct_event_h event,
+                                          write_notify_trans_param_t *event_parm)
+{
+    event_parm->eventid = event->event_id.event_id;
+    event_parm->devid = event->dev_id;
+    ucg_debug("will notify eventid %d devid %d",
+              event_parm->eventid, event_parm->devid);
+}
+
+ucs_status_t sct_rc_ofd_ep_barrier(sct_ep_h ep, sct_ofd_req_h req,
+                                   sct_event_h *notify_event, sct_event_h *wait_event,
+                                   int event_num)
+{
+    ucs_status_t status = UCS_OK;
+    sct_rc_ofd_iface_t *iface = ucs_derived_of(ep->iface, sct_rc_ofd_iface_t);
+
+    for (int event_idx = 0; event_idx < event_num; event_idx++) {
+        if (wait_event[event_idx] != NULL) {
+            sct_wait_elem_t wait_elem;
+            wait_elem.sct_event = wait_event[event_idx];
+            wait_elem.flag = 1;
+            status = sct_rc_ofd_ep_wait_notify(ep, req, &wait_elem);
+            if (ucg_unlikely(status != UCS_OK)) {
+                ucg_error("failed to set wait notify req in barrier");
+                return status;
+            }
+        }
+
+        if (notify_event[event_idx] != NULL) {
+            write_notify_trans_param_t *event_parm =
+                    sct_rc_ofd_md_get_notify_param(iface->super.super.super.md);
+            if (ucg_unlikely(event_parm == NULL)) {
+                ucg_fatal("Invalid stars event param resource.");
+            }
+
+            sct_rc_ofd_ep_set_notify_parm(notify_event[event_idx], event_parm);
+            stars_trans_parm_t *trans_parm = scs_stars_get_trans_parm();
+            if (ucg_unlikely(!trans_parm)) {
+                ucg_fatal("invalid stars trans parm");
+            }
+
+            trans_parm->opcode      = STARS_WRITE_NOTIFY;
+            trans_parm->wr_cqe_flag = 1;
+            trans_parm->trans_parms = event_parm;
+            trans_parm->next        = NULL;
+            trans_parm->parms_len   = sizeof(write_notify_trans_param_t);
+            sct_ofd_req_push_trans_tail(req, trans_parm);
+            req->stars.cqe_cnt++;
+        }
+    }
+
+    return UCS_OK;
+}
+
 ucs_status_t sct_rc_ofd_ep_get_address(sct_ep_h tl_ep, uct_ep_addr_t *addr)
 {
     sct_rc_ofd_ep_t *ep = ucs_derived_of(tl_ep, sct_rc_ofd_ep_t);

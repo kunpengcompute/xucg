@@ -29,6 +29,8 @@ typedef struct stars_rank_info {
     uint32_t                offset;
     int                     flag;
     ucp_dt_iov_t            desc_iov_dt[2];
+    uint8_t                 barrier_flag;
+    scp_event_h             barrier_event;
 } stars_rank_info_t;
 typedef struct stars_rank_info *stars_rank_info_h;
 

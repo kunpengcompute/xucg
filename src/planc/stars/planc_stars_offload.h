@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Huawei Technologies Co., Ltd. 2024-2024. All rights reserved.
+ * Copyright (c) Huawei Technologies Co., Ltd. 2024-2025. All rights reserved.
  */
 
 #ifndef UCG_PLANC_STARS_OFFLOAD_H_
@@ -23,5 +23,5 @@ ucg_status_t ucg_planc_stars_fill_ofd_put_req_elem(uint32_t eid_idx, stars_rank_
                                                    scp_ofd_req_elem_h request);
 ucg_status_t ucg_planc_stars_fill_ofd_wait_req_elem(uint32_t eid_idx, stars_rank_info_h peer,
                                                     scp_ofd_req_elem_h request, stars_event_elem_h event_elem);
-
+ucg_status_t ucg_planc_stars_fill_ofd_barrier_req_elem(stars_rank_info_h peer, scp_ofd_req_elem_h request);
 #endif

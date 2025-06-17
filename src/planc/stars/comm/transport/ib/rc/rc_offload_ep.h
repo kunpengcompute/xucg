@@ -38,6 +38,8 @@ ucs_status_t sct_rc_ofd_ep_alloc_event(sct_ep_h tl_ep, sct_event_h event, uint8_
 
 ucs_status_t sct_rc_ofd_ep_put_with_notify(sct_ep_h tl_ep, sct_ofd_req_h req, const sct_iov_t *iov);
 ucs_status_t sct_rc_ofd_ep_wait_notify(sct_ep_h tl_ep, sct_ofd_req_h req, sct_wait_elem_h elem);
+ucs_status_t sct_rc_ofd_ep_barrier(sct_ep_h ep, sct_ofd_req_h req,
+                                   sct_event_h *notify_event, sct_event_h *wait_event, int event_num);
 
 ucs_status_t sct_rc_ofd_ep_get_address(sct_ep_h tl_ep, uct_ep_addr_t *addr);
 

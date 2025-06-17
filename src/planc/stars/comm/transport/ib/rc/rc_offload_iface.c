@@ -266,6 +266,7 @@ static sct_rc_iface_ops_t sct_rc_ofd_iface_ops = {
         {
         .ep_put_with_notify       = sct_rc_ofd_ep_put_with_notify,
         .ep_wait_notify           = sct_rc_ofd_ep_wait_notify,
+        .ep_barrier               = sct_rc_ofd_ep_barrier,
         .ep_alloc_event           = sct_rc_ofd_ep_alloc_event,
         .ep_create                = UCS_CLASS_NEW_FUNC_NAME(sct_rc_ofd_ep_t),
         .ep_destroy               = UCS_CLASS_DELETE_FUNC_NAME(sct_rc_ofd_ep_t),

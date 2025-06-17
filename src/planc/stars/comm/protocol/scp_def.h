@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Huawei Technologies Co., Ltd. 2024-2024. All rights reserved.
+ * Copyright (c) Huawei Technologies Co., Ltd. 2024-2025. All rights reserved.
  */
 
 #ifndef XUCG_SCP_DEF_H
@@ -75,8 +75,9 @@ typedef enum {
 } scp_lane_type_t;
 
 typedef enum {
-    OFFLOAD_PUT = 0,
+    OFFLOAD_PUT,
     OFFLOAD_WAIT,
+    OFFLOAD_BARRIER
 } ofd_req_type_t;
 
 typedef struct scp_ep *scp_ep_h;

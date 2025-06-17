@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Huawei Technologies Co., Ltd. 2024-2024. All rights reserved.
+ * Copyright (c) Huawei Technologies Co., Ltd. 2024-2025. All rights reserved.
  */
 
 #ifndef STARS_SCT_TL_H
@@ -17,6 +17,11 @@ typedef ucs_status_t (*sct_ep_put_with_notify_func_t)(sct_ep_h ep, sct_ofd_req_h
 
 /* endpoint - wait */
 typedef ucs_status_t (*sct_ep_wait_notify_func_t)(sct_ep_h ep, sct_ofd_req_h req, sct_wait_elem_h elem);
+
+/* endpoint - barrier */
+typedef ucs_status_t (*sct_ep_barrier_func_t)(sct_ep_h ep, sct_ofd_req_h req,
+                                              sct_event_h *notify_event, sct_event_h *wait_event,
+                                              int event_num);
 
 /* endpoint - connection establishment */
 
@@ -76,6 +81,9 @@ typedef struct sct_iface_ops {
 
     /* endpoint - wait */
     sct_ep_wait_notify_func_t           ep_wait_notify;
+
+    /* endpoint - barrier */
+    sct_ep_barrier_func_t               ep_barrier;
 
     sct_ep_alloc_event_func_t           ep_alloc_event;
 

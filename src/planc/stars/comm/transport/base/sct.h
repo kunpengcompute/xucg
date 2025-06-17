@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Huawei Technologies Co., Ltd. 2024-2024. All rights reserved.
+ * Copyright (c) Huawei Technologies Co., Ltd. 2024-2025. All rights reserved.
  */
 
 #ifndef STARS_SCT_H
@@ -951,6 +951,13 @@ UCT_INLINE_API ucs_status_t sct_ep_put_with_notify(sct_ep_h ep, sct_ofd_req_h re
 UCT_INLINE_API ucs_status_t sct_ep_wait_notify(sct_ep_h ep, sct_ofd_req_h req, sct_wait_elem_h elem)
 {
     return ep->iface->ops.ep_wait_notify(ep, req, elem);
+}
+
+UCT_INLINE_API ucs_status_t sct_ep_barrier(sct_ep_h ep, sct_ofd_req_h req,
+                                           sct_event_h *notify_event, sct_event_h *wait_event,
+                                           int event_num)
+{
+    return ep->iface->ops.ep_barrier(ep, req, notify_event, wait_event, event_num);
 }
 
 UCT_INLINE_API ucs_status_t sct_iface_submit_request(sct_iface_h iface, sct_ofd_req_h req)

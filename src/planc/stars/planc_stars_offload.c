@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Huawei Technologies Co., Ltd. 2024-2024. All rights reserved.
+ * Copyright (c) Huawei Technologies Co., Ltd. 2024-2025. All rights reserved.
  */
 
 #include "planc_stars_offload.h"
@@ -121,6 +121,15 @@ ucg_status_t ucg_planc_stars_fill_ofd_wait_req_elem(uint32_t eid_idx,
     stars_event_elem_h elem = &event_elem[elem_offset + eid_idx];
     request->scp_event = &elem->event;
 
+    UCG_ASSERT_RET(request->scp_event != NULL, UCG_ERR_INVALID_ADDR);
+    return UCG_OK;
+}
+
+ucg_status_t ucg_planc_stars_fill_ofd_barrier_req_elem(stars_rank_info_h peer, scp_ofd_req_elem_h request)
+{
+    request->type = OFFLOAD_BARRIER;
+    request->ep   = peer->ep;
+    request->scp_event = peer->barrier_event;
     UCG_ASSERT_RET(request->scp_event != NULL, UCG_ERR_INVALID_ADDR);
     return UCG_OK;
 }

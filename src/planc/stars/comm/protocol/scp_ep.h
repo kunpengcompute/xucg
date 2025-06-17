@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Huawei Technologies Co., Ltd. 2024-2024. All rights reserved.
+ * Copyright (c) Huawei Technologies Co., Ltd. 2024-2025. All rights reserved.
  */
 
 #ifndef XUCG_SCP_EP_H
@@ -7,6 +7,10 @@
 
 #include "scp_worker.h"
 
+/*
+ * Each handle may get two WAIT tasks, so we prepare two scp_events for a EP_BARRIER request.
+ */
+#define EP_BARRIER_EVENT_NUM 2
 
 typedef enum scp_ep_state {
     EP_INITED,

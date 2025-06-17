@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Huawei Technologies Co., Ltd. 2024-2024. All rights reserved.
+ * Copyright (c) Huawei Technologies Co., Ltd. 2024-2025. All rights reserved.
  */
 
 #include "scp_rma.h"
@@ -114,6 +114,58 @@ static ucg_status_t scp_ep_wait_notify(scp_ofd_req_h scp_req, scp_ofd_req_elem_h
     return UCG_OK;
 }
 
+/*
+ * Handlers barrier in a stream.
+ * Implemented by two rounds of ring-notify. Four handlers example:
+ * Round 1:         notify    notify    notify
+ *                0 ------> 1 ------> 2 ------> 3
+ *                         wait      wait      wait
+ * Round 1 ensures that all handlers' previous requests completed, then round 2 notify handlers to continue.
+ * Round 2:          notify    notify    notify
+ *                0 <------ 1 <------ 2 <------ 3
+ *               wait      wait      wait
+ */
+static ucg_status_t scp_ep_barrier(scp_ofd_req_h scp_req, scp_ofd_req_elem_h req_elem)
+{
+    ucs_status_t status;
+    scp_ep_h ep = req_elem->ep;
+    scp_rsc_index_t iface_idx;
+    sct_event_h wait_event[EP_BARRIER_EVENT_NUM];
+    sct_event_h notify_event[EP_BARRIER_EVENT_NUM];
+
+    for (uint8_t conn_idx = 0, src; conn_idx < ep->conn_num; ++conn_idx) {
+        src = ep->local_lanes[conn_idx];
+        iface_idx = ep->sct_eps_rsc_idx[src];
+
+        if (conn_idx != 0) {
+            uint8_t last_src = ep->local_lanes[conn_idx - 1];
+            wait_event[0] = &req_elem->scp_event[0].sct_event[src];
+            notify_event[1] = &req_elem->scp_event[1].sct_event[last_src];
+        } else {
+            wait_event[0] = NULL;
+            notify_event[1] = NULL;
+        }
+        if (conn_idx != ep->conn_num - 1) {
+            uint8_t next_src = ep->local_lanes[conn_idx + 1];
+            wait_event[1] = &req_elem->scp_event[1].sct_event[src];
+            notify_event[0] = &req_elem->scp_event[0].sct_event[next_src];
+        } else {
+            wait_event[1] = NULL;
+            notify_event[0] = NULL;
+        }
+        status = sct_ep_barrier(ep->sct_eps[src],
+                                &scp_req->sct_req[iface_idx],
+                                notify_event, wait_event,
+                                EP_BARRIER_EVENT_NUM);
+        if (status != UCS_OK) {
+            ucg_error("Failed to do ep barrier: %s", ucs_status_string(status));
+            return ucg_status_s2g(status);
+        }
+    }
+
+    return UCG_OK;
+}
+
 static void scp_submit_ofd_hander(void *context, ucg_status_t status)
 {
     if (ucg_unlikely(context == NULL)) {
@@ -193,7 +245,8 @@ ucg_status_t scp_submit_ofd_req(scp_worker_h worker, scp_ofd_stars_stream_h stre
     /* get the last req_elem of each iface */
     int req_elem_idx = 0;
     ucs_queue_for_each(req_elem, &req->queue_head, queue_elem) {
-        if (req_elem->type != OFFLOAD_PUT && req_elem->type != OFFLOAD_WAIT) {
+        if (req_elem->type != OFFLOAD_PUT && req_elem->type != OFFLOAD_WAIT
+            && req_elem->type != OFFLOAD_BARRIER) {
             pthread_mutex_unlock(&worker->submit_mutex);
             ucg_fatal("Unexpected request task type %d", req_elem->type);
         }
@@ -206,6 +259,8 @@ ucg_status_t scp_submit_ofd_req(scp_worker_h worker, scp_ofd_stars_stream_h stre
             status = scp_put_with_notify(req, req_elem);
         } else if (req_elem->type == OFFLOAD_WAIT) {
             status = scp_ep_wait_notify(req, req_elem);
+        } else if (req_elem->type == OFFLOAD_BARRIER) {
+            status = scp_ep_barrier(req, req_elem);
         } else {
             pthread_mutex_unlock(&worker->submit_mutex);
             ucg_fatal("Unexpected request task type %d", req_elem->type);

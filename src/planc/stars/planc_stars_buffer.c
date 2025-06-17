@@ -80,6 +80,15 @@ static ucg_status_t ucg_planc_stars_algo_alloc_event_common(ucg_planc_stars_op_t
             elem++;
             elem_offset++;
         }
+        if (rank_info->barrier_flag == 0) {
+            continue;
+        }
+        rank_info->barrier_event = ucg_calloc(EP_BARRIER_EVENT_NUM, sizeof(scp_event_t), "barrie event");
+        UCG_ASSERT_RET(rank_info->barrier_event != NULL, UCG_ERR_NO_MEMORY);
+        for (int i = 0; i < EP_BARRIER_EVENT_NUM; i++) {
+            status = scp_ep_alloc_event(rank_info->ep, &rank_info->barrier_event[i], events_pool);
+            UCG_CHECK_GOTO_ERR(status, out, "Failed to alloc barrier event!");
+        }
     }
     return UCG_OK;
 
@@ -230,6 +239,17 @@ static void ucg_planc_stars_shared_events_release(ucg_planc_stars_op_t *op)
         if (ucg_unlikely(status != UCG_OK)) {
             ucg_fatal("Failed to free sct ep event");
         }
+        if (rank->barrier_flag == 0) {
+            continue;
+        }
+        ucg_assert(rank->barrier_event != NULL);
+        for (int i = 0; i < EP_BARRIER_EVENT_NUM; i++) {
+            status = scp_ep_free_event(rank->ep, &rank->barrier_event[i], events_pool);
+            if (ucg_unlikely(status != UCG_OK)) {
+                ucg_fatal("Failed to free barrier event");
+            }
+        }
+        ucg_free(rank->barrier_event);
         elem++;
     }
     ucg_planc_stars_event_elem_cleanup(&plan->event_elem);

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Huawei Technologies Co., Ltd. 2021-2024. All rights reserved.
+ * Copyright (c) Huawei Technologies Co., Ltd. 2021-2025. All rights reserved.
  * Description: sdma_offload_iface.c
  * Author:
  * Create: 2021
@@ -253,6 +253,7 @@ static UCS_CLASS_DECLARE_DELETE_FUNC(sct_sdma_ofd_iface_t, sct_iface_t);
 static sct_iface_ops_t uct_sdma_ofd_iface_ops = {
     .ep_put_with_notify       = sct_sdma_ofd_ep_put_with_notify,
     .ep_wait_notify           = sct_sdma_ofd_ep_wait_notify,
+    .ep_barrier               = sct_sdma_ofd_ep_barrier,
     .ep_alloc_event           = sct_sdma_ofd_ep_alloc_event,
     .ep_create                = UCS_CLASS_NEW_FUNC_NAME(sct_sdma_ofd_ep_t),
     .ep_destroy               = UCS_CLASS_DELETE_FUNC_NAME(sct_sdma_ofd_ep_t),

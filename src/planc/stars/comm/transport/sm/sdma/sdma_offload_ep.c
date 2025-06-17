@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Huawei Technologies Co., Ltd. 2024-2024. All rights reserved.
+ * Copyright (c) Huawei Technologies Co., Ltd. 2024-2025. All rights reserved.
  */
 
 #include "sdma_offload_ep.h"
@@ -146,6 +146,42 @@ ucs_status_t sct_sdma_ofd_ep_wait_notify(sct_ep_h tl_ep, sct_ofd_req_h sct_req,
     if (ucg_unlikely(status != UCS_OK)) {
         ucg_error("failed to set event wait params");
     }
+    return status;
+}
+
+ucs_status_t sct_sdma_ofd_ep_barrier(sct_ep_h ep, sct_ofd_req_h req, sct_event_h *notify_event, sct_event_h *wait_event, int event_num)
+{
+    ucs_status_t status = UCS_OK;
+    sct_sdma_ofd_iface_t *iface = ucs_derived_of(ep->iface, sct_sdma_ofd_iface_t);
+
+    for (int event_idx = 0; event_idx < event_num; event_idx++) {
+        if (wait_event[event_idx] != NULL) {
+            sct_wait_elem_t wait_elem;
+            wait_elem.sct_event = wait_event[event_idx];
+            wait_elem.flag = 1;
+            status = sct_sdma_ofd_ep_wait_notify(ep, req, &wait_elem);
+            if (ucg_unlikely(status != UCS_OK)) {
+                ucg_error("failed to set wait notify req in barrier");
+                return status;
+            }
+        }
+
+        if (notify_event[event_idx] != NULL) {
+            write_notify_trans_param_t *event_parm =
+                    sct_sdma_ofd_md_get_notify_param(iface->super.md);
+            if (ucg_unlikely(event_parm == NULL)) {
+                ucg_fatal("Invalid stars event param resource.");
+            }
+
+            sct_sdma_ofd_ep_set_notify_parm(notify_event[event_idx], event_parm);
+            status = sct_sdma_ofd_ep_set_trans_parm(req, STARS_WRITE_NOTIFY,
+                                                    1, event_parm);
+            if (ucg_unlikely(status != UCS_OK)) {
+                ucg_error("failed to set event wait params");
+            }
+        }
+    }
+
     return status;
 }
 

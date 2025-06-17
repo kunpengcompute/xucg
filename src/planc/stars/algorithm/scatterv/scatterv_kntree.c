@@ -22,12 +22,12 @@ static ucg_status_t UCG_STARS_ALGO_FUN(scatterv_kntree, get_scounts)(ucg_planc_s
     ucg_status_t status;
     ucg_planc_stars_set_p2p_params(op, &params);
 
+    op->scatterv.kntree.sendtype_size = ucg_dt_extent(args->sendtype);
     if (myrank == root) {
-        op->scatterv.kntree.sendtype_size = ucg_dt_extent(args->sendtype);
         op->scatterv.kntree.sendcounts = (int32_t *)args->sendcounts;
     } else {
         op->scatterv.kntree.sendcounts = ucg_calloc(group_size, sizeof(int32_t),
-                                                        "scatterv staging sendcounts");
+                                                    "scatterv staging sendcounts");
         if (op->scatterv.kntree.sendcounts == NULL) {
             return UCG_ERR_NO_MEMORY;
         }
@@ -294,8 +294,12 @@ static ucg_status_t UCG_STARS_ALGO_FUN(scatterv_kntree, put_req_root)(ucg_planc_
     UCG_ASSERT_CODE_RET(status);
 
     ucg_planc_stars_op_push_ofd_req_elem(op, request);
+    UCG_ASSERT_CODE_GOTO(status, free);
 
     return UCG_OK;
+free:
+    ucg_mpool_put(request);
+    return status;
 }
 
 static ucg_status_t UCG_STARS_ALGO_FUN(scatterv_kntree, put_req_nonroot)(ucg_planc_stars_op_t *op,
@@ -325,8 +329,30 @@ static ucg_status_t UCG_STARS_ALGO_FUN(scatterv_kntree, put_req_nonroot)(ucg_pla
         ucg_planc_stars_fill_ofd_put_req_elem(KNTREE_EID_IDX, peer_rank, request);
     UCG_ASSERT_CODE_RET(status);
     ucg_planc_stars_op_push_ofd_req_elem(op, request);
+    UCG_ASSERT_CODE_GOTO(status, free);
 
     return UCG_OK;
+free:
+    ucg_mpool_put(request);
+    return status;
+}
+
+static ucg_status_t UCG_STARS_ALGO_FUN(scatterv_kntree, barrier_req)(ucg_planc_stars_op_t *op,
+                                                                     stars_rank_info_h peer_rank)
+{
+    scp_ofd_req_elem_h request = ucg_planc_stars_op_get_ofd_req_elem(op);
+    UCG_ASSERT_RET(request != NULL, UCG_ERR_NO_MEMORY);
+    ucg_status_t status = UCG_OK;
+
+    status =
+            ucg_planc_stars_fill_ofd_barrier_req_elem(peer_rank, request);
+    UCG_ASSERT_CODE_GOTO(status, free);
+    ucg_planc_stars_fill_ofd_barrier_req_elem(peer_rank, request);
+    ucg_planc_stars_op_push_ofd_req_elem(op, request);
+    return UCG_OK;
+free:
+    ucg_mpool_put(request);
+    return status;
 }
 
 static ucg_status_t UCG_STARS_ALGO_FUN(scatterv_kntree, wait_req)(ucg_planc_stars_op_t *op,
@@ -334,10 +360,17 @@ static ucg_status_t UCG_STARS_ALGO_FUN(scatterv_kntree, wait_req)(ucg_planc_star
 {
     scp_ofd_req_elem_h request = ucg_planc_stars_op_get_ofd_req_elem(op);
     UCG_ASSERT_RET(request != NULL, UCG_ERR_NO_MEMORY);
+    ucg_status_t status = UCG_OK;
 
+    status =
+            ucg_planc_stars_fill_ofd_wait_req_elem(KNTREE_EID_IDX, peer_rank, request, op->plan.event_elem);
+    UCG_ASSERT_CODE_GOTO(status, free);
     ucg_planc_stars_fill_ofd_wait_req_elem(KNTREE_EID_IDX, peer_rank, request, op->plan.event_elem);
     ucg_planc_stars_op_push_ofd_req_elem(op, request);
     return UCG_OK;
+free:
+    ucg_mpool_put(request);
+    return status;
 }
 
 /* Arrange tasks and submit tasks to Stars. */
@@ -356,7 +389,9 @@ static ucg_status_t UCG_STARS_ALGO_FUN(scatterv_kntree, submit_stars_op)(ucg_pla
         /* Root just needs to put data */
         stars_rank_info_h peer_rank = &plan->comm_dep.get_ranks[0];
         status = UCG_STARS_ALGO_FUN(scatterv_kntree, wait_req)(op, peer_rank);
-        UCG_CHECK_GOTO(status, out);;
+        UCG_CHECK_GOTO(status, out);
+        status = UCG_STARS_ALGO_FUN(scatterv_kntree, barrier_req)(op, peer_rank);
+        UCG_CHECK_GOTO(status, out);
     }
 
     /* Put data to child */
@@ -439,12 +474,12 @@ static ucg_status_t UCG_STARS_ALGO_FUN(scatterv_kntree, init_sbuf)(ucg_planc_sta
 }
 
 static inline size_t UCG_STARS_ALGO_FUN(scatterv_kntree, put_max_size)(ucg_planc_stars_op_t *op,
-                                                      ucg_coll_args_t *coll_args)
+                                                                       ucg_coll_args_t *coll_args)
 {
     ucg_vgroup_t *vgroup = op->super.vgroup;
     ucg_coll_scatterv_args_t *args = &coll_args->scatterv;
     ucg_rank_t myrank = vgroup->myrank;
-    int32_t max_count = 0, cur_count;
+    int32_t max_count = 0, cur_count = 0;
 
     if (myrank == args->root) {
         for (uint32_t i = 0; i < vgroup->size; i++) {
@@ -486,17 +521,28 @@ static ucg_status_t UCG_STARS_ALGO_FUN(scatterv_kntree, offload_plan)(ucg_planc_
     if (myrank != root) {
         peer_rank = op->scatterv.kntree.parent_rank;
         comm_dep->get_ranks[0].peer_id = peer_rank;
+        comm_dep->get_ranks[0].barrier_flag = 1;
         status = ucg_planc_stars_rank_dep_init(op, &comm_dep->get_ranks[0], peer_rank, 1);
-        UCG_ASSERT_CODE_RET(status);
+        UCG_ASSERT_CODE_GOTO(status, err_free_memory);
     }
 
     for (uint32_t idx = 0; idx < comm_dep->put_rank_num; ++idx) {
         peer_rank = op->scatterv.kntree.child_rank[idx];
         comm_dep->put_ranks[idx].peer_id = peer_rank;
         status = ucg_planc_stars_rank_dep_init(op, &comm_dep->put_ranks[idx], peer_rank, 1);
-        UCG_ASSERT_CODE_RET(status);
+        UCG_ASSERT_CODE_GOTO(status, err_free_memory);
     }
+    return UCG_OK;
 
+err_free_memory:
+    if (comm_dep->get_ranks) {
+        ucg_free(comm_dep->get_ranks);
+        comm_dep->get_ranks = NULL;
+    }
+    if (comm_dep->put_ranks) {
+        ucg_free(comm_dep->put_ranks);
+        comm_dep->put_ranks = NULL;
+    }
     return status;
 }
 
@@ -511,7 +557,16 @@ static ucg_status_t UCG_STARS_ALGO_FUN(scatterv_kntree, init)(ucg_plan_op_t *ucg
     ucg_status_t status;
 
     ucg_planc_stars_op_t *op = ucg_derived_of(ucg_op, ucg_planc_stars_op_t);
-    op->staging_area                            = NULL;
+    ucg_vgroup_t *vgroup = op->super.vgroup;
+    ucg_planc_stars_group_t *stars_group = ucg_derived_of(vgroup, ucg_planc_stars_group_t);
+    ucg_planc_stars_scatterv_config_t *config =
+            UCG_PLANC_STARS_CONTEXT_BUILTIN_CONFIG_BUNDLE(stars_group->context, scatterv,
+                                                          UCG_COLL_TYPE_SCATTERV);
+    op->scatterv.kntree.run_mode = !config->run_hpl;
+    ucg_debug("Set scatterv kntree running mode : %s, degree : %d",
+              op->scatterv.kntree.run_mode ? "COMMON" : "HPL", config->kntree_degree);
+
+    op->staging_area                        = NULL;
     op->scatterv.kntree.staging_count       = 0;
     op->scatterv.kntree.sendcounts          = NULL;
     op->scatterv.kntree.sendtype_size       = 0;
@@ -526,15 +581,6 @@ static ucg_status_t UCG_STARS_ALGO_FUN(scatterv_kntree, init)(ucg_plan_op_t *ucg
     op->scatterv.kntree.is_empty            = 0;
     // Avoid cleaning up rkey_bundle.
     op->plan.comm_dep.put_rank_num          = 0;
-
-    ucg_vgroup_t *vgroup = op->super.vgroup;
-    ucg_planc_stars_group_t *stars_group = ucg_derived_of(vgroup, ucg_planc_stars_group_t);
-    ucg_planc_stars_scatterv_config_t *config =
-        UCG_PLANC_STARS_CONTEXT_BUILTIN_CONFIG_BUNDLE(stars_group->context, scatterv,
-                                                      UCG_COLL_TYPE_SCATTERV);
-    op->scatterv.kntree.run_mode = !config->run_hpl;
-    ucg_debug("Set scatterv kntree running mode : %s, degree : %d",
-              op->scatterv.kntree.run_mode ? "COMMON" : "HPL", config->kntree_degree);
 
     int32_t map[vgroup->size];
     if (op->scatterv.kntree.run_mode == COMMON_MODE) {

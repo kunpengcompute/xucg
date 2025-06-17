@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Huawei Technologies Co., Ltd. 2024-2024. All rights reserved.
+ * Copyright (c) Huawei Technologies Co., Ltd. 2024-2025. All rights reserved.
  */
 
 #ifndef SCT_IB_OFFLOAD_MD_H_
@@ -16,6 +16,7 @@ typedef struct sct_rc_ofd_md {
     sct_ib_md_t             super;
     ucg_mpool_t             rdma_params_pool;
     ucg_mpool_t             event_params_pool;
+    ucg_mpool_t             notify_params_pool;
     struct {
         uint8_t pool_id;
     } dev_attr;
@@ -36,6 +37,12 @@ UCS_F_ALWAYS_INLINE event_trans_parm_t* sct_rc_ofd_md_get_event_param(sct_md_h s
 {
     sct_rc_ofd_md_t *md = ucs_derived_of(sct_md, sct_rc_ofd_md_t);
     return ucg_mpool_get(&md->event_params_pool);
+}
+
+UCS_F_ALWAYS_INLINE write_notify_trans_param_t* sct_rc_ofd_md_get_notify_param(sct_md_h sct_md)
+{
+    sct_rc_ofd_md_t *md = ucs_derived_of(sct_md, sct_rc_ofd_md_t);
+    return ucg_mpool_get(&md->notify_params_pool);
 }
 
 #endif

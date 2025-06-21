@@ -132,6 +132,9 @@ static ucg_status_t scp_ep_barrier(scp_ofd_req_h scp_req, scp_ofd_req_elem_h req
     scp_rsc_index_t iface_idx;
     sct_event_h wait_event[EP_BARRIER_EVENT_NUM];
     sct_event_h notify_event[EP_BARRIER_EVENT_NUM];
+    if (ep->sdma_ep_idx != UINT8_MAX) {
+        return UCG_OK;
+    }
 
     for (uint8_t conn_idx = 0, src; conn_idx < ep->conn_num; ++conn_idx) {
         src = ep->local_lanes[conn_idx];
@@ -217,6 +220,9 @@ err_free:
 static void scp_get_req_flag(scp_ofd_req_h req, scp_ofd_req_elem_h elem, int req_elem_idx)
 {
     scp_ep_h ep = elem->ep;
+    if (elem->type == OFFLOAD_BARRIER) {
+        return;
+    }
     for (uint8_t conn_idx = 0; conn_idx < ep->conn_num; ++conn_idx) {
         uint8_t src_idx = ep->local_lanes[conn_idx];
         uint8_t dst_idx = ep->remote_lanes[src_idx];

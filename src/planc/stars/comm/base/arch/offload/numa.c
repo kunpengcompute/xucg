@@ -127,7 +127,7 @@ static ucg_status_t scs_numa_get_cpu_list(uint8_t node_id, scs_numa_cpu_list_t *
     sprintf(real_path, PATH_SYS_NUMA_CPU_LIST, node_id);
     ssize_t size = ucs_read_file(curr_ctx, sizeof(curr_ctx), 1, PATH_SYS_NUMA_CPU_LIST, node_id);
     if (ucg_unlikely(size < 3)) {
-        ucg_warn("failed to read file: %s", real_path);
+        ucg_info("failed to read file: %s", real_path);
         cpu_list->first = 0;
         cpu_list->last = 0;
         return UCG_OK;

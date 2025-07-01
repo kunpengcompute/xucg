@@ -12,7 +12,7 @@ if (UCG_BUILD_PLANC_HCCL MATCHES "ON")
     add_library(ucg_planc_hccl SHARED ${SRCS})
     set_target_properties(ucg_planc_hccl
                           PROPERTIES VERSION
-                          ${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR}.${PROJECT_VERSION_PATCH_SPECIAL}
+                          ${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR}.${PROJECT_VERSION_PATCH}
                           SOVERSION
                           ${PROJECT_VERSION_MAJOR})
     if(SUPPORT_CMAKE3 MATCHES "ON")

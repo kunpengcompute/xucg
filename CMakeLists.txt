@@ -19,7 +19,6 @@ else()
     set(PROJECT_VERSION_MINOR 1)
     set(PROJECT_VERSION_PATCH 0)
 endif()
-set(PROJECT_VERSION_PATCH_SPECIAL "RC1")
 
 # Define options
 option(UCG_BUILD_TOOLS "Build ucg tools" ON)

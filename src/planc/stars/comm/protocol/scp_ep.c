@@ -421,7 +421,10 @@ ucg_status_t scp_ep_alloc_event(scp_ep_h ep, scp_event_h event, events_pool_h *e
             }
         }
         UCG_ASSERT_RET(status == UCS_OK, ucg_status_s2g(status));
-    err:
+    }
+
+    return ucg_status_s2g(status);
+err:
     for (uint8_t dst_idx = 0, src_idx = 0; src_idx < err_ep_num; ++src_idx) {
         dst_idx = ep->remote_lanes[src_idx];
         if (dst_idx >= SCP_MAX_LANE) {
@@ -437,11 +440,8 @@ ucg_status_t scp_ep_alloc_event(scp_ep_h ep, scp_event_h event, events_pool_h *e
         }
         UCG_ASSERT_RET(status == UCS_OK, ucg_status_s2g(status));
     }
- 
-    return UCG_ERR_NO_RESOURCE;
-    }
 
-    return ucg_status_s2g(status);
+    return UCG_ERR_NO_RESOURCE;
 }
 
 ucg_status_t scp_ep_free_event(scp_ep_h ep, scp_event_h event, events_pool_h *eid_pool)

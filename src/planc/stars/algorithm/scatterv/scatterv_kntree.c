@@ -157,6 +157,7 @@ static ucg_status_t UCG_STARS_ALGO_FUN(scatterv_kntree, remove_zero)(ucg_planc_s
         op->scatterv.kntree.rank_map =
             ucg_calloc(v_group_size, sizeof(int32_t), "tempory rank map");
         if (op->scatterv.kntree.rank_map == NULL) {
+            ucg_free(op->scatterv.kntree.child_rank);
             return UCG_ERR_NO_MEMORY;
         }
         memcpy(op->scatterv.kntree.rank_map, map, v_group_size * sizeof(int32_t));

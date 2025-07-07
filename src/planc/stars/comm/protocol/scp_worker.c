@@ -262,6 +262,11 @@ ucg_status_t scp_create_worker(scp_context_h context, scp_worker_h *worker_p)
 
 err:
     ucg_mpool_cleanup(&worker->ep_addr_mp, 1);
+    for (int i = 0; i < worker->num_ifaces; ++i) {
+        scp_worker_iface_cleanup(worker->ifaces[i]);
+    }
+    ucg_free(worker->ifaces);
+    worker->ifaces = NULL;
     ucg_free(worker);
 err_destory_ep_pool:
     ucg_mpool_cleanup(&worker->ep_mp, 1);

@@ -429,7 +429,7 @@ ucg_status_t scp_ep_alloc_event(scp_ep_h ep, scp_event_h event, events_pool_h *e
         }
         sct_ep = ep->sct_eps[src_idx];
         sct_event = &event->sct_event[dst_idx];
-        scs_eid_pool_status_t eid_pool_status = sct_put_event_to_pool(sct_ep, eid_pool, sct_event);
+        scs_eid_pool_status_t eid_pool_status = sct_put_event_to_pool(sct_ep, events_pool, sct_event);
         if (eid_pool_status == SCS_EVENT_POOL_OK) {
             status = UCS_OK;
         } else {

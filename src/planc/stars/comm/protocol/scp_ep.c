@@ -399,6 +399,7 @@ ucg_status_t scp_ep_alloc_event(scp_ep_h ep, scp_event_h event, events_pool_h *e
 
     sct_ep_h sct_ep = NULL;
     sct_event_h sct_event = NULL;
+    uint8_t err_ep_num = 0;
 
     for (uint8_t dst_idx, src_idx = 0; src_idx < ep->sct_ep_num; ++src_idx) {
         dst_idx = ep->remote_lanes[src_idx];
@@ -414,8 +415,30 @@ ucg_status_t scp_ep_alloc_event(scp_ep_h ep, scp_event_h event, events_pool_h *e
             status = UCS_OK;
         } else {
             status = sct_ep_alloc_event(sct_ep, sct_event, 0);
+            if (status != UCS_OK) {
+                err_ep_num = src_idx;
+                goto err;
+            }
         }
         UCG_ASSERT_RET(status == UCS_OK, ucg_status_s2g(status));
+    err:
+    for (uint8_t dst_idx = 0, src_idx = 0; src_idx < err_ep_num; ++src_idx) {
+        dst_idx = ep->remote_lanes[src_idx];
+        if (dst_idx >= SCP_MAX_LANE) {
+            continue;
+        }
+        sct_ep = ep->sct_eps[src_idx];
+        sct_event = &event->sct_event[dst_idx];
+        scs_eid_pool_status_t eid_pool_status = sct_put_event_to_pool(sct_ep, eid_pool, sct_event);
+        if (eid_pool_status == SCS_EVENT_POOL_OK) {
+            status = UCS_OK;
+        } else {
+            status = sct_ep_free_event(sct_event, 0);
+        }
+        UCG_ASSERT_RET(status == UCS_OK, ucg_status_s2g(status));
+    }
+ 
+    return UCG_ERR_NO_RESOURCE;
     }
 
     return ucg_status_s2g(status);

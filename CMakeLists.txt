@@ -12,11 +12,11 @@ endif()
 
 if(SUPPORT_CMAKE3 MATCHES "ON")
     cmake_policy(SET CMP0048 NEW)
-    project(xucg VERSION 25.1.0)
+    project(xucg VERSION 25.2.0)
 else()
     project(xucg C CXX)
     set(PROJECT_VERSION_MAJOR 25)
-    set(PROJECT_VERSION_MINOR 1)
+    set(PROJECT_VERSION_MINOR 2)
     set(PROJECT_VERSION_PATCH 0)
 endif()
 

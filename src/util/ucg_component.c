@@ -40,7 +40,8 @@ static ucg_status_t ucg_components_load_one(const char *lib_path,
     dlerror(); /* Clear any existing error */
     void *handle = dlopen(lib_path, RTLD_LAZY | RTLD_GLOBAL);
     if (handle == NULL) {
-        ucg_error("Failed to load library, %s", dlerror());
+        // change log level form error to debug
+        ucg_debug("Failed to load library, %s", dlerror());
         goto err;
     }
 

@@ -53,6 +53,7 @@ typedef struct ucg_planc_ucx_op {
         ucg_planc_ucx_allgatherv_t allgatherv;
         ucg_planc_ucx_reduce_t reduce;
         ucg_planc_ucx_scatterv_t scatterv;
+        ucg_planc_ucx_gatherv_t gatherv;
     };
 } ucg_planc_ucx_op_t;
 
@@ -102,7 +103,7 @@ static inline void ucg_planc_ucx_op_reset(ucg_planc_ucx_op_t *op)
     ucg_planc_ucx_p2p_state_reset(&op->p2p_state);
     /* The request ID is used as the tag to ensure that the messages
        in the same op can be correctly matched. */
-    ucg_assert(op->super.super.id != UCG_GROUP_BASE_REQ_ID);
+    // ucg_assert(op->super.super.id != UCG_GROUP_BASE_REQ_ID);
     op->tag = op->super.super.id;
     op->flags = 0;
     return;

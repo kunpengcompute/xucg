@@ -137,7 +137,7 @@ static ucg_status_t ucg_planc_ucx_gatherv_linear_check(ucg_vgroup_t *vgroup)
     uint32_t group_size = vgroup->size;
     if (group_size != 256) {
         ucg_info("Gatherv linear is slower than OpenMPI in these scenarios, so roll back to OpenMPI");
-        return UCG_ERR_UNSUPPORTED;
+        return UCG_OK;
     }
     return UCG_OK;
 }

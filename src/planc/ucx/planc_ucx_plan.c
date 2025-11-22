@@ -26,6 +26,10 @@ static const ucg_plan_policy_t* ucg_planc_ucx_get_plan_policy(ucg_coll_type_t co
         case UCG_COLL_TYPE_IBARRIER:
             policy = ucg_planc_ucx_get_barrier_plan_policy(node_level, ppn_level);
             break;
+        case UCG_COLL_TYPE_SCATTER:
+        case UCG_COLL_TYPE_ISCATTER:
+            policy = ucg_planc_ucx_get_scatter_plan_policy(node_level, ppn_level);
+            break;
         case UCG_COLL_TYPE_SCATTERV:
         case UCG_COLL_TYPE_ISCATTERV:
             policy = ucg_planc_ucx_get_scatterv_plan_policy(node_level, ppn_level);
@@ -60,6 +64,9 @@ static ucg_coll_type_t ucg_planc_ucx_coll_nonblock_2_block(ucg_coll_type_t coll)
             break;
         case UCG_COLL_TYPE_IBARRIER:
             new_coll = UCG_COLL_TYPE_BARRIER;
+            break;
+        case UCG_COLL_TYPE_ISCATTER:
+            new_coll = UCG_COLL_TYPE_SCATTER;
             break;
         case UCG_COLL_TYPE_ISCATTERV:
             new_coll = UCG_COLL_TYPE_SCATTERV;

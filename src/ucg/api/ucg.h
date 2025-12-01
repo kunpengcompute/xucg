@@ -1252,6 +1252,14 @@ ucg_status_t ucg_request_scatterv_init(const void *sendbuf, const int32_t *sendc
  * @retval UCG_OK Success.
  * @retval Otherwise Failure.
  */
+
+ucg_status_t ucg_request_gather_init(const void *sendbuf, const int32_t sendcount,
+                                      ucg_dt_h sendtype, void *recvbuf,
+                                      const int32_t recvcount,
+                                      ucg_dt_h recvtype, ucg_rank_t root,
+                                      ucg_group_h group, const ucg_request_info_t *info,
+                                      ucg_request_type_t nb, ucg_request_h *request);
+
 ucg_status_t ucg_request_gatherv_init(const void *sendbuf, const int32_t sendcount,
                                       ucg_dt_h sendtype, void *recvbuf,
                                       const int32_t* recvcounts, const int32_t* displs,

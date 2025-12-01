@@ -24,6 +24,7 @@ const coll_suffix_map_t coll_suffix_map[] = {
     {UCG_COLL_TYPE_IALLREDUCE, "iallreduce"},
     {UCG_COLL_TYPE_IBARRIER, "ibarrier"},
     {UCG_COLL_TYPE_ISCATTERV, "iscatterv"},
+    {UCG_COLL_TYPE_IGATHERV, "igather"},
     {UCG_COLL_TYPE_IGATHERV, "igatherv"},
     {UCG_COLL_TYPE_IALLGATHERV, "iallgatherv"},
     {UCG_COLL_TYPE_IREDUCE, "ireduce"},

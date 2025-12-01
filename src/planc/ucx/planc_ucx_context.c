@@ -71,6 +71,14 @@ static ucg_config_field_t ucg_planc_ucx_config_table[] = {
      ucg_offsetof(ucg_planc_ucx_config_t, plan_attr[UCG_COLL_TYPE_IGATHERV]),
      UCG_CONFIG_TYPE_STRING},
 
+    {"IGATHER_ATTR", "", UCG_PLAN_ATTR_DESC,
+     ucg_offsetof(ucg_planc_ucx_config_t, plan_attr[UCG_COLL_TYPE_IGATHER]),
+     UCG_CONFIG_TYPE_STRING},
+
+    {"GATHER_ATTR", "", UCG_PLAN_ATTR_DESC,
+     ucg_offsetof(ucg_planc_ucx_config_t, plan_attr[UCG_COLL_TYPE_GATHER]),
+     UCG_CONFIG_TYPE_STRING},
+
     {"NPOLLS", "3",
      "Number of ucp progress polling cycles for p2p requests testing",
      ucg_offsetof(ucg_planc_ucx_config_t, n_polls),

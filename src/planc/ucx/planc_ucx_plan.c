@@ -46,6 +46,10 @@ static const ucg_plan_policy_t* ucg_planc_ucx_get_plan_policy(ucg_coll_type_t co
         case UCG_COLL_TYPE_IREDUCE:
             policy = ucg_planc_ucx_get_reduce_plan_policy(node_level, ppn_level);
             break;
+        case UCG_COLL_TYPE_REDUCE_SCATTER:
+        case UCG_COLL_TYPE_IREDUCE_SCATTER:
+            policy = ucg_planc_ucx_get_reduce_scatter_plan_policy(node_level, ppn_level);
+            break;
         default:
             break;
     }
@@ -79,6 +83,9 @@ static ucg_coll_type_t ucg_planc_ucx_coll_nonblock_2_block(ucg_coll_type_t coll)
             break;
         case UCG_COLL_TYPE_IREDUCE:
             new_coll = UCG_COLL_TYPE_REDUCE;
+            break;
+        case UCG_COLL_TYPE_IREDUCE_SCATTER:
+            new_coll = UCG_COLL_TYPE_REDUCE_SCATTER;
             break;
         default:
             break;

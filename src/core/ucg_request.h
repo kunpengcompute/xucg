@@ -51,6 +51,7 @@ typedef enum {
     UCG_COLL_TYPE_GATHERV,
     UCG_COLL_TYPE_ALLGATHERV,
     UCG_COLL_TYPE_REDUCE,
+    UCG_COLL_TYPE_REDUCE_SCATTER,
     UCG_COLL_TYPE_IBCAST,
     UCG_COLL_TYPE_IALLREDUCE,
     UCG_COLL_TYPE_IBARRIER,
@@ -60,6 +61,7 @@ typedef enum {
     UCG_COLL_TYPE_IGATHERV,
     UCG_COLL_TYPE_IALLGATHERV,
     UCG_COLL_TYPE_IREDUCE,
+    UCG_COLL_TYPE_IREDUCE_SCATTER,
     UCG_COLL_TYPE_LAST,
 } ucg_coll_type_t;
 
@@ -142,6 +144,14 @@ typedef struct ucg_coll_reduce_args {
     ucg_rank_t root;
 } ucg_coll_reduce_args_t;
 
+typedef struct ucg_coll_reduce_scatter_args {
+    const void *sendbuf;
+    void *recvbuf;
+    const int32_t *recvcounts;
+    ucg_dt_t *dt;
+    ucg_op_t *op;
+} ucg_coll_reduce_scatter_args_t;
+
 typedef struct ucg_coll_args {
     ucg_coll_type_t type;
     ucg_request_info_t info;
@@ -154,6 +164,7 @@ typedef struct ucg_coll_args {
         ucg_coll_gatherv_args_t gatherv;
         ucg_coll_allgatherv_args_t allgatherv;
         ucg_coll_reduce_args_t reduce;
+        ucg_coll_reduce_scatter_args_t reduce_scatter;
     };
 } ucg_coll_args_t;
 

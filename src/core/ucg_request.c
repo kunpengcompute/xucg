@@ -428,6 +428,38 @@ ucg_status_t ucg_request_allgatherv_init(const void *sendbuf, int sendcount,
     return ucg_request_init(group, &args, request);
 }
 
+ucg_status_t ucg_request_reduce_scatter_init(const void *sendbuf,void *recvbuf,
+                                             const int *recvcounts, ucg_dt_t *dtype, 
+                                             ucg_op_t *op, ucg_group_h group,
+                                             const ucg_request_info_t *info,
+                                             ucg_request_type_t nb,
+                                             ucg_request_h *request)
+{
+    UCG_CHECK_NULL_INVALID(sendbuf, recvbuf, recvcounts, dtype,
+                           op, group, request);
+
+        /* Treat ucg_coll as blocking and non-blocking based on parameter nb */
+    ucg_coll_type_t type = (nb == UCG_REQUEST_NONBLOCKING) ?
+                           UCG_COLL_TYPE_IREDUCE_SCATTER :
+                           UCG_COLL_TYPE_REDUCE_SCATTER;
+    ucg_coll_args_t args = {
+        .type = type,
+        .reduce_scatter.sendbuf = sendbuf,
+        .reduce_scatter.op = op,
+        .reduce_scatter.dt = dtype,
+        .reduce_scatter.recvbuf = recvbuf,
+        .reduce_scatter.recvcounts = recvcounts,
+    };
+
+    if (sendbuf == UCG_IN_PLACE) {
+        UCG_REQUEST_APPLY_INFO_RETURN(&args.info, info, recvbuf);
+    } else {
+        UCG_REQUEST_APPLY_INFO_RETURN(&args.info, info, sendbuf, recvbuf);
+    }
+
+    return ucg_request_init(group, &args, request);
+}
+
 UCG_PROFILE_FUNC(ucg_status_t, ucg_request_start, (request), ucg_request_h request)
 {
     UCG_CHECK_NULL_INVALID(request);
@@ -550,6 +582,14 @@ ucg_status_t ucg_request_msg_size(const ucg_coll_args_t *args, const uint32_t si
         case UCG_COLL_TYPE_IREDUCE:
             *msize = ucg_dt_size(args->reduce.dt) * args->reduce.count;
             break;
+        case UCG_COLL_TYPE_REDUCE_SCATTER:
+        case UCG_COLL_TYPE_IREDUCE_SCATTER:
+            total_size = 0;
+            for (int i = 0; i < size; i++) {
+                total_size += ucg_dt_size(args->reduce_scatter.dt) * args->reduce_scatter.recvcounts[i];
+            }
+            *msize = total_size / size;
+            break;
         default:
             return UCG_ERR_INVALID_PARAM;
     }
@@ -578,6 +618,8 @@ const char* ucg_coll_type_string(ucg_coll_type_t coll_type)
             return "allgatherv";
         case UCG_COLL_TYPE_REDUCE:
             return "reduce";
+        case UCG_COLL_TYPE_REDUCE_SCATTER:
+            return "reduce_scatter";
         case UCG_COLL_TYPE_IBCAST:
             return "ibcast";
         case UCG_COLL_TYPE_IALLREDUCE:
@@ -596,6 +638,8 @@ const char* ucg_coll_type_string(ucg_coll_type_t coll_type)
             return "iallgatherv";
         case UCG_COLL_TYPE_IREDUCE:
             return "ireduce";
+        case UCG_COLL_TYPE_IREDUCE_SCATTER:
+            return "ireduce_scatter";
         default:
             return "unknown";
     }

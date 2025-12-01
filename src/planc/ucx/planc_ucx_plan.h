@@ -20,6 +20,7 @@
 #include "gatherv/gatherv.h"
 #include "gather/gather.h"
 #include "reduce_scatter/reduce_scatter.h"
+#include "reduce_scatter_block/reduce_scatter_block.h"
 
 #define UCG_PLAN_UCX_PLAN_SCORE_0TH 90
 #define UCG_PLAN_UCX_PLAN_SCORE_1ST (UCG_PLAN_UCX_PLAN_SCORE_0TH - 1)
@@ -58,6 +59,7 @@ typedef struct ucg_planc_ucx_op {
         ucg_planc_ucx_gatherv_t gatherv;
         ucg_planc_ucx_gather_t gather;
         ucg_planc_ucx_reduce_scatter_t reduce_scatter;
+        ucg_planc_ucx_reduce_scatter_block_t reduce_scatter_block;
     };
 } ucg_planc_ucx_op_t;
 

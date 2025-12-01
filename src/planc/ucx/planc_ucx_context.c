@@ -87,6 +87,14 @@ static ucg_config_field_t ucg_planc_ucx_config_table[] = {
      ucg_offsetof(ucg_planc_ucx_config_t, plan_attr[UCG_COLL_TYPE_IREDUCE_SCATTER]),
      UCG_CONFIG_TYPE_STRING},
 
+    {"REDUCE_SCATTER_BLOCK_ATTR", "", UCG_PLAN_ATTR_DESC,
+     ucg_offsetof(ucg_planc_ucx_config_t, plan_attr[UCG_COLL_TYPE_REDUCE_SCATTER_BLOCK]),
+     UCG_CONFIG_TYPE_STRING},
+
+    {"IREDUCE_SCATTER_BLOCK_ATTR", "", UCG_PLAN_ATTR_DESC,
+     ucg_offsetof(ucg_planc_ucx_config_t, plan_attr[UCG_COLL_TYPE_IREDUCE_SCATTER_BLOCK]),
+     UCG_CONFIG_TYPE_STRING},
+
     {"NPOLLS", "3",
      "Number of ucp progress polling cycles for p2p requests testing",
      ucg_offsetof(ucg_planc_ucx_config_t, n_polls),

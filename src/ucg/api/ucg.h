@@ -1325,6 +1325,32 @@ ucg_status_t ucg_request_reduce_scatter_init(const void *sendbuf, void *recvbuf,
                                              ucg_op_h op, ucg_group_h group,
                                              const ucg_request_info_t *info,
                                              ucg_request_type_t nb, ucg_request_h *request);
+/**
+ * @ingroup UCG_REQUEST
+ * @brief Create a persistent reduce_scatter request.
+ *
+ * The block of data sent from the j-th process is received by every process and
+ * placed in the j-th block of the recvbuf.
+ *
+ * @param [in]  sendbuf         Starting address of send buffer
+ * @param [out] recvbuf         Address of receive buffer
+ * @param [in]  recvcount       Non-negative integer
+ *                              containing the number of elements that are received
+ *                              from each process
+ * @param [in]  dt              Datatype of buffer elements
+ * @param [in]  op              Operation
+ * @param [in]  group           Communication group
+ * @param [in]  info            Informations for creating request
+ * @param [in]  nb              Nonblocking or blocking request
+ * @param [out] request         Collective request
+ * @retval UCG_OK Success.
+ * @retval Otherwise Failure.
+ */
+ucg_status_t ucg_request_reduce_scatter_block_init(const void *sendbuf, void *recvbuf,
+                                                   int32_t recvcount, ucg_dt_h dt,
+                                                   ucg_op_h op, ucg_group_h group,
+                                                   const ucg_request_info_t *info,
+                                                   ucg_request_type_t nb, ucg_request_h *request);
 
 /**
  * @ingroup UCG_REQUEST

@@ -24,9 +24,12 @@ const coll_suffix_map_t coll_suffix_map[] = {
     {UCG_COLL_TYPE_IALLREDUCE, "iallreduce"},
     {UCG_COLL_TYPE_IBARRIER, "ibarrier"},
     {UCG_COLL_TYPE_ISCATTERV, "iscatterv"},
+    {UCG_COLL_TYPE_IGATHERV, "igather"},
     {UCG_COLL_TYPE_IGATHERV, "igatherv"},
     {UCG_COLL_TYPE_IALLGATHERV, "iallgatherv"},
     {UCG_COLL_TYPE_IREDUCE, "ireduce"},
+    {UCG_COLL_TYPE_IREDUCE_SCATTER, "ireduce_scatter"},
+    {UCG_COLL_TYPE_IREDUCE_SCATTER_BLOCK, "ireduce_scatter_block"},
 };
 
 static ucg_plan_policy_t invalid_policy = {.id = UCG_PLAN_INVALID_POLICY_ID};

@@ -30,6 +30,10 @@ static const ucg_plan_policy_t* ucg_planc_ucx_get_plan_policy(ucg_coll_type_t co
         case UCG_COLL_TYPE_ISCATTERV:
             policy = ucg_planc_ucx_get_scatterv_plan_policy(node_level, ppn_level);
             break;
+        case UCG_COLL_TYPE_GATHER:
+        case UCG_COLL_TYPE_IGATHER:
+            policy = ucg_planc_ucx_get_gather_plan_policy(node_level, ppn_level);
+            break;
         case UCG_COLL_TYPE_GATHERV:
         case UCG_COLL_TYPE_IGATHERV:
             policy = ucg_planc_ucx_get_gatherv_plan_policy(node_level, ppn_level);
@@ -41,6 +45,14 @@ static const ucg_plan_policy_t* ucg_planc_ucx_get_plan_policy(ucg_coll_type_t co
         case UCG_COLL_TYPE_REDUCE:
         case UCG_COLL_TYPE_IREDUCE:
             policy = ucg_planc_ucx_get_reduce_plan_policy(node_level, ppn_level);
+            break;
+        case UCG_COLL_TYPE_REDUCE_SCATTER:
+        case UCG_COLL_TYPE_IREDUCE_SCATTER:
+            policy = ucg_planc_ucx_get_reduce_scatter_plan_policy(node_level, ppn_level);
+            break;
+        case UCG_COLL_TYPE_REDUCE_SCATTER_BLOCK:
+        case UCG_COLL_TYPE_IREDUCE_SCATTER_BLOCK:
+            policy = ucg_planc_ucx_get_reduce_scatter_block_plan_policy(node_level, ppn_level);
             break;
         default:
             break;
@@ -64,6 +76,9 @@ static ucg_coll_type_t ucg_planc_ucx_coll_nonblock_2_block(ucg_coll_type_t coll)
         case UCG_COLL_TYPE_ISCATTERV:
             new_coll = UCG_COLL_TYPE_SCATTERV;
             break;
+        case UCG_COLL_TYPE_IGATHER:
+            new_coll = UCG_COLL_TYPE_GATHER;
+            break;
         case UCG_COLL_TYPE_IGATHERV:
             new_coll = UCG_COLL_TYPE_GATHERV;
             break;
@@ -72,6 +87,12 @@ static ucg_coll_type_t ucg_planc_ucx_coll_nonblock_2_block(ucg_coll_type_t coll)
             break;
         case UCG_COLL_TYPE_IREDUCE:
             new_coll = UCG_COLL_TYPE_REDUCE;
+            break;
+        case UCG_COLL_TYPE_IREDUCE_SCATTER:
+            new_coll = UCG_COLL_TYPE_REDUCE_SCATTER;
+            break;
+        case UCG_COLL_TYPE_IREDUCE_SCATTER_BLOCK:
+            new_coll = UCG_COLL_TYPE_REDUCE_SCATTER_BLOCK;
             break;
         default:
             break;

@@ -296,6 +296,54 @@ ucg_status_t ucg_request_scatterv_init(const void *sendbuf, const int32_t *sendc
     return ucg_request_init(group, &args, request);
 }
 
+ucg_status_t ucg_request_gather_init(const void *sendbuf, const int32_t sendcount,
+                                      ucg_dt_t *sendtype, void *recvbuf,
+                                      const int32_t recvcount,
+                                      ucg_dt_t *recvtype, ucg_rank_t root,
+                                      ucg_group_h group, const ucg_request_info_t *info,
+                                      ucg_request_type_t nb, ucg_request_h *request)
+{
+#ifdef UCG_ENABLE_CHECK_PARAMS
+    if (group->myrank == root) {
+        if (sendbuf == UCG_IN_PLACE) {
+            UCG_CHECK_NULL_INVALID(recvbuf, recvtype, group, request);
+        } else {
+            UCG_CHECK_NULL_INVALID(sendbuf, sendtype, recvbuf, recvtype, group, request);
+        }
+    } else {
+        /* sendbuf, sendcounts, displs and sendtype are not significant for non-root process*/
+        UCG_CHECK_NULL_INVALID(sendbuf, sendtype, group, request);
+    }
+#endif
+
+    /* Treat ucg_coll as blocking and non-blocking based on parameter nb */
+    ucg_coll_type_t type = (nb == UCG_REQUEST_NONBLOCKING) ?
+                           UCG_COLL_TYPE_IGATHER :
+                           UCG_COLL_TYPE_GATHER;
+    ucg_coll_args_t args = {
+        .type = type,
+        .gather.sendbuf = sendbuf,
+        .gather.sendcount = sendcount,
+        .gather.sendtype = sendtype,
+        .gather.recvbuf = recvbuf,
+        .gather.recvcount = recvcount,
+        .gather.recvtype = recvtype,
+        .gather.root = root,
+    };
+
+    if (group->myrank == root) {
+        if (sendbuf == UCG_IN_PLACE) {
+            UCG_REQUEST_APPLY_INFO_RETURN(&args.info, info, recvbuf);
+        } else {
+            UCG_REQUEST_APPLY_INFO_RETURN(&args.info, info, sendbuf, recvbuf);
+        }
+    } else {
+        UCG_REQUEST_APPLY_INFO_RETURN(&args.info, info, sendbuf);
+    }
+
+    return ucg_request_init(group, &args, request);
+}
+
 ucg_status_t ucg_request_gatherv_init(const void *sendbuf, const int32_t sendcount,
                                       ucg_dt_t *sendtype, void *recvbuf,
                                       const int32_t* recvcounts, const int32_t* displs,
@@ -369,6 +417,70 @@ ucg_status_t ucg_request_allgatherv_init(const void *sendbuf, int sendcount,
         .allgatherv.recvcounts = recvcounts,
         .allgatherv.displs = displs,
         .allgatherv.recvtype = recvtype,
+    };
+
+    if (sendbuf == UCG_IN_PLACE) {
+        UCG_REQUEST_APPLY_INFO_RETURN(&args.info, info, recvbuf);
+    } else {
+        UCG_REQUEST_APPLY_INFO_RETURN(&args.info, info, sendbuf, recvbuf);
+    }
+
+    return ucg_request_init(group, &args, request);
+}
+
+ucg_status_t ucg_request_reduce_scatter_init(const void *sendbuf,void *recvbuf,
+                                             const int *recvcounts, ucg_dt_t *dtype, 
+                                             ucg_op_t *op, ucg_group_h group,
+                                             const ucg_request_info_t *info,
+                                             ucg_request_type_t nb,
+                                             ucg_request_h *request)
+{
+    UCG_CHECK_NULL_INVALID(sendbuf, recvbuf, recvcounts, dtype,
+                           op, group, request);
+
+        /* Treat ucg_coll as blocking and non-blocking based on parameter nb */
+    ucg_coll_type_t type = (nb == UCG_REQUEST_NONBLOCKING) ?
+                           UCG_COLL_TYPE_IREDUCE_SCATTER :
+                           UCG_COLL_TYPE_REDUCE_SCATTER;
+    ucg_coll_args_t args = {
+        .type = type,
+        .reduce_scatter.sendbuf = sendbuf,
+        .reduce_scatter.op = op,
+        .reduce_scatter.dt = dtype,
+        .reduce_scatter.recvbuf = recvbuf,
+        .reduce_scatter.recvcounts = recvcounts,
+    };
+
+    if (sendbuf == UCG_IN_PLACE) {
+        UCG_REQUEST_APPLY_INFO_RETURN(&args.info, info, recvbuf);
+    } else {
+        UCG_REQUEST_APPLY_INFO_RETURN(&args.info, info, sendbuf, recvbuf);
+    }
+
+    return ucg_request_init(group, &args, request);
+}
+
+ucg_status_t ucg_request_reduce_scatter_block_init(const void *sendbuf,void *recvbuf,
+                                                   int recvcount, ucg_dt_t *dtype, 
+                                                   ucg_op_t *op, ucg_group_h group,
+                                                   const ucg_request_info_t *info,
+                                                   ucg_request_type_t nb,
+                                                   ucg_request_h *request)
+{
+    UCG_CHECK_NULL_INVALID(sendbuf, recvbuf, dtype,
+                           op, group, request);
+
+        /* Treat ucg_coll as blocking and non-blocking based on parameter nb */
+    ucg_coll_type_t type = (nb == UCG_REQUEST_NONBLOCKING) ?
+                           UCG_COLL_TYPE_IREDUCE_SCATTER_BLOCK :
+                           UCG_COLL_TYPE_REDUCE_SCATTER_BLOCK;
+    ucg_coll_args_t args = {
+        .type = type,
+        .reduce_scatter_block.sendbuf = sendbuf,
+        .reduce_scatter_block.op = op,
+        .reduce_scatter_block.dt = dtype,
+        .reduce_scatter_block.recvbuf = recvbuf,
+        .reduce_scatter_block.recvcount = recvcount,
     };
 
     if (sendbuf == UCG_IN_PLACE) {
@@ -480,6 +592,8 @@ ucg_status_t ucg_request_msg_size(const ucg_coll_args_t *args, const uint32_t si
             break;
         case UCG_COLL_TYPE_SCATTERV:
         case UCG_COLL_TYPE_ISCATTERV:
+        case UCG_COLL_TYPE_GATHER:
+        case UCG_COLL_TYPE_IGATHER: 
         case UCG_COLL_TYPE_GATHERV:
         case UCG_COLL_TYPE_IGATHERV:
             *msize = 0;
@@ -499,6 +613,18 @@ ucg_status_t ucg_request_msg_size(const ucg_coll_args_t *args, const uint32_t si
         case UCG_COLL_TYPE_REDUCE:
         case UCG_COLL_TYPE_IREDUCE:
             *msize = ucg_dt_size(args->reduce.dt) * args->reduce.count;
+            break;
+        case UCG_COLL_TYPE_REDUCE_SCATTER:
+        case UCG_COLL_TYPE_IREDUCE_SCATTER:
+            total_size = 0;
+            for (int i = 0; i < size; i++) {
+                total_size += ucg_dt_size(args->reduce_scatter.dt) * args->reduce_scatter.recvcounts[i];
+            }
+            *msize = total_size / size;
+            break;
+        case UCG_COLL_TYPE_REDUCE_SCATTER_BLOCK:
+        case UCG_COLL_TYPE_IREDUCE_SCATTER_BLOCK:
+            *msize = ucg_dt_size(args->reduce_scatter_block.dt) * args->reduce_scatter_block.recvcount;
             break;
         default:
             return UCG_ERR_INVALID_PARAM;
@@ -522,10 +648,16 @@ const char* ucg_coll_type_string(ucg_coll_type_t coll_type)
             return "scatterv";
         case UCG_COLL_TYPE_GATHERV:
             return "gatherv";
+        case UCG_COLL_TYPE_GATHER:
+            return "gather";
         case UCG_COLL_TYPE_ALLGATHERV:
             return "allgatherv";
         case UCG_COLL_TYPE_REDUCE:
             return "reduce";
+        case UCG_COLL_TYPE_REDUCE_SCATTER:
+            return "reduce_scatter";
+        case UCG_COLL_TYPE_REDUCE_SCATTER_BLOCK:
+            return "reduce_scatter_block";
         case UCG_COLL_TYPE_IBCAST:
             return "ibcast";
         case UCG_COLL_TYPE_IALLREDUCE:
@@ -536,12 +668,18 @@ const char* ucg_coll_type_string(ucg_coll_type_t coll_type)
             return "ialltoallv";
         case UCG_COLL_TYPE_ISCATTERV:
             return "iscatterv";
+        case UCG_COLL_TYPE_IGATHER:
+            return "igather";
         case UCG_COLL_TYPE_IGATHERV:
             return "igatherv";
         case UCG_COLL_TYPE_IALLGATHERV:
             return "iallgatherv";
         case UCG_COLL_TYPE_IREDUCE:
             return "ireduce";
+        case UCG_COLL_TYPE_IREDUCE_SCATTER:
+            return "ireduce_scatter";
+        case UCG_COLL_TYPE_IREDUCE_SCATTER_BLOCK:
+            return "ireduce_scatter_block";
         default:
             return "unknown";
     }

@@ -27,7 +27,7 @@ static ucg_status_t ucg_planc_ucx_empty_op_discard(ucg_plan_op_t *ucg_op)
     return UCG_OK;
 }
 
-static ucg_planc_ucx_op_t* ucg_planc_ucx_empty_op_new(ucg_planc_ucx_group_t *ucx_group,
+ucg_planc_ucx_op_t* ucg_planc_ucx_empty_op_new(ucg_planc_ucx_group_t *ucx_group,
                                                       ucg_vgroup_t *vgroup,
                                                       const ucg_coll_args_t *args)
 {

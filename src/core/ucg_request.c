@@ -246,6 +246,54 @@ ucg_status_t ucg_request_alltoallv_init(const void *sendbuf, const int32_t sendc
     return ucg_request_init(group, &args, request);
 }
 
+ucg_status_t ucg_request_scatter_init(const void *sendbuf, const int32_t sendcount,
+                                      ucg_dt_t *sendtype, void *recvbuf, 
+                                      int32_t recvcount, ucg_dt_t *recvtype, 
+                                      ucg_rank_t root, ucg_group_h group, 
+                                      const ucg_request_info_t *info, ucg_request_type_t nb,
+                                      ucg_request_h *request)
+{
+#ifdef UCG_ENABLE_CHECK_PARAMS
+    if (group->myrank == root) {
+        if (recvbuf == UCG_IN_PLACE) {
+            UCG_CHECK_NULL_INVALID(sendbuf, sendtype, group, request);
+        } else {
+            UCG_CHECK_NULL_INVALID(sendbuf, sendtype, recvbuf, recvtype, group, request);
+        }
+    } else {
+        /* sendbuf, sendcounts, displs and sendtype are not significant for non-root process*/
+        UCG_CHECK_NULL_INVALID(recvbuf, recvtype, group, request);
+    }
+#endif
+
+    /* Treat ucg_coll as blocking and non-blocking based on parameter nb */
+    ucg_coll_type_t type = (nb == UCG_REQUEST_NONBLOCKING) ?
+                           UCG_COLL_TYPE_ISCATTER :
+                           UCG_COLL_TYPE_SCATTER;
+    ucg_coll_args_t args = {
+        .type = type,
+        .scatter.sendbuf = sendbuf,
+        .scatter.sendcount = sendcount,
+        .scatter.sendtype = sendtype,
+        .scatter.recvbuf = recvbuf,
+        .scatter.recvcount = recvcount,
+        .scatter.recvtype = recvtype,
+        .scatter.root = root,
+    };
+
+    if (group->myrank == root) {
+        if (recvbuf == UCG_IN_PLACE) {
+            UCG_REQUEST_APPLY_INFO_RETURN(&args.info, info, sendbuf);
+        } else {
+            UCG_REQUEST_APPLY_INFO_RETURN(&args.info, info, sendbuf, recvbuf);
+        }
+    } else {
+        UCG_REQUEST_APPLY_INFO_RETURN(&args.info, info, recvbuf);
+    }
+
+    return ucg_request_init(group, &args, request);
+}
+
 ucg_status_t ucg_request_scatterv_init(const void *sendbuf, const int32_t *sendcounts,
                                        const int32_t *displs, ucg_dt_t *sendtype,
                                        void *recvbuf, int32_t recvcount,
@@ -590,6 +638,8 @@ ucg_status_t ucg_request_msg_size(const ucg_coll_args_t *args, const uint32_t si
             }
             *msize = (total_scount + total_rcount) / size / 2;
             break;
+        case UCG_COLL_TYPE_SCATTER:
+        case UCG_COLL_TYPE_ISCATTER:
         case UCG_COLL_TYPE_SCATTERV:
         case UCG_COLL_TYPE_ISCATTERV:
         case UCG_COLL_TYPE_GATHER:
@@ -644,6 +694,8 @@ const char* ucg_coll_type_string(ucg_coll_type_t coll_type)
             return "barrier";
         case UCG_COLL_TYPE_ALLTOALLV:
             return "alltoallv";
+        case UCG_COLL_TYPE_SCATTER:
+            return "scatter";
         case UCG_COLL_TYPE_SCATTERV:
             return "scatterv";
         case UCG_COLL_TYPE_GATHERV:
@@ -666,6 +718,8 @@ const char* ucg_coll_type_string(ucg_coll_type_t coll_type)
             return "ibarrier";
         case UCG_COLL_TYPE_IALLTOALLV:
             return "ialltoallv";
+        case UCG_COLL_TYPE_ISCATTER:
+            return "iscatter";
         case UCG_COLL_TYPE_ISCATTERV:
             return "iscatterv";
         case UCG_COLL_TYPE_IGATHER:

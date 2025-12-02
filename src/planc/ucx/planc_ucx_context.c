@@ -31,6 +31,10 @@ static ucg_config_field_t ucg_planc_ucx_config_table[] = {
      ucg_offsetof(ucg_planc_ucx_config_t, plan_attr[UCG_COLL_TYPE_ALLTOALLV]),
      UCG_CONFIG_TYPE_STRING},
 
+    {"SCATTER_ATTR", "", UCG_PLAN_ATTR_DESC,
+     ucg_offsetof(ucg_planc_ucx_config_t, plan_attr[UCG_COLL_TYPE_SCATTER]),
+     UCG_CONFIG_TYPE_STRING},
+
     {"SCATTERV_ATTR", "", UCG_PLAN_ATTR_DESC,
      ucg_offsetof(ucg_planc_ucx_config_t, plan_attr[UCG_COLL_TYPE_SCATTERV]),
      UCG_CONFIG_TYPE_STRING},
@@ -53,6 +57,10 @@ static ucg_config_field_t ucg_planc_ucx_config_table[] = {
 
     {"IALLTOALLV_ATTR", "", UCG_PLAN_ATTR_DESC,
      ucg_offsetof(ucg_planc_ucx_config_t, plan_attr[UCG_COLL_TYPE_IALLTOALLV]),
+     UCG_CONFIG_TYPE_STRING},
+
+    {"ISCATTER_ATTR", "", UCG_PLAN_ATTR_DESC,
+     ucg_offsetof(ucg_planc_ucx_config_t, plan_attr[UCG_COLL_TYPE_ISCATTER]),
      UCG_CONFIG_TYPE_STRING},
 
     {"ISCATTERV_ATTR", "", UCG_PLAN_ATTR_DESC,

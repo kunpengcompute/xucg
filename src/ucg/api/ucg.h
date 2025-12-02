@@ -1196,6 +1196,36 @@ ucg_status_t ucg_request_alltoallv_init(const void *sendbuf, const int32_t sendc
 
 /**
  * @ingroup UCG_REQUEST
+ * @brief Create a persistent scatter request.
+ *
+ * The root process sends a varying count of data to each process. In other words,
+ * root sends sendcount of data to the i-th process.
+ *
+ * @param [in]  sendbuf         Starting address of send buffer
+ * @param [in]  sendcount       Non-negative integer specifying the 
+ *                              number of elements to send to each
+ *                              rank
+ * @param [in]  sendtype        Data type of send buffer elements
+ * @param [out] recvbuf         Address of receive buffer
+ * @param [in]  recvcount       Number of elements in receive buffer
+ * @param [in]  recvtype        Data type of receive buffer elements
+ * @param [in]  root            Rank of sending process
+ * @param [in]  group           Communication group
+ * @param [in]  info            Informations for creating request
+ * @param [in]  nb              Nonblocking or blocking request
+ * @param [out] request         Collective request
+ * @retval UCG_OK Success.
+ * @retval Otherwise Failure.
+ */
+ucg_status_t ucg_request_scatter_init(const void *sendbuf, const int32_t sendcount,
+                                      ucg_dt_h sendtype, void *recvbuf, 
+                                      int32_t recvcount, ucg_dt_h recvtype, 
+                                      ucg_rank_t root, ucg_group_h group,
+                                      const ucg_request_info_t *info,
+                                      ucg_request_type_t nb, ucg_request_h *request);
+
+/**
+ * @ingroup UCG_REQUEST
  * @brief Create a persistent scatterv request.
  *
  * The root process sends a varying count of data to each process. In other words,

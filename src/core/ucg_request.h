@@ -46,6 +46,7 @@ typedef enum {
     UCG_COLL_TYPE_ALLREDUCE,
     UCG_COLL_TYPE_BARRIER,
     UCG_COLL_TYPE_ALLTOALLV,
+    UCG_COLL_TYPE_SCATTER,
     UCG_COLL_TYPE_SCATTERV,
     UCG_COLL_TYPE_GATHER,
     UCG_COLL_TYPE_GATHERV,
@@ -57,6 +58,7 @@ typedef enum {
     UCG_COLL_TYPE_IALLREDUCE,
     UCG_COLL_TYPE_IBARRIER,
     UCG_COLL_TYPE_IALLTOALLV,
+    UCG_COLL_TYPE_ISCATTER,
     UCG_COLL_TYPE_ISCATTERV,
     UCG_COLL_TYPE_IGATHER,
     UCG_COLL_TYPE_IGATHERV,
@@ -116,6 +118,16 @@ typedef struct ucg_coll_gatherv_args {
     ucg_rank_t root;
 } ucg_coll_gatherv_args_t;
 
+typedef struct ucg_coll_scatter_args {
+    const void *sendbuf;
+    int32_t sendcount;
+    ucg_dt_t *sendtype;
+    void *recvbuf;
+    int32_t recvcount;
+    ucg_dt_t *recvtype;
+    ucg_rank_t root;
+} ucg_coll_scatter_args_t;
+
 typedef struct ucg_coll_scatterv_args {
     const void *sendbuf;
     const int32_t *sendcounts;
@@ -169,6 +181,7 @@ typedef struct ucg_coll_args {
         ucg_coll_bcast_args_t bcast;
         ucg_coll_allreduce_args_t allreduce;
         ucg_coll_alltoallv_args_t alltoallv;
+        ucg_coll_scatter_args_t scatter;
         ucg_coll_scatterv_args_t scatterv;
         ucg_coll_gather_args_t gather;
         ucg_coll_gatherv_args_t gatherv;

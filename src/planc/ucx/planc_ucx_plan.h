@@ -16,6 +16,7 @@
 #include "barrier/barrier.h"
 #include "allgatherv/allgatherv.h"
 #include "reduce/reduce.h"
+#include "scatter/scatter.h"
 #include "scatterv/scatterv.h"
 #include "gatherv/gatherv.h"
 #include "gather/gather.h"
@@ -55,6 +56,7 @@ typedef struct ucg_planc_ucx_op {
         ucg_planc_ucx_barrier_t barrier;
         ucg_planc_ucx_allgatherv_t allgatherv;
         ucg_planc_ucx_reduce_t reduce;
+        ucg_planc_ucx_scatter_t scatter;
         ucg_planc_ucx_scatterv_t scatterv;
         ucg_planc_ucx_gatherv_t gatherv;
         ucg_planc_ucx_gather_t gather;

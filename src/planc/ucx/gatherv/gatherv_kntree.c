@@ -19,6 +19,7 @@ enum {
     UCG_GATHERV_KNTREE_DATA_RECV = UCG_BIT(10),
     UCG_GATHERV_KNTREE_DATA_RECV_WAIT = UCG_BIT(11),
     UCG_GATHERV_KNTREE_DATA_SEND = UCG_BIT(12),
+    UCG_GATHERV_KNTREE_DATA_ROOT_COPY = UCG_BIT(13),
 };
 
 #define UCG_GATHERV_KNTREE_PARAMS_FLAGS UCG_GATHERV_KNTREE_PARAMS | \
@@ -34,7 +35,8 @@ enum {
                                       UCG_GATHERV_KNTREE_DATA_SEND_TO_CHILD | \
                                       UCG_GATHERV_KNTREE_DATA_RECV | \
                                       UCG_GATHERV_KNTREE_DATA_RECV_WAIT | \
-                                      UCG_GATHERV_KNTREE_DATA_SEND
+                                      UCG_GATHERV_KNTREE_DATA_SEND | \
+                                      UCG_GATHERV_KNTREE_DATA_ROOT_COPY
 
 #define UCG_GATHERV_KNTREE_FLAGS UCG_GATHERV_KNTREE_PARAMS_FLAGS | \
                                   UCG_GATHERV_KNTREE_DATA_FLAGS
@@ -117,57 +119,38 @@ static ucg_status_t ucg_planc_ucx_gatherv_kntree_op_data_recv(ucg_planc_ucx_op_t
     ucg_algo_kntree_iter_t *iter = &op->gatherv.kntree.kntree_iter;
     ucg_coll_gatherv_args_t *args = &op->super.super.args.gatherv;
     ucg_rank_t peer;
-
-    if (myrank == args->root) { //先copy自己的数据
-        status = ucg_dt_memcpy(args->recvbuf + args->displs[myrank] * ucg_dt_extent(args->recvtype), args->recvcounts[myrank], args->recvtype,
-                                args->sendbuf, args->sendcount, args->sendtype);
-        UCG_CHECK_GOTO(status, out);                                
-    }
+    ucg_rank_t rpeer;
 
     if (ucg_test_and_clear_flags(&op->flags, UCG_GATHERV_KNTREE_DATA_RECV)) {
 
-        if (myrank == args->root) {
-            for (int32_t i = 0; i< op->gatherv.kntree.child_count; i++) {
-                peer = op->gatherv.kntree.childlist[i];
-                int64_t offset = args->displs[peer] * ucg_dt_extent(args->recvtype);
-                int64_t recv_len = 0;
-                int32_t peer_subtree_size = ucg_algo_kntree_get_subtree_size(iter, peer); //这里recv包含了peer自己
-                for (int32_t j = 0; j < peer_subtree_size; j++) {
-                    int32_t idx = (j + peer) % group_size;
-                    recv_len += args->recvcounts[idx] * ucg_dt_extent(args->recvtype);
-                }
-                status = ucg_planc_ucx_p2p_irecv(args->recvbuf + offset, recv_len,
-                                    args->recvtype, peer, op->tag,
-                                    vgroup, &params);
-                UCG_CHECK_GOTO(status, out);
-            }
-        } else {
-            int64_t offset = 0;
-            int64_t recv_len = op->gatherv.kntree.recvcounts[myrank] * op->gatherv.kntree.rctype_size;
-            offset += recv_len;
-            //Recv myself data 这里会多做一次copy,但是逻辑简单
+        int64_t offset = 0;
+        int64_t recv_len = op->gatherv.kntree.recvcounts[myrank] * op->gatherv.kntree.rctype_size;
+        offset += recv_len;
+        //Recv myself data 这里会多做一次copy,但是逻辑简单
+        if (args->sendcount > 0 && recv_len > 0) { // 这里如果sendcount或者recvcount小于0则不进行memcpy
             status = ucg_dt_memcpy(op->staging_area, recv_len, ucg_dt_get_predefined(UCG_DT_TYPE_UINT8),
                                     args->sendbuf, args->sendcount, args->sendtype);
             UCG_CHECK_GOTO(status, out); 
-            recv_len = 0;
-            for (int32_t i = 0; i< op->gatherv.kntree.child_count; i++) {
-                peer = op->gatherv.kntree.childlist[i];
-                int64_t peer_recv_len = 0;
-                int32_t peer_subtree_size = ucg_algo_kntree_get_subtree_size(iter, peer);
-                for (int32_t j = 0; j < peer_subtree_size; j++) {
-                    int32_t idx = (j + peer) % group_size;
-                    peer_recv_len += op->gatherv.kntree.recvcounts[idx] * op->gatherv.kntree.rctype_size;
-                }
-                status = ucg_planc_ucx_p2p_irecv(op->staging_area + offset, 
-                                                 peer_recv_len,
-                                                 ucg_dt_get_predefined(UCG_DT_TYPE_UINT8), 
-                                                 peer, 
-                                                 op->tag,
-                                                 vgroup, 
-                                                 &params);
-                UCG_CHECK_GOTO(status, out);
-                offset += peer_recv_len;
+        }
+        recv_len = 0;
+        for (int32_t i = 0; i< op->gatherv.kntree.child_count; i++) {
+            peer = op->gatherv.kntree.childlist[i]; //虚拟的rankid
+            rpeer = (peer + args->root) % group_size;
+            int64_t peer_recv_len = 0;
+            int32_t peer_subtree_size = ucg_algo_kntree_get_subtree_size(iter, rpeer);
+            for (int32_t j = 0; j < peer_subtree_size; j++) {
+                int32_t idx = (j + rpeer) % group_size;
+                peer_recv_len += op->gatherv.kntree.recvcounts[idx] * op->gatherv.kntree.rctype_size;
             }
+            status = ucg_planc_ucx_p2p_irecv(op->staging_area + offset, 
+                                                peer_recv_len,
+                                                ucg_dt_get_predefined(UCG_DT_TYPE_UINT8), 
+                                                rpeer, 
+                                                op->tag,
+                                                vgroup, 
+                                                &params);
+            UCG_CHECK_GOTO(status, out);
+            offset += peer_recv_len;
         }
     }
 
@@ -188,6 +171,7 @@ static ucg_status_t ucg_planc_ucx_gatherv_kntree_op_data_send(ucg_planc_ucx_op_t
     ucg_vgroup_t *vgroup = op->super.vgroup;
     ucg_rank_t myrank = vgroup->myrank;
     uint32_t group_size = vgroup->size;
+    ucg_coll_gatherv_args_t *args = &op->super.super.args.gatherv;
     ucg_planc_ucx_p2p_params_t params;
     ucg_planc_ucx_op_set_p2p_params(op, &params);
     ucg_algo_kntree_iter_t *iter = &op->gatherv.kntree.kntree_iter;
@@ -201,10 +185,11 @@ static ucg_status_t ucg_planc_ucx_gatherv_kntree_op_data_send(ucg_planc_ucx_op_t
 
         int64_t send_count = op->gatherv.kntree.recvcounts[myrank] * op->gatherv.kntree.rctype_size;
         for (int32_t i = 0; i< op->gatherv.kntree.child_count; i++) {
-            int mypeer = op->gatherv.kntree.childlist[i];
-            int32_t peer_subtree_size = ucg_algo_kntree_get_subtree_size(iter, mypeer);
+            int mychild = op->gatherv.kntree.childlist[i];
+            int rmychild = (mychild + args->root) % group_size;
+            int32_t peer_subtree_size = ucg_algo_kntree_get_subtree_size(iter, rmychild);
             for (int32_t j = 0; j < peer_subtree_size; j++) {
-                int32_t idx = (j + mypeer) % group_size;
+                int32_t idx = (j + rmychild) % group_size;
                 send_count += op->gatherv.kntree.recvcounts[idx] * op->gatherv.kntree.rctype_size;
             }
         }
@@ -217,6 +202,35 @@ static ucg_status_t ucg_planc_ucx_gatherv_kntree_op_data_send(ucg_planc_ucx_op_t
         ucg_clear_flags(&op->flags, UCG_GATHERV_KNTREE_DATA_SEND);
     }
     status = ucg_planc_ucx_p2p_testall(ucx_group, params.state);
+out:
+    return status;
+}
+
+static ucg_status_t ucg_planc_ucx_gatherv_kntree_op_data_root_copy(ucg_planc_ucx_op_t *op)
+{
+    ucg_status_t status = UCG_OK;
+    ucg_vgroup_t *vgroup = op->super.vgroup;
+    ucg_rank_t myrank = vgroup->myrank;
+    uint32_t group_size = vgroup->size;
+    ucg_coll_gatherv_args_t *args = &op->super.super.args.gatherv;
+
+    if (myrank == args->root) {
+        int64_t offset = 0;
+        for (int j = 0; j < group_size; j++) {
+            int i = (j + args->root) % group_size;
+            int64_t sendcount = args->recvcounts[i] * op->gatherv.kntree.rctype_size;
+            void *rbuf = args->recvbuf + args->displs[i] * ucg_dt_extent(args->recvtype);
+            if ((i == args->root && args->sendcount <= 0) || sendcount <= 0 || args->recvcounts[i] <= 0) {
+                offset += sendcount;
+                continue;
+            }
+            status = ucg_dt_memcpy(rbuf, args->recvcounts[i], args->recvtype,
+                                   op->staging_area + offset, sendcount, ucg_dt_get_predefined(UCG_DT_TYPE_UINT8));
+            UCG_CHECK_GOTO(status, out);
+            offset += sendcount;
+        }
+    }
+
 out:
     return status;
 }
@@ -237,11 +251,10 @@ static ucg_status_t ucg_planc_ucx_gatherv_kntree_op_params(ucg_planc_ucx_op_t *o
     }
 
     if (ucg_test_and_clear_flags(&op->flags, UCG_GATHERV_KNTREE_PARAMS_ALLOC_STAGING)) {
-        ucg_coll_gatherv_args_t *args = &op->super.super.args.gatherv;
         ucg_vgroup_t *vgroup = op->super.vgroup;
         ucg_rank_t myrank = vgroup->myrank;
         uint32_t group_size = vgroup->size;
-        if ((myrank != args->root) && (op->gatherv.kntree.staging_count >= 0)) {
+        if (op->gatherv.kntree.staging_count >= 0) {
             int64_t size = 0;
             for (int32_t i = 0; i < op->gatherv.kntree.staging_count + 1; i++) {
                 int32_t idx = (myrank + i) % group_size;
@@ -282,6 +295,12 @@ static ucg_status_t ucg_planc_ucx_gatherv_kntree_op_data(ucg_planc_ucx_op_t *op)
         status = ucg_planc_ucx_gatherv_kntree_op_data_send(op);
         UCG_CHECK_GOTO(status, out);
         ucg_clear_flags(&op->flags, UCG_GATHERV_KNTREE_DATA_SEND_TO_CHILD);
+    }
+
+    if (ucg_test_flags(op->flags, UCG_GATHERV_KNTREE_DATA_ROOT_COPY)) {
+        status = ucg_planc_ucx_gatherv_kntree_op_data_root_copy(op);
+        UCG_CHECK_GOTO(status, out);
+        ucg_clear_flags(&op->flags, UCG_GATHERV_KNTREE_DATA_ROOT_COPY);
     }
 
 out:
@@ -329,12 +348,20 @@ static ucg_status_t ucg_planc_ucx_gatherv_kntree_op_trigger(ucg_plan_op_t *ucg_o
 static inline ucg_status_t ucg_planc_ucx_gatherv_kntree_op_discard(ucg_plan_op_t *ucg_op)
 {
     ucg_planc_ucx_op_t *op = ucg_derived_of(ucg_op, ucg_planc_ucx_op_t);
-    if (op->gatherv.kntree.recvcounts != NULL) {
-        ucg_free(op->gatherv.kntree.recvcounts);
+    ucg_vgroup_t *vgroup = op->super.vgroup;
+    ucg_rank_t myrank = vgroup->myrank;
+    ucg_coll_gatherv_args_t *args = &op->super.super.args.gatherv;
+    if (myrank != args->root) {
+        if (op->gatherv.kntree.recvcounts != NULL) {
+            ucg_free(op->gatherv.kntree.recvcounts);
+        }
+        op->gatherv.kntree.recvcounts = NULL;    
     }
+
     if (op->gatherv.kntree.childlist != NULL) {
         ucg_free(op->gatherv.kntree.childlist);
     }
+    op->gatherv.kntree.childlist = NULL;
     return ucg_planc_ucx_op_discard(ucg_op);
 }
 
@@ -350,7 +377,7 @@ ucg_status_t ucg_planc_ucx_gatherv_kntree_op_init(ucg_planc_ucx_op_t *op,
     int32_t group_size = vgroup->size;
     ucg_coll_gatherv_args_t *args = &op->super.super.args.gatherv;
     ucg_algo_kntree_iter_t *iter = &op->gatherv.kntree.kntree_iter;
-    
+
     ucg_algo_kntree_iter_init(iter, vgroup->size, config->kntree_degree,
                               args->root, vgroup->myrank, 1);
     op->gatherv.kntree.staging_count = ucg_algo_kntree_get_subtree_size(iter, myrank) - 1;
@@ -363,7 +390,8 @@ ucg_status_t ucg_planc_ucx_gatherv_kntree_op_init(ucg_planc_ucx_op_t *op,
         goto err;
     }    
     if (myrank == args->root) {
-        op->gatherv.kntree.rctype_size = ucg_dt_size(args->sendtype);
+        op->gatherv.kntree.rctype_size = ucg_dt_size(args->recvtype);
+        op->gatherv.kntree.recvcounts = (int32_t *)args->recvcounts;
     } else {
         op->gatherv.kntree.recvcounts = ucg_malloc((int64_t)group_size * sizeof(int32_t),
                                              "gatherv recvcounts");
@@ -376,7 +404,7 @@ ucg_status_t ucg_planc_ucx_gatherv_kntree_op_init(ucg_planc_ucx_op_t *op,
     uint32_t child_count = 0;
     ucg_algo_kntree_iter_reset(iter);
     while((peer = ucg_algo_kntree_iter_child_value(iter)) != UCG_INVALID_RANK) {
-        op->gatherv.kntree.childlist[child_count++] = peer;
+        op->gatherv.kntree.childlist[child_count++] = (peer + group_size - args->root) % group_size; //存放虚拟的rankid 
         ucg_algo_kntree_iter_child_inc(iter);
     }
     op->gatherv.kntree.child_count = child_count;
@@ -437,24 +465,11 @@ err:
     return NULL;
 }
 
-static ucg_status_t ucg_planc_ucx_gatherv_kntree_check(const ucg_coll_args_t *args)
-{
-    if (args->gatherv.root != 0) {
-        ucg_info("Node-aware kntree gatherv does not support root != 0");
-        return UCG_ERR_UNSUPPORTED;
-    }
-    return UCG_OK;
-}
-
 ucg_status_t ucg_planc_ucx_gatherv_kntree_prepare(ucg_vgroup_t *vgroup,
                                                    const ucg_coll_args_t *args,
                                                    ucg_plan_op_t **op)
 {
     UCG_CHECK_NULL_INVALID(vgroup, args, op);
-    ucg_status_t status = ucg_planc_ucx_gatherv_kntree_check(args);
-    if (status != UCG_OK) {
-        return status;
-    }
     ucg_planc_ucx_group_t *ucx_group = ucg_derived_of(vgroup, ucg_planc_ucx_group_t);
     ucg_planc_ucx_gatherv_config_t *config;
     config = UCG_PLANC_UCX_CONTEXT_BUILTIN_CONFIG_BUNDLE(ucx_group->context, gatherv,

@@ -309,7 +309,7 @@ ucg_status_t ucg_planc_ucx_create_socket_leader_algo_group(ucg_planc_ucx_group_t
             ++offsets[location.socket_id];
         }
     }
-    if (ucg_unlikely(ranks[mysocket_id] != myrank)) {
+    if (ucg_unlikely(mysocket_id >= vsize || ranks[mysocket_id] != myrank)) {
         for (int i = 0; i < vsize; ++i) {
             if (ranks[i] == myrank) {
                 mysocket_id = i;

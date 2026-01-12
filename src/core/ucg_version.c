@@ -8,7 +8,7 @@
 
 
 void ucg_get_version(uint32_t *major_version, uint32_t *minor_version,
-                     uint32_t *patch_version)
+                     char **patch_version)
 {
     *major_version = UCG_API_MAJOR;
     *minor_version = UCG_API_MINOR;

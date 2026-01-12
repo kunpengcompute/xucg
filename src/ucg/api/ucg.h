@@ -946,7 +946,7 @@ void ucg_config_release(ucg_config_h config);
  * @param [out] patch_version       Filled with library patch version.
  */
 void ucg_get_version(uint32_t *major_version, uint32_t *minor_version,
-                     uint32_t *patch_version);
+                     char **patch_version);
 
 /**
  * @ingroup UCG_CONTEXT

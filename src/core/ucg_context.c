@@ -113,12 +113,12 @@ static ucg_status_t ucg_context_check_version(uint32_t major_version,
 {
     uint32_t api_major_version;
     uint32_t api_minor_version;
-    uint32_t api_patch_version;
+    char *api_patch_version;
     ucg_get_version(&api_major_version, &api_minor_version, &api_patch_version);
 
     if (api_major_version != major_version ||
         (api_major_version == major_version && api_minor_version < minor_version)) {
-        ucg_error("UCG version is incompatible, required: %u.%u, actual: %u.%u.%u",
+        ucg_error("UCG version is incompatible, required: %u.%u, actual: %u.%u.%s",
                   major_version, minor_version,
                   api_major_version, api_minor_version, api_patch_version);
         return UCG_ERR_INCOMPATIBLE;

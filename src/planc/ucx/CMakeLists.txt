@@ -12,9 +12,9 @@ if (UCG_BUILD_PLANC_UCX MATCHES "ON")
     add_library(ucg_planc_ucx SHARED ${SRCS})
     set_target_properties(ucg_planc_ucx
                           PROPERTIES VERSION
-                          ${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR}.${PROJECT_VERSION_PATCH}
+                          ${HPCKIT_VERSION}
                           SOVERSION
-                          ${PROJECT_VERSION_MAJOR})
+                          ${HPCKIT_MAJOR})
 
     if (IS_DIRECTORY ${UCG_BUILD_WITH_UCX})
         if(SUPPORT_CMAKE3 MATCHES "ON")

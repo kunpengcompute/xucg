@@ -58,14 +58,14 @@ static ucg_status_t ucg_planc_ucx_gatherv_na_kntree_inter_gatherv_recvcounts_pre
     inter_bcast_args->type = UCG_COLL_TYPE_BCAST;
     if (is_node_leader && !is_root) {
         int32_t *recvcounts = (int32_t *)ucg_malloc(sizeof(int32_t) * (int32_t)vgroup->size, "node leader gatherv recvcounts");
-        inter_bcast_args->bcast.root = 0;
+        inter_bcast_args->bcast.root = args->gatherv.root / ucx_op->gatherv.topo_aware.ppn;
         inter_bcast_args->bcast.buffer = recvcounts;
         inter_bcast_args->bcast.count = vgroup->size; 
         inter_bcast_args->bcast.dt = ucg_dt_get_predefined(UCG_DT_TYPE_INT32);
 
     }
     if (is_root) {
-        inter_bcast_args->bcast.root = 0;
+        inter_bcast_args->bcast.root = args->gatherv.root / ucx_op->gatherv.topo_aware.ppn;
 
         int32_t *recvcounts = (int32_t *)args->gatherv.recvcounts; // 这里使用用户传入的参数，不能自己去释放内存
         inter_bcast_args->bcast.buffer = recvcounts;
@@ -105,7 +105,7 @@ static ucg_status_t ucg_planc_ucx_gatherv_na_kntree_inter_gatherv_recvtype_prepa
     inter_bcast_args->type = UCG_COLL_TYPE_BCAST;
     if (is_node_leader && !is_root) {
         int32_t *recvtype_size = (int32_t *)ucg_malloc(sizeof(int32_t) , "node leader gatherv recvtype_size");
-        inter_bcast_args->bcast.root = 0;
+        inter_bcast_args->bcast.root = args->gatherv.root / ucx_op->gatherv.topo_aware.ppn;
         inter_bcast_args->bcast.buffer = recvtype_size;
         inter_bcast_args->bcast.count = 1; 
         inter_bcast_args->bcast.dt = ucg_dt_get_predefined(UCG_DT_TYPE_INT32);
@@ -114,7 +114,7 @@ static ucg_status_t ucg_planc_ucx_gatherv_na_kntree_inter_gatherv_recvtype_prepa
     if (is_root) {
         int32_t *sendbuf = (int32_t *)ucg_malloc(sizeof(int32_t), "root gatherv recvtype_size");
         sendbuf[0] = ucg_dt_size(args->gatherv.recvtype);
-        inter_bcast_args->bcast.root = 0;
+        inter_bcast_args->bcast.root = args->gatherv.root / ucx_op->gatherv.topo_aware.ppn;
         inter_bcast_args->bcast.buffer = sendbuf;
         inter_bcast_args->bcast.count = 1;
         inter_bcast_args->bcast.dt = ucg_dt_get_predefined(UCG_DT_TYPE_INT32);
@@ -153,7 +153,7 @@ static ucg_status_t ucg_planc_ucx_gatherv_na_kntree_intra_gatherv_prepare(ucg_pl
     /* intra-gatherv */
     // set gatherv arguments
     intra_gatherv_args->type = UCG_COLL_TYPE_GATHERV;
-    intra_gatherv_args->gatherv.root = 0;// root is the node_leader
+    intra_gatherv_args->gatherv.root = (vgroup->myrank / ppn == args->gatherv.root / ppn) ? (args->gatherv.root % ppn) : 0;// root is the node_leader
     intra_gatherv_args->gatherv.sendbuf = args->gatherv.sendbuf;
     intra_gatherv_args->gatherv.sendcount = args->gatherv.sendcount;
     intra_gatherv_args->gatherv.sendtype = args->gatherv.sendtype;
@@ -210,28 +210,20 @@ static ucg_status_t ucg_planc_ucx_gatherv_na_kntree_inter_gatherv_prepare(ucg_pl
     // set gatherv arguments
     inter_gatherv_args->type = UCG_COLL_TYPE_GATHERV;
     if (is_node_leader) {
-        inter_gatherv_args->gatherv.root = 0;
+        inter_gatherv_args->gatherv.root = args->gatherv.root / ucx_op->gatherv.topo_aware.ppn;
         inter_gatherv_args->gatherv.sendbuf = intra_gatherv_args->gatherv.recvbuf;//decided dynamically
         inter_gatherv_args->gatherv.sendcount = ucx_op->gatherv.topo_aware.intra_total_count;//decided dynamically
         inter_gatherv_args->gatherv.sendtype = ucg_dt_get_predefined(UCG_DT_TYPE_UINT8);
         if (is_root) {
             int32_t *recvcounts = (int32_t *)ucg_malloc(sizeof(int32_t) * node_cnt, "inter gatherv recvcounts");
-            ucg_topo_group_t *node_leader_group = ucg_topo_get_group(vgroup->group->topo, UCG_TOPO_GROUP_TYPE_NODE_LEADER);
-            ucg_rank_t node_leader_rank, last_node_leader_rank;
-            last_node_leader_rank = 0;
-            for (int32_t i = 0; i < node_cnt; i++) {
-                if (i == node_cnt - 1) {
-                    node_leader_rank = vgroup->size;
-                } else {
-                    node_leader_rank = ucg_rank_map_eval(&node_leader_group->super.rank_map, i + 1);
-                }
-
+            for (int32_t i = 0; i < node_cnt; i++) { // i is node id
                 int32_t intra_recvcounts_num = 0;
-                for (int32_t j = last_node_leader_rank; j < node_leader_rank; j++) {
-                    intra_recvcounts_num += args->gatherv.recvcounts[j];
+                for (int32_t j = 0; j < vgroup->size; j++) {
+                    if (i == j / ucx_op->gatherv.topo_aware.ppn) {
+                        intra_recvcounts_num += args->gatherv.recvcounts[j];
+                    }
                 }
                 recvcounts[i] = intra_recvcounts_num;
-                last_node_leader_rank = node_leader_rank;
             }
             inter_gatherv_args->gatherv.recvcounts = recvcounts;
             inter_gatherv_args->gatherv.displs = ucg_planc_ucx_create_displs(inter_gatherv_args->gatherv.recvcounts, node_cnt);
@@ -406,6 +398,7 @@ static ucg_status_t ucg_planc_ucx_gatherv_na_kntree_op_trigger(ucg_plan_op_t *uc
 static void ucg_planc_ucx_gatherv_na_kntree_op_init(ucg_planc_ucx_op_t *ucx_op, ucg_planc_ucx_gatherv_config_t *config)
 {
     ucg_vgroup_t *vgroup = ucx_op->super.vgroup;
+    ucg_coll_args_t *args = &ucx_op->super.super.args;
 
     ucx_op->gatherv.topo_aware.is_inter_op_trigged = 0;
     ucx_op->gatherv.topo_aware.is_intra_op_trigged = 0;
@@ -418,6 +411,7 @@ static void ucg_planc_ucx_gatherv_na_kntree_op_init(ucg_planc_ucx_op_t *ucx_op, 
 
     /* decide node leader */
     ucg_topo_group_t *node_leader_group, *node_member_group;
+    vgroup->group->topo->myroot = args->gatherv.root;
     node_leader_group = ucg_topo_get_group(vgroup->group->topo, UCG_TOPO_GROUP_TYPE_NODE_LEADER);
     uint32_t is_node_leader = node_leader_group->state == UCG_TOPO_GROUP_STATE_ENABLE;
     ucx_op->gatherv.topo_aware.is_node_leader = is_node_leader;
@@ -475,10 +469,25 @@ static ucg_status_t ucg_planc_ucx_gatherv_na_kntree_check(ucg_vgroup_t *vgroup,
         ucg_info("Node-aware kntree gatherv does not support single node");
         return UCG_ERR_UNSUPPORTED;
     }
-
-    if (args->gatherv.root != 0) {
-        ucg_info("Node-aware kntree gatherv does not support root != 0");
+    if (ppn == UCG_TOPO_PPX_UNKNOWN) {
+        ucg_info("Node-aware kntree gatherv don't support unknown ppn");
         return UCG_ERR_UNSUPPORTED;
+    }
+    if (ppn == UCG_TOPO_PPX_UNBALANCED) {
+        ucg_info("Node-aware kntree gatherv don't support unbalanced ppn");
+        return UCG_ERR_UNSUPPORTED;
+    }
+    if (ppn == 1) {
+        ucg_info("Node-aware kntree gatherv don't support ppn==1");
+        return UCG_ERR_UNSUPPORTED;
+    }
+    for (int i = 0;i < vgroup->size;i++) {
+        ucg_location_t location;
+        vgroup->group->topo->get_location(vgroup->group->topo->group, i, &location);
+        if (location.node_id != i / ppn) {
+            ucg_info("Node-aware kntree gatherv does not support node is not order");
+            return UCG_ERR_UNSUPPORTED;
+        }
     }
     return UCG_OK;
 }

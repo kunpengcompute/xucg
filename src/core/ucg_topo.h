@@ -113,6 +113,8 @@ typedef struct ucg_topo {
     int32_t ppn;
     /** Processes per socket. */
     int32_t pps;
+    /** My root in the group. */
+    ucg_rank_t myroot;
 } ucg_topo_t;
 
 /**

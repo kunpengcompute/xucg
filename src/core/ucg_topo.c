@@ -216,7 +216,13 @@ static int32_t ucg_topo_group_aux_is_node_leader(void **aux, const ucg_topo_t *t
                                                  ucg_rank_t rank,
                                                  const ucg_location_t *location)
 {
-    UCG_UNUSED(topo, rank_map, rank);
+    ucg_location_t root_location;
+    if (topo->myroot != 0 && topo->myroot != rank) {
+        ucg_topo_get_location(topo, rank_map, topo->myroot, &root_location);
+        if (location->node_id == root_location.node_id) {
+            return 0; // node cannot be the node leader on the same node as root;only root is the node leader in this node
+        }
+    }
     return ucg_topo_group_aux_is_leader(aux, location->node_id);
 }
 
@@ -672,6 +678,7 @@ ucg_status_t ucg_topo_init(const ucg_topo_params_t *params, ucg_topo_t **topo)
         return UCG_ERR_NO_MEMORY;
     }
 
+    new_topo->myroot = 0; // default myroot is 0
     ucg_group_t *group = params->group;
     for (int i = 0; i < UCG_TOPO_GROUP_TYPE_LAST; ++i) {
         new_topo->groups[i].super.myrank = UCG_INVALID_RANK;

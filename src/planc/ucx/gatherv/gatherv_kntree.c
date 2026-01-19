@@ -422,7 +422,7 @@ ucg_status_t ucg_planc_ucx_gatherv_kntree_op_init(ucg_planc_ucx_op_t *op,
 
     return UCG_OK;
 err_free_childlist:
-    ucg_free(op->reduce_scatter.ring.displs);
+    ucg_free(op->gatherv.kntree.childlist);
 err:
     return status;
 }

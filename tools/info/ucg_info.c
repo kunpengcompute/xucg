@@ -59,6 +59,7 @@ int main(int argc, char **argv)
     }
 
     if (print_flags & PRINT_VERSION) {
+        printf("# UCG abi version %s\n", UCG_ABI_VERISON);
         printf("# UCG version %s\n", UCG_API_VERSION_STR);
     }
 

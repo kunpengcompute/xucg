@@ -12,9 +12,9 @@ if (UCG_BUILD_PLANC_UCX MATCHES "ON")
     add_library(ucg_planc_ucx SHARED ${SRCS})
     set_target_properties(ucg_planc_ucx
                           PROPERTIES VERSION
-                          ${HPCKIT_VERSION}
+                          "${ABI_VERSION}.${HPCKIT_VERSION}"
                           SOVERSION
-                          ${HPCKIT_MAJOR})
+                          ${ABI_VERSION})
 
     if (IS_DIRECTORY ${UCG_BUILD_WITH_UCX})
         if(SUPPORT_CMAKE3 MATCHES "ON")

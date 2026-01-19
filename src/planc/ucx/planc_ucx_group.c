@@ -281,7 +281,7 @@ ucg_status_t ucg_planc_ucx_create_socket_leader_algo_group(ucg_planc_ucx_group_t
         goto err;
     }
     ucg_rank_t *offsets = NULL;
-    offsets = ucg_calloc(num_socket + 1, sizeof(ucg_rank_t), "ucg rabenseifner offsets");
+    offsets = ucg_calloc(num_socket, sizeof(ucg_rank_t), "ucg rabenseifner offsets");
     if (offsets == NULL) {
         goto err_free_ranks;
     }
@@ -295,29 +295,47 @@ ucg_status_t ucg_planc_ucx_create_socket_leader_algo_group(ucg_planc_ucx_group_t
     }
     int32_t mynode_id = location.node_id;
     int32_t mysocket_id = location.socket_id;
+    int32_t* map_v_socket_id = ucg_malloc(num_socket * sizeof(int32_t), "ucg rabenseifner v_socket_id");
+    if (map_v_socket_id == NULL) {
+        goto err_free_offsets;
+    }
+    for (int i = 0; i < num_socket; i++) {
+        map_v_socket_id[i] = -1;
+    }
     uint32_t vsize = 0;
     for (int i = 0; i < size; ++i) {
         status = ucg_group_get_location(vgroup->group, i, &location);
         if (status != UCG_OK) {
             ucg_error("Failed to get location of rank %d", i);
-            goto err_free_offsets;
+            goto err_free_map_v_socket_id;
         }
         if (location.node_id == mynode_id) {
-            if (offsets[location.socket_id] == myoffset) {
+            int v_socket_id = 0;
+            for (; v_socket_id < num_socket; v_socket_id++) {
+                if (map_v_socket_id[v_socket_id] == -1) {
+                    map_v_socket_id[v_socket_id] = location.socket_id;
+                }
+                if (map_v_socket_id[v_socket_id] == location.socket_id) {
+                    break;
+                }
+            }
+            if (v_socket_id >= num_socket) {
+                ucg_error("Failed to get v_socket_id of socket %d", location.socket_id);
+                goto err_free_map_v_socket_id;
+            }
+            if (offsets[v_socket_id] == myoffset) {
                 ranks[vsize++] = i;
             }
-            ++offsets[location.socket_id];
+            ++offsets[v_socket_id];
         }
     }
-    if (ucg_unlikely(mysocket_id >= vsize || ranks[mysocket_id] != myrank)) {
-        for (int i = 0; i < vsize; ++i) {
-            if (ranks[i] == myrank) {
-                mysocket_id = i;
-                break;
-            }
+    int v_socket_id = 0;
+    for (; v_socket_id < vsize; v_socket_id++) {
+        if (map_v_socket_id[v_socket_id] == mysocket_id) {
+            break;
         }
     }
-    algo_group->super.myrank = mysocket_id;
+    algo_group->super.myrank = v_socket_id;
     algo_group->super.size = vsize;
 
     if (vsize <= 1) { // Group is meaningless when it has one or less member
@@ -331,6 +349,8 @@ ucg_status_t ucg_planc_ucx_create_socket_leader_algo_group(ucg_planc_ucx_group_t
         }
     }
 
+err_free_map_v_socket_id:
+    ucg_free(map_v_socket_id);
 err_free_offsets:
     ucg_free(offsets);
 err_free_ranks:

@@ -12,9 +12,9 @@ if (UCG_BUILD_PLANC_HCCL MATCHES "ON")
     add_library(ucg_planc_hccl SHARED ${SRCS})
     set_target_properties(ucg_planc_hccl
                           PROPERTIES VERSION
-                          ${HPCKIT_VERSION}
+                          "${ABI_VERSION}.${HPCKIT_VERSION}"
                           SOVERSION
-                          ${HPCKIT_MAJOR})
+                          ${ABI_VERSION})
     if(SUPPORT_CMAKE3 MATCHES "ON")
         if (IS_DIRECTORY ${UCG_BUILD_WITH_HCCL})
             target_include_directories(ucg_planc_hccl PRIVATE ${UCG_BUILD_WITH_HCCL}/include)

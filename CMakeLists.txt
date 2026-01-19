@@ -16,9 +16,12 @@ endif()
 
 string(REGEX MATCH "^(.+)\\.(.+)\\.(.+)$" VERSION_MATCH ${HPCKIT_VERSION})
 
+set(ABI_VERSION 1)
 set(HPCKIT_MAJOR ${CMAKE_MATCH_1})
 set(HPCKIT_MINOR ${CMAKE_MATCH_2})
 set(HPCKIT_PATCH ${CMAKE_MATCH_3})
+
+project(ucg)
 
 # Define options
 option(UCG_BUILD_TOOLS "Build ucg tools" ON)

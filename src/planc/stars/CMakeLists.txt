@@ -24,9 +24,9 @@ if (UCG_BUILD_PLANC_STARS MATCHES "ON")
     add_library(ucg_planc_stars SHARED ${SRCS})
     set_target_properties(ucg_planc_stars
                           PROPERTIES VERSION
-                          ${HPCKIT_VERSION}
+                          "${ABI_VERSION}.${HPCKIT_VERSION}"
                           SOVERSION
-                          ${HPCKIT_MAJOR})
+                          ${ABI_VERSION})
 
     # Make all warnings into errors
     target_compile_options(ucg_planc_stars PUBLIC

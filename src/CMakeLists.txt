@@ -68,9 +68,9 @@ add_library(ucg SHARED ucg/api/ucg.h)
 set_target_properties(ucg PROPERTIES LINKER_LANGUAGE C)
 set_target_properties(ucg
                       PROPERTIES VERSION
-                      ${HPCKIT_VERSION}
+                      "${ABI_VERSION}.${HPCKIT_VERSION}"
                       SOVERSION
-                      ${HPCKIT_MAJOR})
+                      ${ABI_VERSION})
 set(UCG_PUBLIC_HEADER
     ${CMAKE_CURRENT_SOURCE_DIR}/ucg/api/ucg.h
     ${CMAKE_CURRENT_SOURCE_DIR}/ucg/api/ucg_version.h)

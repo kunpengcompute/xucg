@@ -32,8 +32,7 @@ typedef struct ucg_planc_ucx_scatter_na_kntree_args {
     int32_t sendbuf_size;
     /* sendtype true length of root rank*/
     uint64_t sdtype_size;
-    int32_t *displs;
-    int32_t *sendcounts;
+    int32_t sendcount;
     ucg_topo_group_t *intra_node_group;
     ucg_topo_group_t *node_leader_group;
     ucg_vgroup_t *vgroup_origin;

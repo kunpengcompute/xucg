@@ -95,7 +95,6 @@ static ucg_status_t ucg_planc_ucx_gatherv_na_linear_intra_gatherv_prepare(ucg_pl
     int32_t is_node_leader = ucx_op->gatherv.topo_aware.is_node_leader;
     int32_t ppn = ucx_op->gatherv.topo_aware.ppn;
     int32_t intra_total_count = 0;
-    // int8_t use_shm = ucx_op->gatherv.topo_aware.use_shm;
 
     /* intra-gatherv */
     // set gatherv arguments
@@ -145,7 +144,6 @@ static ucg_status_t ucg_planc_ucx_gatherv_na_linear_inter_gatherv_prepare(ucg_pl
     int32_t is_node_leader = ucx_op->gatherv.topo_aware.is_node_leader;
     int32_t node_cnt = ucx_op->gatherv.topo_aware.node_cnt;
     uint32_t is_root = vgroup->myrank == args->gatherv.root;
-    // int8_t use_fc = ucx_op->gatherv.topo_aware.use_fc;
 
     /* inter-gatherv */
     // set gatherv arguments
@@ -375,24 +373,8 @@ err:
 static ucg_status_t ucg_planc_ucx_gatherv_na_linear_check(ucg_vgroup_t *vgroup,
                                                           const ucg_coll_args_t *args)
 {
-    int32_t ppn = vgroup->group->topo->ppn;
-    int32_t group_size = vgroup->size;
-
-    if (ppn == group_size) {
-        ucg_info("Node-aware gatherv does not support single node");
-        return UCG_ERR_UNSUPPORTED;
-    }
-
-    if (group_size < 1024) {
-        ucg_info("Node-aware gatherv does not support communicator size < 1024");
-        return UCG_OK;
-    }
-
-    if (args->gatherv.root != 0) {
-        ucg_info("Node-aware gatherv does not support root != 0");
-        return UCG_ERR_UNSUPPORTED;
-    }
-    return UCG_OK;
+    UCG_UNUSED(vgroup, args);
+    return UCG_ERR_UNSUPPORTED;
 }
 
 ucg_status_t ucg_planc_ucx_gatherv_na_linear_prepare(ucg_vgroup_t *vgroup,
@@ -400,9 +382,6 @@ ucg_status_t ucg_planc_ucx_gatherv_na_linear_prepare(ucg_vgroup_t *vgroup,
                                                      ucg_plan_op_t **op)
 {
     UCG_CHECK_NULL_INVALID(vgroup, args, op);
-    // volatile int a =1;
-    // while(a){
-    // };
     ucg_status_t status = ucg_planc_ucx_gatherv_na_linear_check(vgroup, args);
     if (status != UCG_OK) {
         return status;

@@ -12,6 +12,9 @@ static ucg_plan_attr_t ucg_planc_ucx_gather_plan_attr[] = {
     {ucg_planc_ucx_gather_linear_prepare,
      1, "Linear", PLAN_DOMAIN},
 
+    {ucg_planc_ucx_gather_linear_prepare,
+     2, "Node-aware Linear", PLAN_DOMAIN},
+    
     {ucg_planc_ucx_gather_kntree_prepare,
      3, "Knomial tree", PLAN_DOMAIN},
 

@@ -139,8 +139,10 @@ static ucg_status_t ucg_planc_ucx_scatter_data_op_progress(ucg_plan_op_t *ucg_op
         while ((peer = ucg_algo_kntree_iter_child_value(iter)) != UCG_INVALID_RANK) {
             if (ucg_test_and_clear_flags(&ucx_op->flags, UCG_KNTREE_SEND_SENDBUF)) {
                 uint64_t offset = (na_args->sendcount * (peer - iter->myrank)) * na_args->sdtype_size;
+                int32_t subtree_size = ucg_algo_kntree_get_subtree_size(iter, peer);
+                uint64_t sendcount = na_args->sendcount * na_args->sdtype_size * subtree_size;
                 status = ucg_planc_ucx_p2p_isend(args->sendbuf + offset,
-                                                 na_args->sendcount * na_args->sdtype_size,
+                                                 sendcount,
                                                  ucg_dt_get_predefined(UCG_DT_TYPE_UINT8),
                                                  peer, ucx_op->tag, vgroup, &params);
                 UCG_CHECK_GOTO(status, out);

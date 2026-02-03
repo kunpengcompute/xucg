@@ -63,10 +63,8 @@ typedef struct ucg_planc_ucx_scatter {
              * rank 5,6,7 (sequential increment).
              */
             uint32_t staging_count;
-            /* staging_displs[] indicates the start address of each rank in staging area.*/
-            int32_t *staging_displs;
             /* sendcounts[] of root rank*/
-            int32_t *sendcounts;
+            int32_t sendcount;
             /* sendtype true length of root rank*/
             int32_t sdtype_size;
         } kntree;

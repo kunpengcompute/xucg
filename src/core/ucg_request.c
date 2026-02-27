@@ -640,6 +640,8 @@ ucg_status_t ucg_request_msg_size(const ucg_coll_args_t *args, const uint32_t si
             break;
         case UCG_COLL_TYPE_SCATTER:
         case UCG_COLL_TYPE_ISCATTER:
+            *msize = ucg_dt_size(args->scatter.sendtype) * args->scatter.sendcount;
+            break;
         case UCG_COLL_TYPE_SCATTERV:
         case UCG_COLL_TYPE_ISCATTERV:
         case UCG_COLL_TYPE_GATHER:

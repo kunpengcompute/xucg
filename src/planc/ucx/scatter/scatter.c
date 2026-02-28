@@ -60,10 +60,25 @@ static ucg_plan_policy_t scatter_plan_policy[] = {
     UCG_PLAN_LAST_POLICY,
 };
 
+static ucg_plan_policy_t scatter_4_16[] = {
+    UCG_PLAN_LAST_POLICY,
+};
+
+static ucg_plan_policy_t scatter_8_16[] = {
+    {2,  {0, 16385}, UCG_PLAN_UCX_PLAN_SCORE_1ST},
+    UCG_PLAN_LAST_POLICY,
+};
+
 const ucg_plan_policy_t *ucg_planc_ucx_get_scatter_plan_policy(ucg_planc_ucx_node_level_t node_level,
                                                                 ucg_planc_ucx_ppn_level_t ppn_level)
 {
-    UCG_UNUSED(node_level, ppn_level);
-    ucg_plan_policy_t *policy = scatter_plan_policy;
+    ucg_plan_policy_t *policy = NULL;
+    if (node_level == NODE_LEVEL_8 && ppn_level == PPN_LEVEL_16) {
+        policy = scatter_8_16;
+    } else if (node_level == NODE_LEVEL_4 && ppn_level == PPN_LEVEL_16) {
+        policy = scatter_4_16;
+    } else {
+        policy = scatter_plan_policy;
+    }
     return policy;
 }

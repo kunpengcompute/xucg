@@ -50,8 +50,7 @@ UCG_PLAN_ATTR_REGISTER_TABLE(ucg_planc_ucx, UCG_COLL_TYPE_GATHERV,
                              ucg_planc_ucx_gatherv_plan_attr);
 
 static ucg_plan_policy_t gatherv[] = {
-    {1,  {0, UCG_PLAN_RANGE_MAX}, UCG_PLAN_UCX_PLAN_SCORE_1ST},
-    {2,  {0, UCG_PLAN_RANGE_MAX}, UCG_PLAN_UCX_PLAN_SCORE_2ND},
+    {3,  {0, UCG_PLAN_RANGE_MAX}, UCG_PLAN_UCX_PLAN_SCORE_1ST},
     UCG_PLAN_LAST_POLICY,
 };
 

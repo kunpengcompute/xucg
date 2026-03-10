@@ -636,16 +636,13 @@ static ucg_status_t ucg_topo_calc_pps(ucg_topo_t *topo)
     for (int i = 0; i < group_size; ++i) {
         ++process_cnt[locations[i].node_id * nsocket + locations[i].socket_id];
     }
-    int32_t res = 0;
-    for (int i = 0; i < size; ++i) {
-        if (process_cnt[i] == 0) {
-            continue;
-        }
-        if (res == 0) {
-            res = process_cnt[i];
-        } else if (process_cnt[i] != res) {
-            topo->pps = UCG_TOPO_PPX_UNBALANCED;
-            goto out;
+    int32_t res = process_cnt[0];
+    for (int i = 0; i < nnode; ++i) {
+        for (int j = 0; j < nsocket; ++j) {
+            if (process_cnt[nsocket * i  + j] != res) {
+                topo->pps = UCG_TOPO_PPX_UNBALANCED;
+                goto out;
+            }
         }
     }
     topo->pps = res;

@@ -303,6 +303,11 @@ static ucg_plan_policy_t allgatherv_LG_8[] = {
     UCG_PLAN_LAST_POLICY,
 };
 
+static ucg_plan_policy_t allgatherv_LG_16[] = {
+    {1, {0, UCG_PLAN_RANGE_MAX}, UCG_PLAN_UCX_PLAN_SCORE_1ST},
+    UCG_PLAN_LAST_POLICY,
+};
+
 static ucg_plan_policy_t* allgatherv_plan_policy[] = {
     allgatherv_4_1,
     allgatherv_4_4,
@@ -359,10 +364,10 @@ static ucg_plan_policy_t* allgatherv_plan_policy_default[] = {
     allgatherv_LG_1,
     allgatherv_LG_4,
     allgatherv_LG_8,
-    allgatherv_16_16, // allgatherv_LG_16
-    allgatherv_16_32, // allgatherv_LG_32
-    allgatherv_16_64, // allgatherv_LG_64
-    allgatherv_16_LG, // allgatherv_LG_LG
+    allgatherv_LG_16, // allgatherv_LG_16
+    allgatherv_LG_16, // allgatherv_LG_32
+    allgatherv_LG_16, // allgatherv_LG_64
+    allgatherv_LG_16, // allgatherv_LG_LG
 };
 
 const ucg_plan_policy_t *ucg_planc_ucx_get_allgatherv_plan_policy(ucg_planc_ucx_node_level_t node_level,

@@ -56,7 +56,7 @@ UCG_PLANC_UCX_BUILTIN_ALGO_REGISTER(UCG_COLL_TYPE_SCATTER, scatter_config_table,
                                     sizeof(ucg_planc_ucx_scatter_config_t))
 
 static ucg_plan_policy_t scatter_plan_policy[] = {
-    {1,  {0, UCG_PLAN_RANGE_MAX}, UCG_PLAN_UCX_PLAN_SCORE_1ST},
+    {3,  {0, UCG_PLAN_RANGE_MAX}, UCG_PLAN_UCX_PLAN_SCORE_1ST},
     UCG_PLAN_LAST_POLICY,
 };
 

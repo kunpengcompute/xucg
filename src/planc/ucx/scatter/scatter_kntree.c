@@ -57,36 +57,19 @@ static ucg_status_t ucg_planc_ucx_scatter_kntree_op_data_recv(ucg_planc_ucx_op_t
     }
 
     if (ucg_test_and_clear_flags(&op->flags, UCG_SCATTER_KNTREE_DATA_RECV)) {
-        if (args->root == 0) {
-            if (op->scatter.kntree.staging_count > 0) {
-                status = ucg_planc_ucx_p2p_irecv(op->staging_area,
-                                                 args->recvcount * (op->scatter.kntree.staging_count + 1),
-                                                 args->recvtype, peer, op->tag, vgroup, &params);
-                UCG_CHECK_GOTO(status, out);
-            } else {
-                status = ucg_planc_ucx_p2p_irecv(args->recvbuf, args->recvcount,
-                                                 args->recvtype, peer, op->tag,
-                                                 vgroup, &params);
-                UCG_CHECK_GOTO(status, out);
-            }
+        if (op->scatter.kntree.staging_count > 0) {
+            //Recv myself data and my children's data
+            int64_t recv_len = op->scatter.kntree.sendcount * op->scatter.kntree.sdtype_size * (op->scatter.kntree.staging_count + 1);
+            status = ucg_planc_ucx_p2p_irecv(op->staging_area, recv_len,
+                                             ucg_dt_get_predefined(UCG_DT_TYPE_UINT8),
+                                             peer, op->tag, vgroup, &params);
+            UCG_CHECK_GOTO(status, out);
         } else {
             //Recv myself data
-            status = ucg_planc_ucx_p2p_irecv(args->recvbuf, args->recvcount,
-                                            args->recvtype, peer, op->tag,
-                                            vgroup, &params);
+            status = ucg_planc_ucx_p2p_irecv(args->recvbuf, args->recvcount * op->scatter.kntree.sdtype_size,
+                                             ucg_dt_get_predefined(UCG_DT_TYPE_UINT8),
+                                             peer, op->tag, vgroup, &params);
             UCG_CHECK_GOTO(status, out);
-
-            //Recv my children's data
-            if (op->scatter.kntree.staging_count > 0) {
-                int64_t offset = 0;
-                for (int32_t i = 0; i < op->scatter.kntree.staging_count; i++) {
-                    int32_t recv_len = args->recvcount * ucg_dt_extent(args->recvtype);
-                    offset += recv_len;
-                    status = ucg_planc_ucx_p2p_irecv(op->staging_area + offset, args->recvcount,
-                                                     args->recvtype, peer, op->tag, vgroup, &params);
-                    UCG_CHECK_GOTO(status, out);
-                }
-            }
         }
     }
 
@@ -121,50 +104,54 @@ static ucg_status_t ucg_planc_ucx_scatter_kntree_op_data_send(ucg_planc_ucx_op_t
 
     if (ucg_test_flags(op->flags, UCG_SCATTER_KNTREE_DATA_SEND)) {
         while ((peer = ucg_algo_kntree_iter_child_value(iter)) != UCG_INVALID_RANK) {
-            int32_t peer_subtree_size = ucg_algo_kntree_get_subtree_size(iter, peer);
-
             if (myrank == args->root) {
-                if (args->root == 0) {
-                    int64_t offset = args->sendcount * peer * ucg_dt_extent(args->sendtype);
-                    status = ucg_planc_ucx_p2p_isend(args->sendbuf + offset,
-                                                     args->sendcount * peer_subtree_size,
-                                                     args->sendtype,
-                                                     peer, op->tag, vgroup,
-                                                     &params);
+                int32_t peer_subtree_size = ucg_algo_kntree_get_subtree_size(iter, peer);
+                int32_t idx = (peer - myrank) % group_size;
+                int64_t offset = args->sendcount * idx * ucg_dt_extent(args->sendtype);
+                if (myrank != 0) {
+                    memcpy(op->staging_area, args->sendbuf + myrank * args->sendcount * ucg_dt_extent(args->sendtype), 
+                           (group_size - myrank) * args->sendcount * ucg_dt_extent(args->sendtype));
+                    memcpy(op->staging_area + (group_size - myrank) * args->sendcount * ucg_dt_extent(args->sendtype),
+                           args->sendbuf, myrank * args->sendcount * ucg_dt_extent(args->sendtype));
+
+                    idx = (peer - myrank) % group_size;
+                    offset = args->sendcount * idx * ucg_dt_extent(args->sendtype);
+                    int64_t send_len = args->sendcount * ucg_dt_extent(args->sendtype) * peer_subtree_size;
+                    status = ucg_planc_ucx_p2p_isend(op->staging_area + offset,
+                                                    send_len,
+                                                    ucg_dt_get_predefined(UCG_DT_TYPE_UINT8),
+                                                    peer, op->tag, vgroup,
+                                                    &params);
                     UCG_CHECK_GOTO(status, out);
                 } else {
-                    for (int32_t i = 0; i < peer_subtree_size; i++) {
-                        int32_t idx = (i + peer) % group_size;
-                        int64_t offset = args->sendcount * idx * ucg_dt_extent(args->sendtype);
-                        status = ucg_planc_ucx_p2p_isend(args->sendbuf + offset,
-                                                         args->sendcount,
-                                                         args->sendtype,
-                                                         peer, op->tag, vgroup,
-                                                         &params);
+                    if (peer_subtree_size > 1) {
+                        idx = peer % group_size;
+                        offset = args->sendcount * idx * ucg_dt_extent(args->sendtype);
+                        int64_t send_len = args->sendcount * ucg_dt_extent(args->sendtype) * peer_subtree_size;
+                        status = ucg_planc_ucx_p2p_isend(args->sendbuf + offset, send_len,
+                                                        ucg_dt_get_predefined(UCG_DT_TYPE_UINT8),
+                                                        peer, op->tag, vgroup,
+                                                        &params);
                         UCG_CHECK_GOTO(status, out);
                     }
                 }
             } else {
-                if (args->root == 0) {
-                    int64_t offset = op->scatter.kntree.sendcount * (peer - myrank) * op->scatter.kntree.sdtype_size;
-                    status = ucg_planc_ucx_p2p_isend(op->staging_area + offset,
-                                                     op->scatter.kntree.sendcount * peer_subtree_size,
-                                                     args->sendtype,
+                int32_t peer_subtree_size = ucg_algo_kntree_get_subtree_size(iter, peer);
+                UCG_CHECK_GOTO(status, out);
+                if (peer_subtree_size > 1) {
+                    int64_t send_len = op->scatter.kntree.sendcount * op->scatter.kntree.sdtype_size * peer_subtree_size;
+                    int64_t offset = op->scatter.kntree.sendcount * ((peer - myrank) % group_size)  * op->scatter.kntree.sdtype_size;
+                    status = ucg_planc_ucx_p2p_isend(op->staging_area + offset, send_len,
+                                                     ucg_dt_get_predefined(UCG_DT_TYPE_UINT8),
                                                      peer, op->tag, vgroup, &params);
                     UCG_CHECK_GOTO(status, out);
                 } else {
-                    for (int32_t i = 0; i < peer_subtree_size; i++) {
-                        int32_t idx = (i + peer) % group_size;
-                        int32_t staging_displs_idx = (myrank < idx) ?
-                                                     (idx - myrank) :
-                                                     (idx + group_size - myrank);
-                        int64_t offset = op->scatter.kntree.sendcount * staging_displs_idx * op->scatter.kntree.sdtype_size;
-                        status = ucg_planc_ucx_p2p_isend(op->staging_area + offset,
-                                                         op->scatter.kntree.sendcount,
-                                                         args->sendtype,
-                                                         peer, op->tag, vgroup, &params);
-                        UCG_CHECK_GOTO(status, out);
-                    }
+                    int64_t send_len = op->scatter.kntree.sendcount * op->scatter.kntree.sdtype_size;
+                    int64_t offset = op->scatter.kntree.sendcount * ((peer - myrank) % group_size)  * op->scatter.kntree.sdtype_size;
+                    status = ucg_planc_ucx_p2p_isend(op->staging_area + offset, send_len,
+                                                     ucg_dt_get_predefined(UCG_DT_TYPE_UINT8),
+                                                     peer, op->tag, vgroup, &params);
+                    UCG_CHECK_GOTO(status, out);
                 }
             }
             ucg_algo_kntree_iter_child_inc(iter);
@@ -185,8 +172,16 @@ static ucg_status_t ucg_planc_ucx_scatter_kntree_op_params(ucg_planc_ucx_op_t *o
         ucg_vgroup_t *vgroup = op->super.vgroup;
         ucg_rank_t myrank = vgroup->myrank;
         if ((myrank != args->root) && (op->scatter.kntree.staging_count > 0)) {
-            int64_t size = (int64_t)op->scatter.kntree.sendcount * op->scatter.kntree.sdtype_size *
-                (op->scatter.kntree.staging_count + 1);
+            int64_t size = 0;
+            size = op->scatter.kntree.staging_count * op->scatter.kntree.sendcount * op->scatter.kntree.sdtype_size;
+            op->staging_area = ucg_malloc(size, "scatter kntree staging area");
+            if (op->staging_area == NULL) {
+                return UCG_ERR_NO_MEMORY;
+            }
+        }
+        if (myrank == args->root && myrank != 0) {
+            int64_t size = 0;
+            size = vgroup->size * op->scatter.kntree.sendcount * op->scatter.kntree.sdtype_size;
             op->staging_area = ucg_malloc(size, "scatter kntree staging area");
             if (op->staging_area == NULL) {
                 return UCG_ERR_NO_MEMORY;

@@ -196,10 +196,9 @@ static void ucg_planc_ucx_p2p_isend_done(void *request, ucs_status_t status,
         state->status = UCG_ERR_IO_ERROR;
     }
     --state->inflight_send_cnt;
-    ucg_planc_ucx_p2p_req_t *req = (ucg_planc_ucx_p2p_req_t*)request;
-    if (req->free_in_cb) {
-        ucg_planc_ucx_p2p_req_free(request);
-    }
+
+    ucg_planc_ucx_p2p_req_free(request);
+
     return;
 }
 
@@ -213,10 +212,7 @@ static void ucg_planc_ucx_p2p_irecv_done(void *request, ucs_status_t status,
         state->status = UCG_ERR_IO_ERROR;
     }
     --state->inflight_recv_cnt;
-    ucg_planc_ucx_p2p_req_t *req = (ucg_planc_ucx_p2p_req_t*)request;
-    if (req->free_in_cb) {
-        ucg_planc_ucx_p2p_req_free(request);
-    }
+    ucg_planc_ucx_p2p_req_free(request);
     return;
 }
 
@@ -264,7 +260,6 @@ ucg_status_t ucg_planc_ucx_p2p_isend(const void *buffer, int32_t count,
        not thread-safe. */
 
     /* Send is not finished. */
-    ((ucg_planc_ucx_p2p_req_t*)ucp_req)->free_in_cb = 1;
     ++state->inflight_send_cnt;
     /**
      * In some cases, ucp_tag_send_nbx() may return ucp_request pointer
@@ -272,14 +267,10 @@ ucg_status_t ucg_planc_ucx_p2p_isend(const void *buffer, int32_t count,
      * Here the status of ucp_request should be checked again.
      */
     ucs_status_t req_status = ucp_request_check_status(ucp_req);
-    if (req_status != UCS_INPROGRESS) {
-        ucg_planc_ucx_p2p_req_free(ucp_req);
-    }
     if (params->request != NULL) {
         ucg_planc_ucx_p2p_req_t **req = params->request;
         if (req_status == UCS_INPROGRESS)  {
             *req = (ucg_planc_ucx_p2p_req_t*)ucp_req;
-            (*req)->free_in_cb = 0;
         } else {
             *req = NULL;
         }
@@ -378,21 +369,16 @@ ucg_status_t ucg_planc_ucx_p2p_irecv(void *buffer, int32_t count,
 
     /* Receive is not finished. */
     ++state->inflight_recv_cnt;
-    ((ucg_planc_ucx_p2p_req_t*)ucp_req)->free_in_cb = 1;
     /**
      * In some cases, ucp_tag_recv_nbx() may return ucp_request pointer
      * instead of UCS_OK when the request is completed.
      * Here the status of ucp_request should be checked again.
      */
     ucs_status_t req_status = ucp_request_check_status(ucp_req);
-    if (req_status != UCS_INPROGRESS) {
-        ucg_planc_ucx_p2p_req_free(ucp_req);
-    }
     if (params->request != NULL) {
         ucg_planc_ucx_p2p_req_t **req = params->request;
         if (req_status == UCS_INPROGRESS)  {
             *req = (ucg_planc_ucx_p2p_req_t*)ucp_req;
-            (*req)->free_in_cb = 0;
         } else {
             *req = NULL;
         }

@@ -404,7 +404,6 @@ ucg_status_t ucg_planc_ucx_p2p_test(ucg_planc_ucx_group_t *ucx_group,
     while (polls++ < n_polls) {
         ucs_status_t status = ucp_request_check_status(*req);
         if (status != UCS_INPROGRESS) {
-            ucg_planc_ucx_p2p_req_free(*req);
             *req = NULL;
             return ucg_status_s2g(status);
         }

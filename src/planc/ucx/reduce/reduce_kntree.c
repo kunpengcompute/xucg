@@ -59,15 +59,13 @@ static ucg_status_t ucg_planc_ucx_reduce_kntree_op_recv_and_reduce(ucg_planc_ucx
         }
     }
 
+    status = ucg_planc_ucx_p2p_testall(op->ucx_group, params.state);
+    UCG_CHECK_GOTO(status, out);
+
     for (idx = 0; idx < op->reduce.requests_count; idx++) {
         if (op->reduce.req_bitmap[idx]) {
             continue;
         }
-        status = ucg_planc_ucx_p2p_test(op->ucx_group, &op->reduce.requests[idx]);
-        if (status == UCG_INPROGRESS) {
-            continue;
-        }
-        UCG_CHECK_GOTO(status, out);
         staging_area = op->staging_area + idx * data_size;
         status = ucg_op_reduce(args->op, staging_area, recvbuf, args->count, args->dt);
         UCG_CHECK_GOTO(status, out);

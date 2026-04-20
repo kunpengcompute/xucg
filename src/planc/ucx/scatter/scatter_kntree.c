@@ -173,7 +173,7 @@ static ucg_status_t ucg_planc_ucx_scatter_kntree_op_params(ucg_planc_ucx_op_t *o
         ucg_rank_t myrank = vgroup->myrank;
         if ((myrank != args->root) && (op->scatter.kntree.staging_count > 0)) {
             int64_t size = 0;
-            size = op->scatter.kntree.staging_count * op->scatter.kntree.sendcount * op->scatter.kntree.sdtype_size;
+            size = (op->scatter.kntree.staging_count + 1) * op->scatter.kntree.sendcount * op->scatter.kntree.sdtype_size;
             op->staging_area = ucg_malloc(size, "scatter kntree staging area");
             if (op->staging_area == NULL) {
                 return UCG_ERR_NO_MEMORY;

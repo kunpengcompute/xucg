@@ -238,7 +238,7 @@ const ucg_plan_policy_t *ucg_planc_ucx_get_barrier_plan_policy(ucg_planc_ucx_nod
                                                                ucg_planc_ucx_ppn_level_t ppn_level)
 {
     int idx = node_level * PPN_LEVEL_NUMS + ppn_level;
-    ucg_assert(idx < NODE_LEVEL_NUMS * PPN_LEVEL_NUMS);
+    ucg_assert(idx < (sizeof(barrier_plan_policy) / sizeof(barrier_plan_policy[0])));
     ucg_plan_policy_t *policy = barrier_plan_policy[idx];
     return policy;
 }

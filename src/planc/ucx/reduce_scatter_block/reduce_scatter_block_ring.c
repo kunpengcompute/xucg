@@ -48,8 +48,13 @@ ucg_status_t ucg_planc_ucx_reduce_scatter_block_ring_op_progress(ucg_plan_op_t *
     ucg_rank_t recv_from_rank = (myrank + group_size - 1) % group_size;
 
     if (ucg_test_and_clear_flags(&op->flags, UCG_REDUCE_SCATTER_BLOCK_RING_PARAMS)) {
-        status = ucg_dt_memcpy(op->staging_area, op->reduce_scatter_block.ring.total_count, args->dt,
-                                args->sendbuf, op->reduce_scatter_block.ring.total_count, args->dt);
+        if (args->sendbuf != UCG_IN_PLACE) {
+            status = ucg_dt_memcpy(op->staging_area, op->reduce_scatter_block.ring.total_count, args->dt,
+                                    args->sendbuf, op->reduce_scatter_block.ring.total_count, args->dt);
+        } else {
+            status = ucg_dt_memcpy(op->staging_area, op->reduce_scatter_block.ring.total_count, args->dt,
+                                    args->recvbuf, op->reduce_scatter_block.ring.total_count, args->dt);
+        }
         UCG_CHECK_GOTO(status, out);  
     }
 

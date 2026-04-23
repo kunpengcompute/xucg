@@ -528,7 +528,7 @@ const ucg_plan_policy_t *ucg_planc_ucx_get_allreduce_plan_policy(ucg_planc_ucx_n
                                                                  ucg_planc_ucx_group_t *ucx_group)
 {
     int idx = node_level * PPN_LEVEL_NUMS + ppn_level;
-    ucg_assert(idx < NODE_LEVEL_NUMS * PPN_LEVEL_NUMS);
+    ucg_assert(idx < (sizeof(allreduce_plan_policy) / sizeof(allreduce_plan_policy[0])));
     ucg_plan_policy_t *policy;
     ucg_planc_ucx_allreduce_config_t *config;
     if (ucg_planc_ucx_context_config_builtin_check(ucx_group->context, UCG_COLL_TYPE_ALLREDUCE)) {

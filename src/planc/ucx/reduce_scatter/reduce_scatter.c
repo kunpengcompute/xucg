@@ -9,9 +9,11 @@
 #define PLAN_DOMAIN "planc ucx reduce_scatter"
 
 static ucg_plan_attr_t ucg_planc_ucx_reduce_scatter_plan_attr[] = {
-    {ucg_planc_ucx_reduce_scatter_ring_prepare,
-     1, "ring", PLAN_DOMAIN},
+    {ucg_planc_ucx_reduce_scatter_linear_prepare,
+     1, "linear", PLAN_DOMAIN},
 
+    {ucg_planc_ucx_reduce_scatter_ring_prepare,
+     2, "ring", PLAN_DOMAIN},
 
     {NULL},
 };
@@ -32,13 +34,23 @@ static ucg_plan_policy_t reduce_scatter[] = {
     UCG_PLAN_LAST_POLICY,
 };
 
-static ucg_plan_policy_t* reduce_scatter_plan_policy[] = {
-    reduce_scatter,
+static ucg_plan_policy_t reduce_scatter_LG_LG[] = {   // >512*16
+    {2,  {0, UCG_PLAN_RANGE_MAX}, UCG_PLAN_UCX_PLAN_SCORE_1ST},
+    UCG_PLAN_LAST_POLICY,
 };
 
 const ucg_plan_policy_t *ucg_planc_ucx_get_reduce_scatter_plan_policy(ucg_planc_ucx_node_level_t node_level,
                                                                ucg_planc_ucx_ppn_level_t ppn_level)
 {
-    ucg_plan_policy_t *policy = reduce_scatter_plan_policy[0];
+    ucg_plan_policy_t *policy = NULL;
+    if (
+        (node_level == NODE_LEVEL_LG && ppn_level == PPN_LEVEL_32) ||
+        (node_level == NODE_LEVEL_LG && ppn_level == PPN_LEVEL_64) ||
+        (node_level == NODE_LEVEL_LG && ppn_level == PPN_LEVEL_LG)
+    ) {
+        policy = reduce_scatter_LG_LG;
+    } else {
+        policy = reduce_scatter;
+    }
     return policy;
 }

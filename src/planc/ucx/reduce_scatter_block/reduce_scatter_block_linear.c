@@ -17,12 +17,12 @@ static void ucg_planc_ucx_reduce_scatter_block_init_reduce_args(const ucg_coll_a
 {
     reduce_args->type = UCG_COLL_TYPE_REDUCE;
     reduce_args->info = args->info;
-    reduce_args->reduce.sendbuf = args->reduce_scatter_block.sendbuf;
     if (args->reduce_scatter_block.sendbuf == UCG_IN_PLACE) {
-        reduce_args->reduce.recvbuf = args->reduce_scatter_block.recvbuf;
+        reduce_args->reduce.sendbuf = args->reduce_scatter_block.recvbuf;
     } else {
-        reduce_args->reduce.recvbuf = tmpbuf;
+        reduce_args->reduce.sendbuf = args->reduce_scatter_block.sendbuf;
     }
+    reduce_args->reduce.recvbuf = tmpbuf;
     reduce_args->reduce.count = args->reduce_scatter_block.recvcount * size;
     reduce_args->reduce.dt = args->reduce_scatter_block.dt;
     reduce_args->reduce.op = args->reduce_scatter_block.op;
@@ -34,13 +34,9 @@ static void ucg_planc_ucx_reduce_scatter_block_init_scatter_args(const ucg_coll_
                                                                  ucg_coll_args_t *scatter_args,
                                                                  void *tmpbuf)
 {
-    scatter_args->type = UCG_COLL_TYPE_BCAST;
+    scatter_args->type = UCG_COLL_TYPE_SCATTER;
     scatter_args->info = args->info;
-    if (args->reduce_scatter_block.sendbuf == UCG_IN_PLACE) {
-        scatter_args->reduce.sendbuf = args->reduce_scatter_block.recvbuf;
-    } else {
-        scatter_args->reduce.sendbuf = tmpbuf;
-    }
+    scatter_args->scatter.sendbuf = tmpbuf;
     scatter_args->scatter.recvbuf = args->reduce_scatter_block.recvbuf;
     scatter_args->scatter.sendcount = args->reduce_scatter_block.recvcount;
     scatter_args->scatter.recvcount = args->reduce_scatter_block.recvcount;
@@ -106,7 +102,8 @@ ucg_plan_meta_op_t *ucg_planc_ucx_reduce_scatter_block_linear_op_new(ucg_planc_u
     UCG_CHECK_NULL(NULL, ucx_group, vgroup, args, scatter_config);
 
     int64_t total_count = args->reduce_scatter_block.recvcount * vgroup->size;
-    void *tmpbuf = ucg_malloc(total_count * args->reduce_scatter_block.dt->extent, "reduce_scatter_block tmpbuf");
+    void *tmpbuf = args->reduce_scatter_block.recvbuf;
+    tmpbuf = ucg_malloc(total_count * args->reduce_scatter_block.dt->extent, "reduce_scatter_block tmpbuf");
     if (tmpbuf == NULL) {
         goto err;
     }

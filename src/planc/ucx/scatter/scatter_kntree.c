@@ -117,42 +117,30 @@ static ucg_status_t ucg_planc_ucx_scatter_kntree_op_data_send(ucg_planc_ucx_op_t
                     idx = (peer - myrank) % group_size;
                     offset = args->sendcount * idx * ucg_dt_extent(args->sendtype);
                     int64_t send_len = args->sendcount * ucg_dt_extent(args->sendtype) * peer_subtree_size;
-                    status = ucg_planc_ucx_p2p_isend(op->staging_area + offset,
-                                                    send_len,
-                                                    ucg_dt_get_predefined(UCG_DT_TYPE_UINT8),
-                                                    peer, op->tag, vgroup,
-                                                    &params);
+                    status = ucg_planc_ucx_p2p_isend(op->staging_area + offset, send_len,
+                                                     ucg_dt_get_predefined(UCG_DT_TYPE_UINT8),
+                                                     peer, op->tag, vgroup,
+                                                     &params);
                     UCG_CHECK_GOTO(status, out);
                 } else {
-                    if (peer_subtree_size > 1) {
-                        idx = peer % group_size;
-                        offset = args->sendcount * idx * ucg_dt_extent(args->sendtype);
-                        int64_t send_len = args->sendcount * ucg_dt_extent(args->sendtype) * peer_subtree_size;
-                        status = ucg_planc_ucx_p2p_isend(args->sendbuf + offset, send_len,
-                                                        ucg_dt_get_predefined(UCG_DT_TYPE_UINT8),
-                                                        peer, op->tag, vgroup,
-                                                        &params);
-                        UCG_CHECK_GOTO(status, out);
-                    }
+                    idx = peer % group_size;
+                    offset = args->sendcount * idx * ucg_dt_extent(args->sendtype);
+                    int64_t send_len = args->sendcount * ucg_dt_extent(args->sendtype) * peer_subtree_size;
+                    status = ucg_planc_ucx_p2p_isend(args->sendbuf + offset, send_len,
+                                                     ucg_dt_get_predefined(UCG_DT_TYPE_UINT8),
+                                                     peer, op->tag, vgroup,
+                                                     &params);
+                    UCG_CHECK_GOTO(status, out);
                 }
             } else {
                 int32_t peer_subtree_size = ucg_algo_kntree_get_subtree_size(iter, peer);
                 UCG_CHECK_GOTO(status, out);
-                if (peer_subtree_size > 1) {
-                    int64_t send_len = op->scatter.kntree.sendcount * op->scatter.kntree.sdtype_size * peer_subtree_size;
-                    int64_t offset = op->scatter.kntree.sendcount * ((peer - myrank) % group_size)  * op->scatter.kntree.sdtype_size;
-                    status = ucg_planc_ucx_p2p_isend(op->staging_area + offset, send_len,
-                                                     ucg_dt_get_predefined(UCG_DT_TYPE_UINT8),
-                                                     peer, op->tag, vgroup, &params);
-                    UCG_CHECK_GOTO(status, out);
-                } else {
-                    int64_t send_len = op->scatter.kntree.sendcount * op->scatter.kntree.sdtype_size;
-                    int64_t offset = op->scatter.kntree.sendcount * ((peer - myrank) % group_size)  * op->scatter.kntree.sdtype_size;
-                    status = ucg_planc_ucx_p2p_isend(op->staging_area + offset, send_len,
-                                                     ucg_dt_get_predefined(UCG_DT_TYPE_UINT8),
-                                                     peer, op->tag, vgroup, &params);
-                    UCG_CHECK_GOTO(status, out);
-                }
+                int64_t send_len = op->scatter.kntree.sendcount * op->scatter.kntree.sdtype_size * peer_subtree_size;
+                int64_t offset = op->scatter.kntree.sendcount * ((peer - myrank) % group_size)  * op->scatter.kntree.sdtype_size;
+                status = ucg_planc_ucx_p2p_isend(op->staging_area + offset, send_len,
+                                                 ucg_dt_get_predefined(UCG_DT_TYPE_UINT8),
+                                                 peer, op->tag, vgroup, &params);
+                UCG_CHECK_GOTO(status, out);
             }
             ucg_algo_kntree_iter_child_inc(iter);
         }

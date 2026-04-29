@@ -18,6 +18,16 @@
 #define UCG_MPOOL_INIT(...) ucg_mpool_init(__VA_ARGS__)
 #endif
 
+typedef enum {
+    UCG_MPOOL_ALLOCATE_BY_HUGETBL = 0,
+    UCG_MPOOL_ALLOCATE_BY_MMAP,
+    UCG_MPOOL_ALLOCATE_LAST
+} ucg_mpool_allocate_type_t;
+
+typedef struct ucg_mmap_mpool_chunk_hdr {
+    size_t size;
+} ucg_mmap_mpool_chunk_hdr_t;
+
 typedef struct ucg_mpool ucg_mpool_t;
 typedef struct ucg_mpool_ops {
     /**
@@ -61,6 +71,7 @@ typedef struct ucg_mpool_ops {
 struct ucg_mpool {
     ucs_mpool_t super;      /**< UCS memory pool */
     ucg_mpool_ops_t *ops;   /**< UCG mpool ops */
+    ucg_mpool_allocate_type_t allocate_type;
     ucg_lock_t lock;
 };
 
@@ -125,6 +136,27 @@ void *ucg_mpool_get(ucg_mpool_t *mp);
  * @brief Put an element to mpool
  */
 void ucg_mpool_put(void *obj);
+
+/**
+ * Check if a memory pool is empty (cannot allocate more objects).
+ * 
+ * @param mp    Memory pool structure.
+ * 
+ * @return      Whether a memory pool is empty
+ */
+int ucg_mpool_is_empty(ucg_mpool_t *mp);
+
+/**
+ * @brief Init mpoolallocate type
+ */
+ucg_status_t ucg_mpool_init_allocate_type(ucg_mpool_t *mp, ucg_mpool_allocate_type_t type);
+
+/**
+ * @brief posix mmap chunk allocator.
+ */
+ucg_status_t ucg_mpool_chunk_mmap(ucg_mpool_t *mp, size_t *psize, void **pchunk);
+void ucg_mpool_chunk_munmap(ucg_mpool_t *mp, void *chunk);
+void ucg_mpool_chunk_obj_init(ucg_mpool_t *mp, void *obj, void *chunk);
 
 /**
  * @brief the default chunk alloc function

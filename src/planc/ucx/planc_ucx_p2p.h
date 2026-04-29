@@ -10,6 +10,7 @@
 #include "core/ucg_dt.h"
 #include "core/ucg_vgroup.h"
 #include "ucg/api/ucg.h"
+#include "planc_ucx_def.h"
 
 #include "planc/ucx/planc_ucx_def.h"
 #include "planc/ucx/planc_ucx_context.h"
@@ -22,6 +23,26 @@
             goto _label; \
         } \
     } while (0)
+
+/**
+ * UCG tag structure:
+ * 
+ * 01234567 01234567 | 01234567 01234567 01234567 | 01234567 01234567 01234567
+ *                   |                            |
+ *      op seq (16)  |      source rank (24)      |         group id (24)
+ *                   |                            |
+ */
+#define UCG_PLANC_UCX_SEQ_BITS 16
+#define UCG_PLANC_UCX_RANK_BITS 24
+#define UCG_PLANC_UCX_GROUP_BITS 24
+
+#define UCG_PLANC_UCX_SEQ_BITS_OFFSET    (UCG_PLANC_UCX_RANK_BITS + UCG_PLANC_UCX_GROUP_BITS)
+#define UCG_PLANC_UCX_RANK_BITS_OFFSET  (UCG_PLANC_UCX_GROUP_BITS)
+#define UCG_PLANC_UCX_ID_BITS_OFFSET    0
+
+#define UCG_PLANC_UCX_TAG_MASK          -1
+
+#define UCG_PLANC_UCX_TAG_SENDER_MASK   UCG_MASK(UCG_PLANC_UCX_RANK_BITS + UCG_PLANC_UCX_GROUP_BITS)
 
 typedef struct ucg_planc_ucx_p2p_req {
     /* trade-off, sizeof(ompi_request_t)=160 */
@@ -64,6 +85,24 @@ ucg_status_t ucg_planc_ucx_p2p_isend(const void *buffer, int32_t count,
                                      ucg_planc_ucx_p2p_params_t *params);
 
 /**
+ * @brief Send and immediate return
+ *
+ * @param [in] buffer   The buffer to send.
+ * @param [in] count    The number of elements to send.
+ * @param [in] dt       The type of one buffer element.
+ * @param [in] vrank    The rank of recipient process.
+ * @param [in] tag      Message tag.
+ * @param [in] vgroup   The vgroup in which the isend takes place.
+ * @param [in] params   Additional information.
+ * @retval UCG_OK Success
+ * @retval Otherwise Failed
+ */
+ucg_status_t ucg_planc_ucx_p2p_isend_ext(const void *buffer, int64_t count,
+                                         ucg_dt_t *dt, ucg_rank_t vrank,
+                                         int tag, ucg_vgroup_t *vgroup,
+                                         ucg_planc_ucx_p2p_params_t *params);
+
+/**
  * @brief Receive and immediate return
  *
  * @param [out] buffer      The buffer in which receive the message.
@@ -80,6 +119,24 @@ ucg_status_t ucg_planc_ucx_p2p_irecv(void *buffer, int32_t count,
                                      ucg_dt_t *dt, ucg_rank_t vrank,
                                      int tag, ucg_vgroup_t *vgroup,
                                      ucg_planc_ucx_p2p_params_t *params);
+
+/**
+ * @brief Receive and immediate return
+ *
+ * @param [out] buffer      The buffer in which receive the message.
+ * @param [in]  count       The number of elements in the buffer given.
+ * @param [in]  dt          The type of one buffer element.
+ * @param [in]  vrank       The rank of recipient process.
+ * @param [in]  tag         Message tag.
+ * @param [in]  vgroup      The vgroup in which the isend takes place.
+ * @param [in]  params      Additional information.
+ * @retval UCG_OK Success
+ * @retval Otherwise Failed
+ */
+ucg_status_t ucg_planc_ucx_p2p_irecv_ext(void *buffer, int64_t count,
+                                         ucg_dt_t *dt, ucg_rank_t vrank,
+                                         int tag, ucg_vgroup_t *vgroup,
+                                         ucg_planc_ucx_p2p_params_t *params);
 
 /**
  * @brief Check whether the p2p request is done.

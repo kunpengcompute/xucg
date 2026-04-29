@@ -8,12 +8,28 @@
 #include "planc/ucx/planc_ucx_def.h"
 #include "core/ucg_plan.h"
 #include "util/algo/ucg_kntree.h"
+#include "util/ucg_shmem_segment.h"
+#include "util/ucg_shmem_pool_list.h"
 
 typedef struct ucg_planc_ucx_gatherv_config {
     int kntree_degree;
     int na_kntree_inter_degree;
     int na_kntree_intra_degree;
 } ucg_planc_ucx_gatherv_config_t;
+
+typedef struct ucg_planc_ucx_gatherv_sm_args {
+    ucg_coll_args_t origin_coll_args;
+    ucg_coll_args_t phase_bcast;
+    ucg_shmem_remote_fd_t shmem_remote_fd;
+    ucg_shmem_pool_t *shmem_pool;
+    ucg_shmem_segment_t *shmem_segment;
+    uint32_t is_extern_mp;
+    /* allgatherv-like: set all non-root peer's recvbuf from shared memory recvbuf of root */
+    uint32_t is_allgatherv_like;
+    uint32_t is_initialized;
+    /* sm ddt related variables */
+    const ucg_ddt_args_t *gatherw_ddt_args;
+} ucg_planc_ucx_gatherv_sm_args_t;
 
 typedef struct ucg_planc_ucx_gatherv {
     union {
@@ -64,7 +80,7 @@ typedef struct ucg_planc_ucx_gatherv {
             int32_t *childlist;
             int32_t child_count;
         } kntree;
-
+        ucg_planc_ucx_gatherv_sm_args_t sm_args;
     };
 } ucg_planc_ucx_gatherv_t;
 
@@ -102,5 +118,29 @@ ucg_planc_ucx_op_t *ucg_planc_ucx_gatherv_na_kntree_op_new(ucg_planc_ucx_group_t
                                                            ucg_vgroup_t *vgroup,
                                                            const ucg_coll_args_t *args,
                                                            ucg_planc_ucx_gatherv_config_t *config);
+
+void *ucg_planc_ucx_gatherv_get_recvbuf_by_mp(ucg_shmem_pool_t *shmem_pool, int group_size);
+
+ucg_status_t ucg_planc_ucx_gatherv_sm_op_progress(ucg_plan_op_t *ucg_op);
+
+ucg_planc_ucx_op_t *ucg_planc_ucx_gatherv_sm_op_new(ucg_planc_ucx_group_t *ucx_group,
+                                                    ucg_vgroup_t *vgroup,
+                                                    const ucg_coll_args_t *args);
+
+ucg_status_t ucg_planc_ucx_gatherv_sm_prepare(ucg_vgroup_t *vgroup,
+                                              const ucg_coll_args_t *args,
+                                              ucg_plan_op_t **op);
+
+void ucg_planc_ucx_gatherv_sm_set_mp(ucg_planc_ucx_op_t *ucx_op,
+                                     ucg_shmem_pool_t *shmem_pool,
+                                     uint32_t is_extern_mp);
+
+void ucg_planc_ucx_gatherv_sm_set_allgatherv_like(ucg_planc_ucx_op_t *ucx_op,
+                                                  uint32_t is_allgatherv_like);
+
+ucg_planc_ucx_op_t *ucg_planc_ucx_gatherw_ddt_sm_op_new(ucg_planc_ucx_group_t *ucx_group,
+                                                        ucg_vgroup_t *vgroup,
+                                                        const ucg_coll_args_t *coll_args,
+                                                        const ucg_ddt_args_t *gatherw_ddt_args);
 
 #endif // UCG_PLANC_UCX_GATHERV_H_

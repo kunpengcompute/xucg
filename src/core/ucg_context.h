@@ -53,6 +53,11 @@ typedef struct ucg_context {
     ucg_lock_t mt_lock;
     /* pool of @ref ucg_plan_meta_op_t */
     ucg_mpool_t meta_op_mp;
+    /* list of shared memory pool */
+    ucg_list_link_t shmem_mp_list;
+    ucg_list_link_t shmem_segment_list;
+    /* list fo staging area memory pool */
+    ucg_list_link_t staging_area_mp_list;
 } ucg_context_t;
 
 /**

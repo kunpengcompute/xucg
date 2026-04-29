@@ -129,6 +129,13 @@
 #define UCG_STATIC_INIT     UCS_STATIC_INIT
 #define UCG_STATIC_CLEANUP  UCS_STATIC_CLEANUP
 
+#define UCG_CHECK_STATUS(_ret, _stmt) \
+    do { \
+        if (_stmt != UCG_OK) { \
+            return _ret; \
+        } \
+    } while (0)
+
 #define UCG_CHECK_GOTO(_stmt, _label) \
     do { \
         if (_stmt != UCG_OK) {\

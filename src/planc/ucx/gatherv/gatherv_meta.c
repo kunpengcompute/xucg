@@ -33,6 +33,9 @@ ucg_planc_ucx_op_t *ucg_planc_ucx_gatherv_build_topo_group_op(ucg_planc_ucx_grou
     case UCG_GATHERV_LINEAR:
         ucx_op = ucg_planc_ucx_gatherv_linear_op_new(ucx_group, &topo_group->super, args);
         break;
+    case UCG_GATHERV_LINEAR_SM:
+        ucx_op = ucg_planc_ucx_gatherv_sm_op_new(ucx_group, &topo_group->super, args);
+        break;
     default:
         ucg_error("Do not support gatherv algorithm!");
         return NULL;

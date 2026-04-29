@@ -9,6 +9,9 @@
 #include "planc/ucx/planc_ucx_context.h"
 #include "util/algo/ucg_kntree.h"
 #include "core/ucg_topo.h"
+#include "core/ucg_plan.h"
+#include "util/ucg_shmem_segment.h"
+#include "util/ucg_shmem_pool_list.h"
 
 #define UCG_PLANC_UCX_NA_KNTREE_CHECK_GOTO(_stmt, _label1, _label2) \
     do { \
@@ -40,8 +43,21 @@ typedef struct ucg_planc_ucx_scatterv_na_kntree_args {
     ucg_algo_kntree_iter_t kntree_iter;
 } ucg_planc_ucx_scatterv_na_kntree_args_t;
 
+typedef struct ucg_planc_ucx_scatterv_sm_args {
+    ucg_coll_args_t origin_coll_args;
+    ucg_coll_args_t phase_bcast;
+    ucg_shmem_remote_fd_t shmem_remote_fd;
+    ucg_shmem_pool_t *shmem_pool;
+    ucg_shmem_segment_t *shmem_segment;
+    uint32_t is_extern_mp;
+    uint32_t is_initialized;
+    /* sm ddt related variables */
+    const ucg_ddt_args_t *scatterw_ddt_args;
+} ucg_planc_ucx_scatterv_sm_args_t;
+
 typedef struct ucg_planc_ucx_scatterv {
     union {
+        ucg_planc_ucx_scatterv_sm_args_t sm_args;
         struct {
             int32_t idx;
             uint8_t send_type;
@@ -110,4 +126,25 @@ ucg_status_t ucg_planc_ucx_scatterv_linear_prepare(ucg_vgroup_t *vgroup,
 ucg_status_t ucg_planc_ucx_scatterv_na_kntree_prepare(ucg_vgroup_t *vgroup,
                                                       const ucg_coll_args_t *args,
                                                       ucg_plan_op_t **op);
+
+void *ucg_planc_ucx_scatterv_get_sendbuf_by_mp(ucg_shmem_pool_t *shmem_pool, int group_size);
+
+ucg_status_t ucg_planc_ucx_scatterv_sm_op_progress(ucg_plan_op_t *ucg_op);
+
+ucg_planc_ucx_op_t *ucg_planc_ucx_scatterv_sm_op_new(ucg_planc_ucx_group_t *ucx_group,
+                                                     ucg_vgroup_t *vgroup,
+                                                     const ucg_coll_args_t *args);
+
+ucg_status_t ucg_planc_ucx_scatterv_sm_prepare(ucg_vgroup_t *vgroup,
+                                               const ucg_coll_args_t *args,
+                                               ucg_plan_op_t **op);
+
+void ucg_planc_ucx_scatterv_sm_set_mp(ucg_planc_ucx_op_t *ucx_op,
+                                      ucg_shmem_pool_t *shmem_pool,
+                                      uint32_t is_extern_mp);
+
+ucg_planc_ucx_op_t *ucg_planc_ucx_scatterw_ddt_sm_op_new(ucg_planc_ucx_group_t *ucx_group,
+                                                         ucg_vgroup_t *vgroup,
+                                                         const ucg_coll_args_t *coll_args,
+                                                         const ucg_ddt_args_t *scatterw_ddt_args);
 #endif

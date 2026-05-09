@@ -86,7 +86,7 @@ out:
     return status;
 }
 
-static ucg_status_t ucg_planc_ucx_bcast_kntree_op_progress(ucg_plan_op_t *ucg_op)
+ucg_status_t ucg_planc_ucx_bcast_kntree_op_progress(ucg_plan_op_t *ucg_op)
 {
     ucg_status_t status = UCG_OK;
     ucg_planc_ucx_op_t *op = ucg_derived_of(ucg_op, ucg_planc_ucx_op_t);

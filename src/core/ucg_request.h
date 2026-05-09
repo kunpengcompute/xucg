@@ -95,6 +95,11 @@ typedef struct ucg_coll_alltoallv_args {
     const int32_t *recvcounts;
     const int32_t *rdispls;
     ucg_dt_t *recvtype;
+    /* large-count and displacement support */
+    const int64_t *sendcounts_ext;
+    const int64_t *sdispls_ext;
+    const int64_t *recvcounts_ext;
+    const int64_t *rdispls_ext;
 } ucg_coll_alltoallv_args_t;
 
 typedef struct ucg_coll_gather_args {

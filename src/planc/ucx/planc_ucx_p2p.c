@@ -278,6 +278,73 @@ ucg_status_t ucg_planc_ucx_p2p_isend(const void *buffer, int32_t count,
     return UCG_OK;
 }
 
+ucg_status_t ucg_planc_ucx_p2p_isend_ext(const void *buffer, int64_t count,
+                                         ucg_dt_t *dt, ucg_rank_t vrank,
+                                         int tag, ucg_vgroup_t *vgroup,
+                                         ucg_planc_ucx_p2p_params_t *params)
+{
+    UCG_CHECK_NULL_INVALID(dt, vgroup, params, params->ucx_group, params->state);
+    if (vrank == UCG_INVALID_RANK) {
+        return UCG_ERR_INVALID_PARAM;
+    }
+
+    ucg_status_t status;
+    ucp_datatype_t ucp_dt;
+    status = ucg_planc_ucx_p2p_get_ucp_dt(dt, &ucp_dt);
+    if (status != UCG_OK) {
+        return status;
+    }
+
+    ucp_ep_h ep = ucg_planc_ucx_p2p_get_ucp_ep(vgroup, vrank, params->ucx_group);
+    if (ep == NULL) {
+        return UCG_ERR_NO_RESOURCE;
+    }
+
+    ucg_planc_ucx_p2p_state_t *state = params->state;
+    ucg_group_t *group = params->ucx_group->super.super.group;
+    uint64_t ucp_tag = ucg_planc_ucx_make_tag(tag, group->myrank, group->id);
+    ucp_request_param_t req_param = {
+        .op_attr_mask = UCP_OP_ATTR_FIELD_CALLBACK |
+                        UCP_OP_ATTR_FIELD_DATATYPE |
+                        UCP_OP_ATTR_FIELD_USER_DATA,
+        .datatype = ucp_dt,
+        .cb.send = ucg_planc_ucx_p2p_isend_done,
+        .user_data = (void*)state,
+    };
+    ucg_debug("isend, %d to %d, tag 0x%lX, count %ld, size %lu, extent %ld",
+              group->myrank, ucg_rank_map_eval(&vgroup->rank_map, vrank),
+              ucp_tag, count, ucg_dt_size(dt),ucg_dt_extent(dt));
+    ucs_status_ptr_t ucp_req =  ucp_tag_send_nbx(ep, buffer, count, ucp_tag, &req_param);
+    if (ucp_req == NULL || UCS_PTR_IS_ERR(ucp_req)) {
+        return ucg_status_s2g(UCS_PTR_STATUS(ucp_req));
+    }
+    /* If another thread is excuting ucp_worker_progress(), the following is 
+       not thread-safe. */
+
+    /* Send is not finished */
+    ((ucg_planc_ucx_p2p_req_t*)ucp_req)->free_in_cb = 1;
+    ++state->inflight_send_cnt;
+    /**
+     * In some cases, ucp_tag_send_nbx() may return ucp_requeset poiter
+     * instead of UCS_OK when the request is completed.
+     * Here the status of ucp_request should be checked again.
+    */
+    ucs_status_t req_status = ucp_request_check_status(ucp_req);
+    if (req_status != UCS_INPROGRESS) {
+        ucg_planc_ucx_p2p_req_free(ucp_req);
+    }
+    if (params->request != NULL) {
+        ucg_planc_ucx_p2p_req_t **req = params->request;
+        if (req_status == UCS_INPROGRESS) {
+            *req = (ucg_planc_ucx_p2p_req_t*)ucp_req;
+            (*req)->free_in_cb = 0;
+        } else {
+            *req = NULL;
+        }
+    }
+    return UCG_OK;
+}
+
 void *ucg_planc_ucx_get_ucp_ep(void *arg, void *group, int rank)
 {
     ucg_planc_ucx_context_t *ucx_context = (ucg_planc_ucx_context_t *)arg;
@@ -379,6 +446,76 @@ ucg_status_t ucg_planc_ucx_p2p_irecv(void *buffer, int32_t count,
         ucg_planc_ucx_p2p_req_t **req = params->request;
         if (req_status == UCS_INPROGRESS)  {
             *req = (ucg_planc_ucx_p2p_req_t*)ucp_req;
+        } else {
+            *req = NULL;
+        }
+    }
+
+    return UCG_OK;
+}
+
+ucg_status_t ucg_planc_ucx_p2p_irecv_ext(void *buffer, int64_t count,
+                                         ucg_dt_t *dt, ucg_rank_t vrank,
+                                         int tag, ucg_vgroup_t *vgroup,
+                                         ucg_planc_ucx_p2p_params_t *params)
+{
+    UCG_CHECK_NULL_INVALID(dt, vgroup, params, params->ucx_group, params->state);
+    if (vrank == UCG_INVALID_RANK) {
+        return UCG_ERR_INVALID_PARAM;
+    }
+
+    ucg_status_t status;
+    ucp_datatype_t ucp_dt;
+    status = ucg_planc_ucx_p2p_get_ucp_dt(dt, &ucp_dt);
+    if (status != UCG_OK) {
+        return status;
+    }
+
+    ucg_planc_ucx_p2p_state_t *state = params->state;
+    ucg_rank_t sender_group_rank = ucg_rank_map_eval(&vgroup->rank_map, vrank);
+    ucg_group_t *group = vgroup->group;
+    uint64_t ucp_tag = ucg_planc_ucx_make_tag(tag, sender_group_rank, group->id);
+    ucp_request_param_t req_param = {
+        .op_attr_mask = UCP_OP_ATTR_FIELD_CALLBACK |
+                        UCP_OP_ATTR_FIELD_DATATYPE |
+                        UCP_OP_ATTR_FIELD_USER_DATA,
+        .datatype = ucp_dt,
+        .cb.recv = ucg_planc_ucx_p2p_irecv_done,
+        .user_data = (void*)state,
+    };
+    ucg_debug("irecv: %d to %d, tag 0x%lX, count %ld, size %ld, extent %ld",
+              sender_group_rank, group->myrank, ucp_tag, count, ucg_dt_size(dt),
+              ucg_dt_extent(dt));
+    ucg_planc_ucx_context_t *context = params->ucx_group->context;
+    ucp_worker_h ucp_worker = ucg_planc_ucx_context_get_worker(context);
+    if (ucg_unlikely(ucp_worker == NULL)) {
+        return UCG_ERR_INVALID_PARAM;
+    }
+    ucs_status_ptr_t ucp_req = ucp_tag_recv_nbx(ucp_worker, buffer, count, ucp_tag,
+                                                UCG_PLANC_UCX_TAG_MASK, &req_param);
+    if (ucp_req == NULL || UCS_PTR_IS_ERR(ucp_req)) {
+        return ucg_status_s2g(UCS_PTR_STATUS(ucp_req));
+    }
+    /* If another thread is executing ucp_worker_progress(), the following is
+       not thread-safe. */
+
+    /* Receive is not finished. */
+    ++state->inflight_recv_cnt;
+    ((ucg_planc_ucx_p2p_req_t*)ucp_req)->free_in_cb = 1;
+    /**
+     * In some cases, ucp_tag_recv_nbx() may return ucp_request pointer
+     * instead of UCS_OK when the request is completed.
+     * Here the status of ucp_request should be checked again.
+     */
+    ucs_status_t req_status = ucp_request_check_status(ucp_req);
+    if (req_status != UCS_INPROGRESS) {
+        ucg_planc_ucx_p2p_req_free(ucp_req);
+    }
+    if (params->request != NULL) {
+        ucg_planc_ucx_p2p_req_t **req = params->request;
+        if (req_status == UCS_INPROGRESS)  {
+            *req = (ucg_planc_ucx_p2p_req_t*)ucp_req;
+            (*req)->free_in_cb = 0;
         } else {
             *req = NULL;
         }

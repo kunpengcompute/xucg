@@ -74,6 +74,17 @@ typedef struct ucg_op_generic {
     void *user_op;
 } ucg_op_generic_t;
 
+/* MPI Derived Datatypes (DDT) arguments structure */
+typedef struct ucg_ddt_type_indexed_args {
+    int32_t count;
+    const int64_t *array_of_blocklengths;
+    const int64_t *array_of_displacements;
+} ucg_ddt_type_indexed_args_t;
+
+typedef struct ucg_ddt_args {
+    ucg_ddt_type_indexed_args_t type_indexed_args;
+} ucg_ddt_args_t;
+
 /**
  * @brief Initialize UCG DT resources
  * @note It should be invoked only once.
@@ -152,6 +163,18 @@ ucg_status_t ucg_dt_unpack(ucg_dt_state_t *state, uint64_t offset,
                            const void *src, uint64_t *length);
 
 void ucg_dt_finish(ucg_dt_state_t *state);
+
+/**
+ * @brief int64 version
+*/
+ucg_status_t ucg_dt_memcpy_ext(void *dst, int64_t dcount, ucg_dt_t *dst_dt,
+                               const void *src, int64_t scount, ucg_dt_t *src_dt);
+
+ucg_dt_state_t* ucg_dt_start_pack_ext(const void *buffer, const ucg_dt_t *dt,
+                                       int64_t count);
+
+ucg_dt_state_t* ucg_dt_start_unpack_ext(void *buffer, const ucg_dt_t *dt,
+                                        int64_t count);
 
 /***************************************************************
  *                     Operation routines

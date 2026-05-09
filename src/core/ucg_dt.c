@@ -207,6 +207,7 @@ static void ucg_dt_unpack_contiguous(ucg_dt_state_t *state, uint64_t offset,
 
 ucg_status_t ucg_dt_global_init()
 {
+    ucg_mpool_init_allocate_type(&ucg_dt_state_mp, UCG_MPOOL_ALLOCATE_BY_HUGETBL);
     return UCG_MPOOL_INIT(&ucg_dt_state_mp, 0, sizeof(ucg_dt_state_t), 0,
                           UCG_CACHE_LINE_SIZE, 16, -1, NULL, "dt state mpool");
 }
@@ -419,6 +420,145 @@ out:
     return status;
 }
 
+static ucg_status_t ucg_dt_memcpy_contiguous_ext(void *dst, int64_t dcount, ucg_dt_t *dst_dt,
+                                           const void *src, int64_t scount, ucg_dt_t *src_dt)
+{
+    ucg_assert(ucg_dt_is_contiguous(dst_dt));
+    ucg_assert(ucg_dt_is_contiguous(src_dt));
+
+    uint64_t src_len = (uint64_t)scount * ucg_dt_size(src_dt);
+    uint64_t dst_len = (uint64_t)dcount * ucg_dt_size(dst_dt);
+    if (src_len <= dst_len) {
+        memcpy(dst, src, src_len);
+        return UCG_OK;
+    }
+    memcpy(dst, src, dst_len);
+    return UCG_ERR_TRUNCATE;
+}
+
+static ucg_status_t ucg_dt_memcpy_pack_ext(void *dst, int64_t dcount, ucg_dt_t *dst_dt,
+                                     const void *src, int64_t scount, ucg_dt_t *src_dt)
+{
+    ucg_assert(ucg_dt_is_contiguous(dst_dt));
+    ucg_assert(!ucg_dt_is_contiguous(src_dt));
+
+    ucg_status_t status = UCG_OK;
+    ucg_dt_state_t *state = ucg_dt_start_pack_ext(src, src_dt, scount);
+    if (state == NULL) {
+        return UCG_ERR_NO_RESOURCE;
+    }
+
+    uint64_t src_len = (uint64_t)scount * ucg_dt_size(src_dt);
+    uint64_t dst_len = (uint64_t)dcount * ucg_dt_size(dst_dt);
+    uint64_t offset = 0;
+    uint64_t len = 0;
+    while (1) {
+        len = dst_len - offset;
+        status = ucg_dt_pack(state, offset, dst + offset, &len);
+        if (status != UCG_OK) {
+            goto out_finish_pack;
+        }
+        if (len == 0) {
+            break;
+        }
+        offset += len;
+    }
+    status = src_len <= dst_len ? UCG_OK : UCG_ERR_TRUNCATE;
+
+out_finish_pack:
+    ucg_dt_finish(state);
+    return status;
+}
+
+static ucg_status_t ucg_dt_memcpy_unpack_ext(void *dst, int64_t dcount, ucg_dt_t *dst_dt,
+                                       const void *src, int64_t scount, ucg_dt_t *src_dt)
+{
+    ucg_assert(!ucg_dt_is_contiguous(dst_dt));
+    ucg_assert(ucg_dt_is_contiguous(src_dt));
+
+    ucg_status_t status;
+    ucg_dt_state_t *state = ucg_dt_start_unpack_ext(dst, dst_dt, dcount);
+    if (state == NULL) {
+        return UCG_ERR_NO_RESOURCE;
+    }
+
+    uint64_t src_len = (uint64_t)scount * ucg_dt_size(src_dt);
+    uint64_t dst_len = (uint64_t)dcount * ucg_dt_size(dst_dt);
+    uint64_t offset = 0;
+    uint64_t len = 0;
+    while (1) {
+        len = src_len - offset;
+        status = ucg_dt_unpack(state, offset, src + offset, &len);
+        if (status != UCG_OK) {
+            goto out_finish_unpack;
+        }
+        if (len == 0) {
+            break;
+        }
+        offset += len;
+    }
+    status = src_len <= dst_len ? UCG_OK : UCG_ERR_TRUNCATE;
+
+out_finish_unpack:
+    ucg_dt_finish(state);
+    return status;
+}
+
+static ucg_status_t ucg_dt_memcpy_generic_ext(void *dst, int64_t dcount, ucg_dt_t *dst_dt,
+                                        const void *src, int64_t scount, ucg_dt_t *src_dt)
+{
+    uint64_t buf_len = 16 << 10;
+    void *buf = ucg_malloc(buf_len, "copy generic buffer");
+    if (buf == NULL) {
+        return UCG_ERR_NO_MEMORY;
+    }
+
+    ucg_status_t status = UCG_ERR_NO_RESOURCE;
+    ucg_dt_state_t *pack_state = ucg_dt_start_pack_ext(src, src_dt, scount);
+    if (pack_state == NULL) {
+        goto out;
+    }
+
+    ucg_dt_state_t *unpack_state = ucg_dt_start_unpack_ext(dst, dst_dt, dcount);
+    if (unpack_state == NULL) {
+         goto out_finish_pack;
+    }
+
+    uint64_t max_len;
+    uint64_t pack_offset = 0;
+    uint64_t unpack_offset = 0;
+    while (1) {
+        max_len = buf_len;
+        status = ucg_dt_pack(pack_state, pack_offset, buf, &max_len);
+        if (status != UCG_OK) {
+            goto out_finish_unpack;
+        }
+        if (max_len == 0) {
+            break;
+        }
+        pack_offset += max_len;
+
+        status = ucg_dt_unpack(unpack_state, unpack_offset, buf, &max_len);
+        if (status != UCG_OK) {
+            goto out_finish_unpack;
+        }
+        if (max_len == 0) {
+            break;
+        }
+        unpack_offset += max_len;
+    }
+    uint64_t src_len = (uint64_t)scount * ucg_dt_size(src_dt);
+    uint64_t dst_len = (uint64_t)dcount * ucg_dt_size(dst_dt);
+    status = src_len <= dst_len ? UCG_OK : UCG_ERR_TRUNCATE;
+
+out_finish_unpack:
+    ucg_dt_finish(unpack_state);
+out_finish_pack:
+    ucg_dt_finish(pack_state);
+out:
+    return status;
+}
+
 ucg_dt_t* ucg_dt_get_predefined(ucg_dt_type_t type)
 {
     return &ucg_dt_predefined[type];
@@ -448,7 +588,40 @@ ucg_status_t ucg_dt_memcpy(void *dst, int32_t dcount, ucg_dt_t *dst_dt,
     return ucg_dt_memcpy_generic(dst, dcount, dst_dt, src, scount, src_dt);
 }
 
+ucg_status_t ucg_dt_memcpy_ext(void *dst, int64_t dcount, ucg_dt_t *dst_dt,
+                         const void *src, int64_t scount, ucg_dt_t *src_dt)
+{
+    if ((0 == dcount) || (0 == ucg_dt_size(dst_dt))) {
+        return ((0 == scount) || (0 == ucg_dt_size(src_dt))) ? UCG_OK : UCG_ERR_TRUNCATE;
+    }
+
+    int is_src_contig = ucg_dt_is_contiguous(src_dt);
+    int is_dst_contig = ucg_dt_is_contiguous(dst_dt);
+    if (is_src_contig && is_dst_contig) {
+        return ucg_dt_memcpy_contiguous_ext(dst, dcount, dst_dt, src, scount, src_dt);
+    }
+
+    if (!is_src_contig && is_dst_contig) {
+        return ucg_dt_memcpy_pack_ext(dst, dcount, dst_dt, src, scount, src_dt);
+    }
+
+    if (is_src_contig && !is_dst_contig) {
+        return ucg_dt_memcpy_unpack_ext(dst, dcount, dst_dt, src, scount, src_dt);
+    }
+    /* both non-contiguous datatype */
+    return ucg_dt_memcpy_generic_ext(dst, dcount, dst_dt, src, scount, src_dt);
+}
+
 ucg_dt_state_t* ucg_dt_start_pack(const void *buffer, const ucg_dt_t *dt, int32_t count)
+{
+    UCG_CHECK_NULL(NULL, buffer, dt);
+
+    ucg_dt_state_t *state = NULL;
+    UCG_DT_STATE_INIT(start_pack, state, buffer, dt, count);
+    return state;
+}
+
+ucg_dt_state_t* ucg_dt_start_pack_ext(const void *buffer, const ucg_dt_t *dt, int64_t count)
 {
     UCG_CHECK_NULL(NULL, buffer, dt);
 
@@ -473,6 +646,15 @@ ucg_status_t ucg_dt_pack(ucg_dt_state_t *state, uint64_t offset, void *dst,
 }
 
 ucg_dt_state_t* ucg_dt_start_unpack(void *buffer, const ucg_dt_t *dt, int32_t count)
+{
+    UCG_CHECK_NULL(NULL, buffer, dt);
+
+    ucg_dt_state_t *state = NULL;
+    UCG_DT_STATE_INIT(start_unpack, state, buffer, dt, count);
+    return state;
+}
+
+ucg_dt_state_t* ucg_dt_start_unpack_ext(void *buffer, const ucg_dt_t *dt, int64_t count)
 {
     UCG_CHECK_NULL(NULL, buffer, dt);
 

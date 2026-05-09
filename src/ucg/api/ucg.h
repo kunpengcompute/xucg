@@ -176,6 +176,7 @@ typedef enum {
     UCG_LOCATION_FIELD_SOCKET_ID = UCG_BIT(0),
     UCG_LOCATION_FIELD_NODE_ID = UCG_BIT(1),
     UCG_LOCATION_FIELD_SUBNET_ID = UCG_BIT(2),
+    UCG_LOCATION_FIELD_LOCAL_ID = UCG_BIT(3),
 } ucg_location_field_t;
 
 /**
@@ -382,6 +383,12 @@ typedef struct {
      * Should start from 0 to the maximum number of sockets in node.
      */
     int16_t socket_id;
+
+    // /**
+    //  * the local ID of process in the same node.
+    //  * Should start from 0 to the maximum number of process in node.
+    //  */
+    // int16_t local_id;
 } ucg_location_t;
 
 typedef struct ucg_addr_desc {

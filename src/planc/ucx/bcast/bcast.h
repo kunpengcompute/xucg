@@ -122,5 +122,5 @@ ucg_status_t ucg_planc_ucx_bcast_add_topo_group_kntree_op(ucg_plan_meta_op_t *me
                                                           const ucg_coll_args_t *args,
                                                           const ucg_planc_ucx_bcast_config_t *config,
                                                           ucg_topo_group_type_t type);
-
+ucg_status_t ucg_planc_ucx_bcast_kntree_op_progress(ucg_plan_op_t *ucg_op);
 #endif

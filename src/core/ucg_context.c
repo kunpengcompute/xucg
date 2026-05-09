@@ -12,7 +12,10 @@
 #include "util/ucg_malloc.h"
 #include "util/ucg_parser.h"
 #include "util/ucg_cpu.h"
+#include "util/ucg_shmem_pool_list.h"
+#include "util/ucg_mpool_list.h"
 
+#define INTRA_NODE_MAX_PROC_NUM 1024
 
 #define UCG_CONTEXT_COPY_REQUIRED_FIELD(_field, _copy, _dst, _src, _err_label) \
     UCG_COPY_REQUIRED_FIELD(UCG_TOKENPASTE(UCG_PARAMS_FIELD_, _field), _copy, _dst, _src, _err_label)
@@ -390,11 +393,29 @@ static ucg_status_t ucg_context_init_version(uint32_t major_version,
 
     ucg_list_head_init(&ctx->plist);
 
+    ucg_mpool_init_allocate_type(&ctx->meta_op_mp, UCG_MPOOL_ALLOCATE_BY_HUGETBL);
     status = ucg_mpool_init(&ctx->meta_op_mp, 0, sizeof(ucg_plan_meta_op_t),
                             0, UCG_CACHE_LINE_SIZE, UCG_ELEMS_PER_CHUNK,
                             UINT_MAX, NULL, "meta op mpool");
     if (status != UCG_OK) {
         ucg_error("Failed to create mpool");
+        goto err_free_resource;
+    }
+
+    /* initialize shared memory pool */
+    ucg_shmem_pool_params_t shmem_pool_params;
+    shmem_pool_params.length = INTRA_NODE_MAX_PROC_NUM * sizeof(int);
+    status = ucg_list_shmem_pool_init(&ctx->shmem_mp_list, &shmem_pool_params);
+    if (status != UCG_OK) {
+        ucg_error("Failed to create share mpool");
+        goto err_free_resource;
+    }
+    ucg_list_head_init(&ctx->shmem_segment_list);
+
+    /* initialize memory pool list */
+    status = ucg_mpool_list_init(&ctx->staging_area_mp_list, UCG_MPOOL_LIST_INIT_SIZE);
+    if (status != UCG_OK) {
+        ucg_error("Failed to create staging area mpool");
         goto err_free_resource;
     }
 
@@ -439,7 +460,10 @@ static void ucg_context_cleanup(ucg_context_h context)
 {
     UCG_CHECK_NULL_VOID(context);
 
+    ucg_shmem_segment_cleanup(&context->shmem_segment_list);
+    ucg_list_shmem_pool_cleanup(&context->shmem_mp_list);
     ucg_mpool_cleanup(&context->meta_op_mp, 1);
+    ucg_mpool_list_cleanup(&context->staging_area_mp_list);
     ucg_context_free_resource(context);
     ucg_free(context);
     return;

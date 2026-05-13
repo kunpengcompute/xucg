@@ -7,6 +7,7 @@
 #include "planc_ucx_meta.h"
 
 typedef enum {
+    UCG_REDUCE_SCATTER_BLOCK_OP_EMPTY,
     UCG_REDUCE_SCATTER_BLOCK_OP_REDUCE,
     UCG_REDUCE_SCATTER_BLOCK_OP_SCATTER,
 } ucg_reduce_scatter_block_op_type_t;
@@ -46,18 +47,101 @@ static void ucg_planc_ucx_reduce_scatter_block_init_scatter_args(const ucg_coll_
     return;
 }
 
-static
-ucg_status_t ucg_planc_ucx_reduce_scatter_block_add_intra_subnet_op(ucg_plan_meta_op_t *meta_op,
-                                                                    ucg_topo_t *topo,
-                                                                    ucg_planc_ucx_group_t *ucx_group,
-                                                                    ucg_vgroup_t *vgroup,
-                                                                    const ucg_coll_args_t *args,
-                                                                    ucg_planc_ucx_reduce_config_t *reduce_config,
-                                                                    ucg_planc_ucx_scatter_config_t *scatter_config,
-                                                                    ucg_reduce_scatter_block_op_type_t type,
-                                                                    void *tmpbuf)
+static ucg_status_t ucg_planc_ucx_reduce_scatter_block_empty_op_progress(ucg_plan_op_t *ucg_op)
 {
-    ucg_planc_ucx_op_t *ucx_op;
+    return UCG_OK;
+}
+
+static ucg_status_t ucg_planc_ucx_reduce_scatter_block_empty_op_trigger(ucg_plan_op_t *ucg_op)
+{
+    ucg_status_t status;
+    ucg_planc_ucx_op_t *op = ucg_derived_of(ucg_op, ucg_planc_ucx_op_t);
+    ucg_planc_ucx_op_reset(op);
+    status = ucg_planc_ucx_reduce_scatter_block_empty_op_progress(ucg_op);
+    return status == UCG_INPROGRESS ? UCG_OK : status;
+}
+
+static ucg_status_t ucg_planc_ucx_reduce_scatter_block_empty_op_discard(ucg_plan_op_t *ucg_op)
+{
+    ucg_planc_ucx_op_t *op = ucg_derived_of(ucg_op, ucg_planc_ucx_op_t);
+
+    if(ucg_op->vgroup->myrank == UCG_TOPO_GROUP_LEADER) {
+        ucg_free(op->staging_area);
+    }
+    UCG_CLASS_DESTRUCT(ucg_plan_op_t, &op->super);
+    ucg_mpool_put(op);
+    return UCG_OK;
+}
+
+static inline ucg_status_t ucg_planc_ucx_reduce_scatter_block_empty_op_init(ucg_planc_ucx_op_t *op,
+                                                                      ucg_planc_ucx_group_t *ucx_group)
+{
+    ucg_status_t status = UCG_OK;
+    ucg_planc_ucx_op_init(op, ucx_group);
+
+    ucg_vgroup_t *vgroup = op->super.vgroup;
+    const ucg_coll_reduce_scatter_block_args_t *coll_args = &op->super.super.args.reduce_scatter_block;
+    int64_t total_count = coll_args->recvcount * vgroup->size;
+    op->staging_area = coll_args->recvbuf;
+    if(vgroup->myrank == UCG_TOPO_GROUP_LEADER) {
+        op->staging_area = ucg_malloc(total_count * coll_args->dt->extent, "reduce_scatter_block tmpbuf");
+        if (op->staging_area == NULL) {
+            status = UCG_ERR_NO_MEMORY;
+        }
+    }
+
+    return status;
+}
+
+static ucg_planc_ucx_op_t *ucg_planc_ucx_reduce_scatter_block_empty_op_new(ucg_planc_ucx_group_t *ucx_group,
+                                                                           ucg_vgroup_t *vgroup,
+                                                                           const ucg_coll_args_t *args)
+{
+    UCG_CHECK_NULL(NULL, ucx_group, vgroup, args);
+
+    ucg_planc_ucx_op_t *op = ucg_mpool_get(&ucx_group->context->op_mp);
+    if (op == NULL) {
+        goto err;
+    }
+
+    ucg_status_t status;
+    status = UCG_CLASS_CONSTRUCT(ucg_plan_op_t, &op->super, vgroup,
+                                 ucg_planc_ucx_reduce_scatter_block_empty_op_trigger,
+                                 ucg_planc_ucx_reduce_scatter_block_empty_op_progress,
+                                 ucg_planc_ucx_reduce_scatter_block_empty_op_discard,
+                                 args);
+    if (status != UCG_OK) {
+        ucg_error("Failed to initialize super of ucx op");
+        goto err_free_op;
+    }
+    
+    status = ucg_planc_ucx_reduce_scatter_block_empty_op_init(op, ucx_group);
+    if (status != UCG_OK) {
+        ucg_error("Failed to initialize ucx op");
+        goto err_destruct;
+    }
+
+    return op;
+
+err_destruct:
+    UCG_CLASS_DESTRUCT(ucg_plan_op_t, &op->super);
+err_free_op:
+    ucg_mpool_put(op);
+err:
+    return NULL;
+}
+
+static ucg_status_t ucg_planc_ucx_reduce_scatter_block_add_op(ucg_planc_ucx_op_t **empty_op,
+                                                              ucg_plan_meta_op_t *meta_op,
+                                                              ucg_topo_t *topo,
+                                                              ucg_planc_ucx_group_t *ucx_group,
+                                                              ucg_vgroup_t *vgroup,
+                                                              const ucg_coll_args_t *args,
+                                                              ucg_planc_ucx_reduce_config_t *reduce_config,
+                                                              ucg_planc_ucx_scatter_config_t *scatter_config,
+                                                              ucg_reduce_scatter_block_op_type_t type)
+{
+    ucg_planc_ucx_op_t *ucx_op = NULL;
     ucg_topo_group_t *topo_group;
     topo_group = ucg_topo_get_group(topo, UCG_TOPO_GROUP_TYPE_NET);
     if (topo_group == NULL) {
@@ -76,14 +160,20 @@ ucg_status_t ucg_planc_ucx_reduce_scatter_block_add_intra_subnet_op(ucg_plan_met
 
     if (type == UCG_REDUCE_SCATTER_BLOCK_OP_REDUCE) {
         ucg_coll_args_t reduce_args;
-        ucg_planc_ucx_reduce_scatter_block_init_reduce_args(args, &reduce_args, tmpbuf, vgroup->size);
+        ucg_planc_ucx_reduce_scatter_block_init_reduce_args(args, &reduce_args, (*empty_op)->staging_area, vgroup->size);
         ucx_op = ucg_planc_ucx_reduce_kntree_op_new(ucx_group, &topo_group->super,
                                                     &reduce_args, reduce_config);
-    } else {
+    } else if (type == UCG_REDUCE_SCATTER_BLOCK_OP_SCATTER) {
         ucg_coll_args_t scatter_args;
-        ucg_planc_ucx_reduce_scatter_block_init_scatter_args(args, &scatter_args, tmpbuf);
+        ucg_planc_ucx_reduce_scatter_block_init_scatter_args(args, &scatter_args, (*empty_op)->staging_area);
         ucx_op = ucg_planc_ucx_scatter_kntree_op_new(ucx_group, &topo_group->super,
                                                      &scatter_args, scatter_config);
+    } else {
+        *empty_op = ucg_planc_ucx_reduce_scatter_block_empty_op_new(ucx_group, &topo_group->super, args);
+        if (*empty_op == NULL) {
+            return UCG_ERR_NO_MEMORY;
+        }
+        return ucg_plan_meta_op_add(meta_op, &(*empty_op)->super);
     }
 
     if (ucx_op == NULL) {
@@ -101,13 +191,6 @@ ucg_plan_meta_op_t *ucg_planc_ucx_reduce_scatter_block_linear_op_new(ucg_planc_u
     UCG_CHECK_NULL(NULL, ucx_group, vgroup, args, reduce_config);
     UCG_CHECK_NULL(NULL, ucx_group, vgroup, args, scatter_config);
 
-    int64_t total_count = args->reduce_scatter_block.recvcount * vgroup->size;
-    void *tmpbuf = args->reduce_scatter_block.recvbuf;
-    tmpbuf = ucg_malloc(total_count * args->reduce_scatter_block.dt->extent, "reduce_scatter_block tmpbuf");
-    if (tmpbuf == NULL) {
-        goto err;
-    }
-
     ucg_plan_meta_op_t *meta_op = ucg_plan_meta_op_new(vgroup->group, vgroup, args);
     if (meta_op == NULL) {
         goto err;
@@ -117,16 +200,24 @@ ucg_plan_meta_op_t *ucg_planc_ucx_reduce_scatter_block_linear_op_new(ucg_planc_u
     ucg_topo_t *topo = vgroup->group->topo;
     ucg_coll_args_t *meta_args = &meta_op->super.super.args;
 
+    ucg_planc_ucx_op_t *empty_op = NULL;
+
+    /* 0. empty. */
+    status = ucg_planc_ucx_reduce_scatter_block_add_op(&empty_op, meta_op, topo, ucx_group, vgroup,
+                                                       meta_args, reduce_config, scatter_config,
+                                                       UCG_REDUCE_SCATTER_BLOCK_OP_EMPTY);
+    UCG_CHECK_GOTO(status, err_free_meta_op);
+
     /* 1. reduce. */
-    status = ucg_planc_ucx_reduce_scatter_block_add_intra_subnet_op(meta_op, topo, ucx_group, vgroup,
-                                                                    meta_args, reduce_config, scatter_config,
-                                                                    UCG_REDUCE_SCATTER_BLOCK_OP_REDUCE, tmpbuf);
+    status = ucg_planc_ucx_reduce_scatter_block_add_op(&empty_op, meta_op, topo, ucx_group, vgroup,
+                                                       meta_args, reduce_config, scatter_config,
+                                                       UCG_REDUCE_SCATTER_BLOCK_OP_REDUCE);
     UCG_CHECK_GOTO(status, err_free_meta_op);
 
     /* 2. scatter. */
-    status = ucg_planc_ucx_reduce_scatter_block_add_intra_subnet_op(meta_op, topo, ucx_group, vgroup,
-                                                                    meta_args, reduce_config, scatter_config,
-                                                                    UCG_REDUCE_SCATTER_BLOCK_OP_SCATTER, tmpbuf);
+    status = ucg_planc_ucx_reduce_scatter_block_add_op(&empty_op, meta_op, topo, ucx_group, vgroup,
+                                                       meta_args, reduce_config, scatter_config,
+                                                       UCG_REDUCE_SCATTER_BLOCK_OP_SCATTER);
     UCG_CHECK_GOTO(status, err_free_meta_op);
 
     return meta_op;

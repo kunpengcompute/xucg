@@ -412,12 +412,6 @@ static ucg_status_t ucg_context_init_version(uint32_t major_version,
     }
     ucg_list_head_init(&ctx->shmem_segment_list);
 
-    /* initialize memory pool list */
-    status = ucg_mpool_list_init(&ctx->staging_area_mp_list, UCG_MPOOL_LIST_INIT_SIZE);
-    if (status != UCG_OK) {
-        ucg_error("Failed to create staging area mpool");
-        goto err_free_resource;
-    }
 
     ucg_debug("Initialized ucg context %p, oob group size %u, myrank %d, "
               "thread mode %d", ctx, ctx->oob_group.size,
@@ -463,7 +457,6 @@ static void ucg_context_cleanup(ucg_context_h context)
     ucg_shmem_segment_cleanup(&context->shmem_segment_list);
     ucg_list_shmem_pool_cleanup(&context->shmem_mp_list);
     ucg_mpool_cleanup(&context->meta_op_mp, 1);
-    ucg_mpool_list_cleanup(&context->staging_area_mp_list);
     ucg_context_free_resource(context);
     ucg_free(context);
     return;

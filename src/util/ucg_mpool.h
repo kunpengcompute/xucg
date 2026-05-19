@@ -12,6 +12,9 @@
 
 #define UCG_ELEMS_PER_CHUNK 8
 
+#define UCG_MBYTE    (1ull << 20)
+#define UCG_DEAULT_MAX_CHUNK_SIZE 128 * UCG_MBYTE
+#define UCG_MAX_CHUNK_PADDING UCG_MBYTE
 #ifdef UCG_ENABLE_MT
 #define UCG_MPOOL_INIT(...) ucg_mpool_init_mt(__VA_ARGS__)
 #else
@@ -72,6 +75,7 @@ struct ucg_mpool {
     ucs_mpool_t super;      /**< UCS memory pool */
     ucg_mpool_ops_t *ops;   /**< UCG mpool ops */
     ucg_mpool_allocate_type_t allocate_type;
+    size_t max_chunk_size;  /*ucg mpool max chunk size*/
     ucg_lock_t lock;
 };
 
@@ -150,6 +154,11 @@ int ucg_mpool_is_empty(ucg_mpool_t *mp);
  * @brief Init mpoolallocate type
  */
 ucg_status_t ucg_mpool_init_allocate_type(ucg_mpool_t *mp, ucg_mpool_allocate_type_t type);
+
+/**
+ * @brief Init mpool max chunk size
+ */
+ucg_status_t ucg_mpool_init_max_chunk_size(ucg_mpool_t *mp, size_t length);
 
 /**
  * @brief posix mmap chunk allocator.

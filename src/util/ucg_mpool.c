@@ -7,7 +7,9 @@
 #include "ucg_shmem_segment.h"
 #include "util/ucg_math.h"
 #include "util/ucg_sys.h"
+#include "ucg_log.h"
 
+#define UCG_MBYTE   (1ull << 20)
 static ucg_mpool_ops_t ucg_default_mpool_ops[UCG_MPOOL_ALLOCATE_LAST] = {
     {
         .chunk_alloc = ucg_mpool_hugetlb_malloc,
@@ -82,6 +84,7 @@ ucg_status_t ucg_mpool_init(ucg_mpool_t *mp, size_t priv_size,
     }
 
     ucs_mpool_params_reset(&mp_params);
+    mp_params.max_chunk_size    = mp->max_chunk_size;
     mp_params.priv_size         = priv_size;
     mp_params.elem_size         = elem_size;
     mp_params.align_offset      = align_offset;
@@ -172,6 +175,16 @@ ucg_status_t ucg_mpool_init_allocate_type(ucg_mpool_t *mp, ucg_mpool_allocate_ty
     }
 
     mp->allocate_type = type;
+    return UCG_OK;
+}
+
+ucg_status_t ucg_mpool_init_max_chunk_size(ucg_mpool_t *mp, size_t length)
+{
+    if (mp == NULL) {
+        return UCG_ERR_INVALID_PARAM;
+    }
+
+    mp->max_chunk_size = length;
     return UCG_OK;
 }
 

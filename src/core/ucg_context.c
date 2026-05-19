@@ -37,6 +37,13 @@ static ucg_config_field_t ucg_context_config_table[] = {
      " - y    : use mutex for multi-thread support\n"
      " - n    : use spinlock by default",
      ucg_offsetof(ucg_config_t, use_mt_mutex), UCG_CONFIG_TYPE_BOOL},
+     
+    {"USE_SHM_POOL", "n",
+     "Use mutex for multithreading support in UCG\n"
+     " - y    : use mutex for multi-thread support\n"
+     " - n    : use spinlock by default",
+     ucg_offsetof(ucg_config_t, use_shm_pool), UCG_CONFIG_TYPE_BOOL},
+     
 
     {NULL},
 };
@@ -403,15 +410,19 @@ static ucg_status_t ucg_context_init_version(uint32_t major_version,
     }
 
     /* initialize shared memory pool */
-    ucg_shmem_pool_params_t shmem_pool_params;
-    shmem_pool_params.length = INTRA_NODE_MAX_PROC_NUM * sizeof(int);
-    status = ucg_list_shmem_pool_init(&ctx->shmem_mp_list, &shmem_pool_params);
-    if (status != UCG_OK) {
-        ucg_error("Failed to create share mpool");
-        goto err_free_resource;
+    ctx->use_shmem_mp = config->use_shm_pool;
+    if (ctx->use_shmem_mp) {
+        ucg_info("use shmem pool");
+        ucg_shmem_pool_params_t shmem_pool_params;
+        shmem_pool_params.length = INTRA_NODE_MAX_PROC_NUM * sizeof(int);
+        status = ucg_list_shmem_pool_init(&ctx->shmem_mp_list, &shmem_pool_params);
+        if (status != UCG_OK) {
+            ucg_error("Failed to create share mpool");
+            goto err_free_resource;
+        }
     }
     ucg_list_head_init(&ctx->shmem_segment_list);
-
+    
 
     ucg_debug("Initialized ucg context %p, oob group size %u, myrank %d, "
               "thread mode %d", ctx, ctx->oob_group.size,
@@ -455,7 +466,9 @@ static void ucg_context_cleanup(ucg_context_h context)
     UCG_CHECK_NULL_VOID(context);
 
     ucg_shmem_segment_cleanup(&context->shmem_segment_list);
-    ucg_list_shmem_pool_cleanup(&context->shmem_mp_list);
+    if (context->use_shmem_mp) {
+        ucg_list_shmem_pool_cleanup(&context->shmem_mp_list);
+    }
     ucg_mpool_cleanup(&context->meta_op_mp, 1);
     ucg_context_free_resource(context);
     ucg_free(context);

@@ -26,6 +26,7 @@ typedef struct ucg_config {
     char *env_prefix;
     ucg_config_names_array_t planc;
     int32_t use_mt_mutex;
+    int32_t use_shm_pool;
     int32_t num_planc_cfg;
     ucg_planc_config_h *planc_cfg;
 } ucg_config_t;
@@ -43,6 +44,7 @@ typedef struct ucg_proc_info_array {
 
 typedef struct ucg_context {
     int32_t num_planc_rscs;
+    int32_t use_shmem_mp;
     ucg_resource_planc_t *planc_rscs;
     ucg_list_link_t plist; /* progress list */
     ucg_oob_group_t oob_group;

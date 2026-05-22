@@ -95,17 +95,24 @@ ucg_status_t ucg_shmem_segment_create(ucg_shmem_segment_t *shm_seg_p, size_t siz
     void *result;
     ucg_status_t status;
 
-    memset(real_filename, '\0', SHM_PATH_MAX);
+    for(;;) {
+        memset(real_filename, '\0', SHM_PATH_MAX);
 
-    shm_id = ucg_rand();
-    ucs_snprintf_safe(real_filename, sizeof(real_filename), UCG_POSIX_FILE_FMT, shm_id);
+        shm_id = ucg_rand();
+        ucs_snprintf_safe(real_filename, sizeof(real_filename), UCG_POSIX_FILE_FMT, shm_id);
 
-    seg_id = shm_open(real_filename, UCG_SHM_CREATE_FLAGS, UCG_SHM_OPEN_MODE);
-    if (seg_id < 0) {
-        ucg_error("(real_filename=%s flags=0x%x) failed:%m", real_filename,
-                  UCG_SHM_CREATE_FLAGS);
-        status = UCG_ERR_IO_ERROR;
-        goto err;
+        seg_id = shm_open(real_filename, UCG_SHM_CREATE_FLAGS, UCG_SHM_OPEN_MODE);
+        if (errno == EEXIST) {
+            continue;
+        }
+        if (seg_id < 0) {
+            ucg_error("(real_filename=%s flags=0x%x) failed:%m", real_filename,
+                    UCG_SHM_CREATE_FLAGS);
+            status = UCG_ERR_IO_ERROR;
+            goto err;
+        }
+        break;
+        /*if file exist, retry*/
     }
 
     /* Check if the location of the backing file has enough memory for the

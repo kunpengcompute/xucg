@@ -515,23 +515,27 @@ ucs_status_t ucs_sysv_alloc(size_t *size, size_t max_size, void **address_p,
             case ENOMEM:
             case EPERM:
                 ucg_error("%s", error_string);
+                shmctl(*shmid, IPC_RMID, NULL);
                 return UCS_ERR_NO_MEMORY;
             case ENOSPC:
             case EINVAL:
                 ucg_error("%s", error_string);
+                shmctl(*shmid, IPC_RMID, NULL);
                 return UCS_ERR_NO_MEMORY;
             default:
                 ucg_error("%s", error_string);
+                shmctl(*shmid, IPC_RMID, NULL);
                 return UCS_ERR_SHMEM_SEGMENT;
         }
     }
 
     /* Attach segment */
     if (*address_p) {
+        shmctl(*shmid, IPC_RMID, NULL);
         return UCS_ERR_INVALID_PARAM;
-    } else {
-        ptr = shmat(*shmid, NULL, 0);
     }
+
+    ptr = shmat(*shmid, NULL, 0);
 
     /* Remove segment, the attachment keeps a reference to the mapping */
     ret = shmctl(*shmid, IPC_RMID, NULL);

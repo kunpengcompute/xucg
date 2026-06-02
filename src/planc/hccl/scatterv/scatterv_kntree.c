@@ -73,6 +73,10 @@ static HcclResult Hccl_scatterv_kntree(const void *sendbuf,
     int64_t len = size * 2 * sizeof(int32_t);
     int32_t *sendcounts_temp_s = (int32_t *)malloc(len);
     int32_t *sendcounts_temp_r = (int32_t *)malloc(len * size);
+    if (sendcounts_temp_s == NULL || sendcounts_temp_r == NULL) {
+        err = HCCL_E_MEMORY;
+        goto free_sendcounts_temp;
+    }
     if (myrank == root) {
         memcpy(sendcounts_temp_s, sendcounts, size * sizeof(int32_t));
         memcpy(sendcounts_temp_s + size, displs, size * sizeof(int32_t));

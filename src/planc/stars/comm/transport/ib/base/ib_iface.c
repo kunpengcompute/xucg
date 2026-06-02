@@ -375,7 +375,7 @@ void sct_ib_address_unpack(const sct_ib_address_t *ib_addr,
 
     if (ib_addr->flags & UCT_IB_ADDRESS_FLAG_PATH_MTU) {
         params.path_mtu = (enum ibv_mtu)*(const uint8_t*)ptr;
-        ptr             = UCS_PTR_TYPE_OFFSET(ptr, const uint8_t);
+        ptr             = UCS_PTR_TYPE_OFFSET(ptr, const uint16_t);
         params.flags   |= UCT_IB_ADDRESS_PACK_FLAG_PATH_MTU;
     }
 

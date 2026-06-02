@@ -97,6 +97,7 @@ ucg_status_t ucg_mpool_init(ucg_mpool_t *mp, size_t priv_size,
 
     status = ucg_status_s2g(ucs_mpool_init(&mp_params, &mp->super));
     if (status != UCG_OK) {
+        ucg_free(ucs_ops);
         return status;
     }
     status = ucg_lock_init(&mp->lock, UCG_LOCK_TYPE_NONE);

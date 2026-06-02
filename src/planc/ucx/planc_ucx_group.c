@@ -99,7 +99,8 @@ ucg_status_t ucg_planc_ucx_create_node_leader_algo_group(ucg_planc_ucx_group_t *
         int32_t socket_id = ucg_topo_get_location_id(vgroup->group->topo, i,
                                                      UCG_TOPO_LOC_SOCKET_ID);
         if (node_id < 0 || socket_id < 0) {
-            return UCG_ERR_UNSUPPORTED;
+            status = UCG_ERR_UNSUPPORTED;
+            goto err_free_global_ranks;
         }
         int inner_offset_idx = node_id * ppn + socket_id;
         ucg_assert(inner_offset_idx < size);
@@ -117,7 +118,8 @@ ucg_status_t ucg_planc_ucx_create_node_leader_algo_group(ucg_planc_ucx_group_t *
         int32_t node_id = ucg_topo_get_location_id(vgroup->group->topo, i,
                                                    UCG_TOPO_LOC_NODE_ID);
         if (node_id < 0) {
-            return UCG_ERR_UNSUPPORTED;
+            status = UCG_ERR_UNSUPPORTED;
+            goto err_free_global_ranks;
         }
         if (offsets[node_id] == myoffset) {
             ranks[vsize++] = i;
@@ -196,7 +198,8 @@ ucg_status_t ucg_planc_ucx_create_only_node_leader_algo_group(ucg_planc_ucx_grou
         int32_t node_id = ucg_topo_get_location_id(vgroup->group->topo, i,
                                                    UCG_TOPO_LOC_NODE_ID);
         if (node_id < 0) {
-            return UCG_ERR_UNSUPPORTED;
+            status = UCG_ERR_UNSUPPORTED;
+            goto err_free_global_ranks;
         }
         if (i == vgroup->myrank) {
             myoffset = offsets[node_id];

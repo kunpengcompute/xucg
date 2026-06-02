@@ -396,7 +396,7 @@ static ucg_status_t scp_add_component_resources(scp_context_h context, scp_rsc_i
     return UCG_OK;
 err_close_mds:
     for (uint8_t idx = 0; idx < md_idx; ++idx) {
-        sct_md_close(context->tl_mds[md_idx].md);
+        sct_md_close(context->tl_mds[idx].md);
     }
     return status;
 }

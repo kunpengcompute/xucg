@@ -412,11 +412,16 @@ static ucg_status_t ucg_dt_memcpy_generic(void *dst, int32_t dcount, ucg_dt_t *d
     uint64_t dst_len = dcount * ucg_dt_size(dst_dt);
     status = src_len <= dst_len ? UCG_OK : UCG_ERR_TRUNCATE;
 
+    ucg_dt_finish(unpack_state);
+    ucg_dt_finish(pack_state);
+    return status;
+
 out_finish_unpack:
     ucg_dt_finish(unpack_state);
 out_finish_pack:
     ucg_dt_finish(pack_state);
 out:
+    ucg_free(buf);
     return status;
 }
 
@@ -551,11 +556,16 @@ static ucg_status_t ucg_dt_memcpy_generic_ext(void *dst, int64_t dcount, ucg_dt_
     uint64_t dst_len = (uint64_t)dcount * ucg_dt_size(dst_dt);
     status = src_len <= dst_len ? UCG_OK : UCG_ERR_TRUNCATE;
 
+    ucg_dt_finish(unpack_state);
+    ucg_dt_finish(pack_state);
+    return status;
+
 out_finish_unpack:
     ucg_dt_finish(unpack_state);
 out_finish_pack:
     ucg_dt_finish(pack_state);
 out:
+    ucg_free(buf);
     return status;
 }
 

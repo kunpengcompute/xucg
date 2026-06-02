@@ -131,14 +131,14 @@ ucg_status_t sct_stars_load()
     ucs_spin_lock(&stars_load_lock);
     if (sct_stars_handle != NULL) {
         ++sct_stars_ref;
-        goto out;
+        goto do_unlock;
     }
 
     sct_stars_handle = dlopen(STARS_DRIVER_SO, RTLD_NOW);
     if (sct_stars_handle == NULL) {
         ucg_debug("Failed to open library %s with error %s ", STARS_DRIVER_SO, dlerror());
         status = ucg_status_s2g(UCS_ERR_IO_ERROR);
-        goto out;
+        goto do_unlock;
     }
 
     sct_stars_reset();
@@ -161,22 +161,22 @@ ucg_status_t sct_stars_load()
     LOAD_FUNCTION(api_stars_wait_cqe_with_id, STARS_WAIT_CQE_WITH_ID, "stars_wait_cqe_with_id");
 
     status = sct_stars_init();
-    UCG_ASSERT_CODE_GOTO(status, do_dclose);
+    UCG_ASSERT_CODE_GOTO(status, out);
 
     status = ucg_mpool_init(&g_stars_trans_pool, 0, sizeof(stars_trans_parm_t),
                             0, UCG_CACHE_LINE_SIZE, UCG_ELEMS_PER_CHUNK,
                             UINT_MAX, NULL, "stars_trans_parm_t_pool");
-    UCG_ASSERT_CODE_GOTO(status, do_dclose);
+    UCG_ASSERT_CODE_GOTO(status, out);
 
     ++sct_stars_ref;
     ucs_spin_unlock(&stars_load_lock);
     ucg_debug("Success to load stars library.");
     return ucg_status_s2g(UCS_OK);
 
-do_dclose:
+out:
     dlclose(sct_stars_handle);
     sct_stars_handle = NULL;
-out:
+do_unlock:
     ucs_spin_unlock(&stars_load_lock);
     return status;
 }

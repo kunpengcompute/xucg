@@ -167,6 +167,7 @@ int32_t ucg_planm_count(ucg_components_t *ucg_planm)
 ucg_planm_t* ucg_planm_get_by_idx(int32_t idx, ucg_components_t *ucg_planm)
 {
     UCG_CHECK_OUT_RANGE(NULL, idx, 0, ucg_planm->num);
+    UCG_CHECK_NULL(NULL, ucg_planm);
 
     return ucg_derived_of(ucg_planm->components[idx], ucg_planm_t);
 }
@@ -174,6 +175,7 @@ ucg_planm_t* ucg_planm_get_by_idx(int32_t idx, ucg_components_t *ucg_planm)
 ucg_planm_t* ucg_planm_get_by_name(const char *name, ucg_components_t *ucg_planm)
 {
     UCG_CHECK_NULL(NULL, name);
+    UCG_CHECK_NULL(NULL, ucg_planm);
 
     for (int i = 0; i < ucg_planm->num; ++i) {
         ucg_planm_t *planm = ucg_derived_of(ucg_planm->components[i], ucg_planm_t);

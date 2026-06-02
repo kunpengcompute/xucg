@@ -52,9 +52,9 @@ static void scp_ep_destory_base(scp_ep_h ep)
         ep->self_addr = NULL;
     }
 
-    if (ep->self_addr) {
+    if (ep->peer_addr) {
         ucg_mpool_put(ep->peer_addr);
-        ep->self_addr = NULL;
+        ep->peer_addr = NULL;
     }
 
     if (ep) {

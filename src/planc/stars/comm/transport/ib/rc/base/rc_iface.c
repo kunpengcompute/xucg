@@ -77,7 +77,7 @@ void sct_rc_iface_add_qp(sct_rc_iface_t *iface, sct_rc_ep_t *ep,
     if (*ptr == NULL) {
         *ptr = ucg_calloc(UCS_BIT(SCT_RC_QP_TABLE_MEMB_ORDER), sizeof(**ptr),
                           "rc qp table");
-        ucg_assert(*ptr != NULL):
+        ucg_assert(*ptr != NULL);
     }
 
     memb = &(*ptr)[qp_num & UCS_MASK(SCT_RC_QP_TABLE_MEMB_ORDER)];

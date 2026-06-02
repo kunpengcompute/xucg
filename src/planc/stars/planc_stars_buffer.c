@@ -11,6 +11,15 @@ static inline void* ucg_planc_stars_alloc_event_elem(uint32_t elem_num)
     return ucg_calloc(elem_num, sizeof(stars_event_elem_t), "event elems");
 }
 
+static inline void ucg_planc_stars_event_elem_cleanup(stars_event_elem_h *event_elem)
+{
+    if (*event_elem) {
+        ucg_free(*event_elem);
+    }
+    *event_elem = NULL;
+    return;
+}
+
 static inline uint32_t ucg_planc_stars_cal_elem_num(stars_comm_dep_h comm_dep)
 {
     uint32_t elem_num = 0;
@@ -93,7 +102,7 @@ static ucg_status_t ucg_planc_stars_algo_alloc_event_common(ucg_planc_stars_op_t
     return UCG_OK;
 
 out:
-    ucg_planc_stars_event_elem_cleanup(elem);
+    ucg_planc_stars_event_elem_cleanup(&elem);
     return status;
 }
 
@@ -207,15 +216,6 @@ static ucg_status_t ucg_planc_stars_sbuf_deinit(scp_context_h context, stars_com
 
     ucg_planc_stars_local_buf_desc_cleanup(plan->lsbuf_desc);
     return scp_mem_dereg(context, plan->lsmemh);
-}
-
-static inline void ucg_planc_stars_event_elem_cleanup(stars_event_elem_h *event_elem)
-{
-    if (*event_elem) {
-        ucg_free(*event_elem);
-    }
-    *event_elem = NULL;
-    return;
 }
 
 static void ucg_planc_stars_shared_events_release(ucg_planc_stars_op_t *op)

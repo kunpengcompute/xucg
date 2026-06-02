@@ -62,12 +62,19 @@ static ucg_status_t ucg_planc_ucx_gatherv_na_linear_intra_gatherv_sendcount_prep
     if (is_node_leader) {
         intra_gatherv_sc_args->gatherv.recvtype = ucg_dt_get_predefined(UCG_DT_TYPE_INT32);
         int32_t *recvcounts = (int32_t *)ucg_malloc(sizeof(int32_t) * ppn, "intra gatherv recvcounts");
+        if (recvcounts == NULL) {
+            return UCG_ERR_NO_MEMORY;
+        }
         for (int32_t i = 0; i < ppn; i++) {
             recvcounts[i] = 1;
         }
         intra_gatherv_sc_args->gatherv.recvcounts = recvcounts;
         intra_gatherv_sc_args->gatherv.displs = ucg_planc_ucx_create_displs(intra_gatherv_sc_args->gatherv.recvcounts, ppn);
         intra_gatherv_sc_args->gatherv.recvbuf = (int32_t *)ucg_malloc(sizeof(int32_t) * ppn, "intra gatherv recvcounts recvbuf");
+        if (intra_gatherv_sc_args->gatherv.recvbuf == NULL) {
+            ucg_free(recvcounts);
+            return UCG_ERR_NO_MEMORY;
+        }
     }
     if (ucx_op->gatherv.topo_aware.intra_sendcount_op == NULL) {
         curr_ucx_op = ucg_planc_ucx_gatherv_build_topo_group_op(ucx_group,
@@ -108,12 +115,18 @@ static ucg_status_t ucg_planc_ucx_gatherv_na_linear_intra_gatherv_prepare(ucg_pl
         intra_gatherv_args->gatherv.recvtype = args->gatherv.recvtype;
         intra_gatherv_args->gatherv.recvcounts = intra_gatherv_sc_args->gatherv.recvbuf;//decided dynamically
         intra_gatherv_args->gatherv.displs = ucg_planc_ucx_create_displs(intra_gatherv_args->gatherv.recvcounts, ppn);//decided dynamically
+        if (intra_gatherv_args->gatherv.displs == NULL) {
+            return UCG_ERR_NO_MEMORY;
+        }
         for (int32_t i = 0; i < ppn; i++) {
             intra_total_count += intra_gatherv_args->gatherv.recvcounts[i];
         }
         uint64_t recvbuf_len = sendtype_extent * intra_total_count;
         intra_gatherv_args->gatherv.recvbuf = (int32_t *)ucg_malloc(recvbuf_len, "intra gatherv recvcounts recvbuf");//decided dynamically
-
+        if (intra_gatherv_args->gatherv.recvbuf == NULL) {
+            ucg_plan_ucx_free_ptr((void **)&(intra_gatherv_args->gatherv.displs));
+            return UCG_ERR_NO_MEMORY;
+        }
         ucx_op->gatherv.topo_aware.intra_total_count = intra_total_count;
     }
     if (ucx_op->gatherv.topo_aware.intra_op == NULL) {
@@ -155,6 +168,9 @@ static ucg_status_t ucg_planc_ucx_gatherv_na_linear_inter_gatherv_prepare(ucg_pl
         inter_gatherv_args->gatherv.sendtype = args->gatherv.sendtype;
         if (is_root) {
             int32_t *recvcounts = (int32_t *)ucg_malloc(sizeof(int32_t) * node_cnt, "inter gatherv recvcounts");
+            if (recvcounts == NULL) {
+                return UCG_ERR_NO_MEMORY;
+            }
             ucg_topo_group_t *node_leader_group = ucg_topo_get_group(vgroup->group->topo, UCG_TOPO_GROUP_TYPE_NODE_LEADER);
             ucg_rank_t node_leader_rank, last_node_leader_rank;
             last_node_leader_rank = 0;
@@ -174,6 +190,10 @@ static ucg_status_t ucg_planc_ucx_gatherv_na_linear_inter_gatherv_prepare(ucg_pl
             }
             inter_gatherv_args->gatherv.recvcounts = recvcounts;
             inter_gatherv_args->gatherv.displs = ucg_planc_ucx_create_displs(inter_gatherv_args->gatherv.recvcounts, node_cnt);
+            if (inter_gatherv_args->gatherv.displs == NULL) {
+                ucg_free(recvcounts);
+                return UCG_ERR_NO_MEMORY;
+            }
             inter_gatherv_args->gatherv.recvbuf = args->gatherv.recvbuf;
             inter_gatherv_args->gatherv.recvtype = args->gatherv.recvtype;
         }

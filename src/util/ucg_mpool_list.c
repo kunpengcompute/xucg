@@ -54,6 +54,7 @@ ucg_status_t ucg_mpool_list_init(ucg_list_link_t *head, const size_t length)
 
     ucg_status_t status = ucg_mpool_list_create_mpool(mpool_list_elem, length);
     if (status != UCG_OK) {
+        ucg_free(mpool_list_elem);
         return status;
     }
 
@@ -106,12 +107,15 @@ ucg_mpool_list_elem_t *ucg_mpool_list_mpool_get(ucg_list_link_t *head, const siz
     ucg_mpool_list_elem_t *mpool_list_elem = (ucg_mpool_list_elem_t *)ucg_malloc(sizeof(ucg_mpool_list_elem_t), "mpool list elem");
     UCG_CHECK_NULL(NULL, mpool_list_elem);
     status = ucg_mpool_list_create_mpool(mpool_list_elem, length);
-    UCG_CHECK_STATUS(NULL, status);
+    UCG_CHECK_GOTO(status, err);
     /* add new elem to the link */
     status = ucg_mpool_list_grow(head, mpool_list_elem);
-    UCG_CHECK_STATUS(NULL, status);
+    UCG_CHECK_GOTO(status, err);
 
     return mpool_list_elem;
+err:
+    ucg_free(mpool_list_elem);
+    return NULL;
 }
 
 void *ucg_mpool_list_get(ucg_list_link_t *head, const size_t length)

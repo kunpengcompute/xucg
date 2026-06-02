@@ -32,7 +32,7 @@ ucg_status_t ucg_planc_stars_put_ep_to_pool(ucg_planc_stars_context_t *context, 
 
 ucg_status_t ucg_planc_stars_rank_dep_alloc(stars_comm_dep_h comm_dep)
 {
-    ucg_status_t status;
+    ucg_status_t status = UCG_OK;
 
     comm_dep->get_ranks = NULL;
     UCG_MATCH_GOTO(comm_dep->get_rank_num == 0, alloc_put_rank);

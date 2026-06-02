@@ -159,6 +159,9 @@ static ucg_status_t ucg_planc_ucx_gatherv_na_kntree_intra_gatherv_prepare(ucg_pl
     intra_gatherv_args->gatherv.sendtype = args->gatherv.sendtype;
     if (is_node_leader) {
         int32_t * recvcounts = (int32_t *)ucg_malloc(sizeof(int32_t) * ppn, "intra gatherv recvcounts");
+        if (recvcounts == NULL) {
+            return UCG_ERR_NO_MEMORY;
+        }
         ucg_topo_group_t *node_intra_group = ucg_topo_get_group(vgroup->group->topo, UCG_TOPO_GROUP_TYPE_NODE);
         ucg_rank_t node_intra_rank;
         for (int32_t i = 0; i < ppn; i++) {
@@ -173,7 +176,10 @@ static ucg_status_t ucg_planc_ucx_gatherv_na_kntree_intra_gatherv_prepare(ucg_pl
 
         uint64_t recvbuf_len = recvtype_extent * intra_total_count;
         intra_gatherv_args->gatherv.recvbuf = (int32_t *)ucg_malloc(recvbuf_len, "intra gatherv recvcounts recvbuf");//decided dynamically
-
+        if (intra_gatherv_args->gatherv.recvbuf == NULL) {
+            ucg_free(recvcounts);
+            return UCG_ERR_NO_MEMORY;
+        }
         ucx_op->gatherv.topo_aware.intra_total_count = intra_total_count;
     }
     if (ucx_op->gatherv.topo_aware.intra_op == NULL) {

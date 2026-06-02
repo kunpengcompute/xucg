@@ -94,6 +94,7 @@ static ucs_status_t sct_sdma_ofd_mem_alloc(sct_md_h tl_md, size_t *length_p, voi
 
     status = sct_sdma_ofd_mem_reg(tl_md, sdma_ofd_mem_addr, *length_p, UCT_MD_MEM_ACCESS_ALL, memh_p);
     if (status != UCS_OK) {
+        ucg_free(sdma_ofd_mem_addr);
         ucg_error("Failed to pinned memory for sdma_ofd_mem_addr");
         return status;
     }
@@ -115,12 +116,11 @@ ucs_status_t sct_sdma_ofd_mem_free(sct_md_h md, sct_mem_h memh)
     status = sct_sdma_ofd_mem_dereg(md, memh);
     if (status != UCS_OK) {
         ucg_error("Failed to unpinned memory for sdma_ofd_mem_addr");
-        return status;
     }
     ucg_free(sdma_memh->address);
     ucg_free(sdma_memh);
 
-    return UCS_OK;
+    return status;
 }
 
 static sct_md_ops_t sct_sdma_ofd_md_ops = {

@@ -275,6 +275,7 @@ static ucg_status_t UCG_STARS_ALGO_FUN(barrier_faninfanout, init)(ucg_plan_op_t 
 err_destruct_op:
     UCG_CLASS_DESTRUCT(ucg_plan_op_t, &op->super);
 out:
+    ucg_free(op->staging_area);
     op->super.super.status = status;
     return status;
 }

@@ -93,6 +93,7 @@ static ucg_status_t ucg_planc_stars_algo_alloc_event_common(ucg_planc_stars_op_t
     return UCG_OK;
 
 out:
+    ucg_planc_stars_event_elem_cleanup(elem);
     return status;
 }
 

@@ -783,6 +783,10 @@ static ucg_status_t ucg_planc_ucx_scatterv_na_kntree_op_trigger(ucg_plan_op_t *u
         /* set sendcounts */
         inter_args->sendcounts = ucg_calloc(group_size, sizeof(int32_t),
                                  "scatterv inter temp sendcounts");
+        if (inter_args->sendcounts == NULL) {
+            ucg_planc_ucx_free_ptr((void **)&(inter_args->sendbuf));
+            return UCG_ERR_NO_MEMORY;
+        }
         ucg_dt_memcpy((int32_t *)inter_args->sendcounts, group_size,
                       ucg_dt_get_predefined(UCG_DT_TYPE_INT32),
                       args->sendcounts, group_size,

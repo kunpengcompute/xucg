@@ -189,7 +189,11 @@ ucg_planc_ucx_op_t *ucg_planc_ucx_reduce_scatter_block_ring_op_new(ucg_planc_ucx
         ucg_error("Failed to initialize super of ucx op");
         goto err_free_op;
     }
-    ucg_planc_ucx_reduce_scatter_block_ring_op_init(ucx_op, ucx_group);
+    status = ucg_planc_ucx_reduce_scatter_block_ring_op_init(ucx_op, ucx_group);
+    if (status != UCG_OK) {
+        ucg_error("Failed to initialize ring op");
+        goto err_free_op;
+    }
     return ucx_op;
 
 err_free_op:

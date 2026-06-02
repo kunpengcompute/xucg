@@ -78,7 +78,7 @@ ucs_status_t sct_rc_ofd_md_open(uct_md_h uct_md, struct ibv_device *ibv_device,
     }
 
     const scs_machine_offload_t *machine = scs_stars_get_machine_info();
-
+    ucg_assert(machine != NULL);
     md->super.config             = md_config->ext;
     md->super.ops                = &sct_rc_ofd_md_ops;
     md->super.memh_struct_size   = sizeof(sct_ib_verbs_mem_t);

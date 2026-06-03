@@ -8,15 +8,13 @@ static ucg_status_t ucg_shmem_pool_create(ucg_shmem_pool_t *shmem_pool, size_t l
     ucg_status_t status;
     ucg_mpool_t *mp = &shmem_pool->super;
     shmem_pool->length = length;
-    ucg_mpool_init_allocate_type(mp, UCG_MPOOL_ALLOCATE_BY_MMAP);
     if (SIZE_MAX - UCG_MAX_CHUNK_PADDING < length) {
         ucg_error("shmem pool init length too lagre, length is %zu", length);
         return UCG_ERR_IO_ERROR;
     }
-    ucg_mpool_init_max_chunk_size(mp, length + UCG_MAX_CHUNK_PADDING);
     /* set max_elems to be "1" to limit number of elems in shared memory chunk */
-    status = ucg_mpool_init(mp, 0, sizeof(ucg_shmem_segment_t) + length, 0, 64, 1, 1,
-                            NULL, "shared memory mpool");
+    status = ucg_mpool_chunk_init(mp, 0, sizeof(ucg_shmem_segment_t) + length, 0, 64, 1, 1,
+                                  NULL, "shared memory mpool", length + UCG_MAX_CHUNK_PADDING);
     if (status != UCG_OK) {
         return status;
     }

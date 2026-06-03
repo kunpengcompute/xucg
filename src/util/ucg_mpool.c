@@ -9,20 +9,17 @@
 #include "util/ucg_sys.h"
 #include "ucg_log.h"
 
-#define UCG_MBYTE   (1ull << 20)
-static ucg_mpool_ops_t ucg_default_mpool_ops[UCG_MPOOL_ALLOCATE_LAST] = {
-    {
-        .chunk_alloc = ucg_mpool_hugetlb_malloc,
-        .chunk_release = ucg_mpool_hugetlb_free,
-        .obj_init = NULL,
-        .obj_cleanup = NULL
-    },
-    {
-        .chunk_alloc = ucg_mpool_chunk_mmap,
-        .chunk_release = ucg_mpool_chunk_munmap,
-        .obj_init = ucg_mpool_chunk_obj_init,
-        .obj_cleanup = NULL
-    }
+static ucg_mpool_ops_t ucg_default_mpool_ops = {
+    .chunk_alloc = ucg_mpool_hugetlb_malloc,
+    .chunk_release = ucg_mpool_hugetlb_free,
+    .obj_init = NULL,
+    .obj_cleanup = NULL
+};
+static ucg_mpool_ops_t ucg_chunk_mpool_ops = {
+    .chunk_alloc = ucg_mpool_chunk_mmap,
+    .chunk_release = ucg_mpool_chunk_munmap,
+    .obj_init = ucg_mpool_chunk_obj_init,
+    .obj_cleanup = NULL
 };
 
 /**
@@ -56,7 +53,13 @@ static void ucg_mpool_obj_cleanup_wrapper(ucs_mpool_t *ucs_mp, void *obj)
     ucg_mp->ops->obj_cleanup(ucg_mp, obj);
 }
 
-static ucs_mpool_ops_t *ucs_ops;
+static ucs_mpool_ops_t ucs_ops = {
+    .chunk_alloc        = ucg_mpool_chunk_alloc_wrapper,
+    .chunk_release      = ucg_mpool_chunk_release_wrapper,
+    .obj_init           = ucg_mpool_obj_init_wrapper,
+    .obj_cleanup        = ucg_mpool_obj_cleanup_wrapper,
+    .obj_str            = NULL
+};
 
 ucg_status_t ucg_mpool_init(ucg_mpool_t *mp, size_t priv_size,
                             size_t elem_size, size_t align_offset, size_t alignment,
@@ -70,37 +73,67 @@ ucg_status_t ucg_mpool_init(ucg_mpool_t *mp, size_t priv_size,
         return UCG_ERR_INVALID_PARAM;
     }
 
-    ucs_ops = ucg_calloc(1, sizeof(ucs_mpool_ops_t), "ucs_ops");
-    if (ucs_ops == NULL) {
-        return UCG_ERR_NO_MEMORY;
-    }
-
-    mp->ops = (ops == NULL) ? &ucg_default_mpool_ops[mp->allocate_type] : ops;
+    mp->ops = (ops == NULL) ? &ucg_default_mpool_ops : ops;
     if (mp->ops->obj_init == NULL) {
-        ucs_ops->obj_init = NULL;
+        ucs_ops.obj_init = NULL;
     }
     if (mp->ops->obj_cleanup == NULL) {
-        ucs_ops->obj_cleanup = NULL;
+        ucs_ops.obj_cleanup = NULL;
     }
 
     ucs_mpool_params_reset(&mp_params);
-    mp_params.max_chunk_size    = mp->max_chunk_size;
     mp_params.priv_size         = priv_size;
     mp_params.elem_size         = elem_size;
     mp_params.align_offset      = align_offset;
     mp_params.alignment         = alignment;
     mp_params.elems_per_chunk   = elems_per_chunk;
     mp_params.max_elems         = max_elems;
-    mp_params.ops               = ucs_ops;
+    mp_params.ops               = &ucs_ops;
     mp_params.name              = name;
-    ucs_ops->chunk_alloc = ucg_mpool_chunk_alloc_wrapper;
-    ucs_ops->chunk_release = ucg_mpool_chunk_release_wrapper;
-    ucs_ops->obj_init = (mp->ops->obj_init == NULL) ? NULL : ucg_mpool_obj_init_wrapper;
-    ucs_ops->obj_cleanup = (mp->ops->obj_cleanup == NULL) ? NULL : ucg_mpool_obj_cleanup_wrapper;
 
     status = ucg_status_s2g(ucs_mpool_init(&mp_params, &mp->super));
     if (status != UCG_OK) {
-        ucg_free(ucs_ops);
+        return status;
+    }
+    status = ucg_lock_init(&mp->lock, UCG_LOCK_TYPE_NONE);
+    return status;
+}
+
+ucg_status_t ucg_mpool_chunk_init(ucg_mpool_t *mp, size_t priv_size,
+                                  size_t elem_size, size_t align_offset, size_t alignment,
+                                  unsigned elems_per_chunk, unsigned max_elems,
+                                  ucg_mpool_ops_t *ops, const char *name, size_t length)
+{
+    ucs_mpool_ops_t *ucs_chunk_ops = NULL;
+    ucg_status_t status;
+    ucs_mpool_params_t mp_params;
+
+    if (mp == NULL || name == NULL) {
+        return UCG_ERR_INVALID_PARAM;
+    }
+
+    ucs_chunk_ops = ucg_calloc(1, sizeof(ucs_mpool_ops_t), "ucg_chuck_mpool_init");
+
+    mp->ops = (ops == NULL) ? &ucg_chunk_mpool_ops : ops;
+
+    ucs_chunk_ops->chunk_alloc = ucg_mpool_chunk_alloc_wrapper;
+    ucs_chunk_ops->chunk_release = ucg_mpool_chunk_release_wrapper;
+    ucs_chunk_ops->obj_init = (mp->ops->obj_init == NULL) ? NULL : ucg_mpool_obj_init_wrapper;
+    ucs_chunk_ops->obj_cleanup = (mp->ops->obj_cleanup == NULL) ? NULL : ucg_mpool_obj_cleanup_wrapper;
+
+    ucs_mpool_params_reset(&mp_params);
+    mp_params.priv_size         = priv_size;
+    mp_params.elem_size         = elem_size;
+    mp_params.align_offset      = align_offset;
+    mp_params.alignment         = alignment;
+    mp_params.elems_per_chunk   = elems_per_chunk;
+    mp_params.max_elems         = max_elems;
+    mp_params.ops               = ucs_chunk_ops;
+    mp_params.name              = name;
+    mp_params.max_chunk_size    = length;
+
+    status = ucg_status_s2g(ucs_mpool_init(&mp_params, &mp->super));
+    if (status != UCG_OK) {
         return status;
     }
     status = ucg_lock_init(&mp->lock, UCG_LOCK_TYPE_NONE);
@@ -130,10 +163,6 @@ void ucg_mpool_cleanup(ucg_mpool_t *mp, int check_leak)
     }
 
     ucs_mpool_cleanup(&mp->super, check_leak);
-    if (ucs_ops != NULL) {
-        ucg_free(ucs_ops);
-        ucs_ops = NULL;
-    }
     ucg_lock_destroy(&mp->lock);
     return;
 }
@@ -167,26 +196,6 @@ void ucg_mpool_put(void *obj)
 int ucg_mpool_is_empty(ucg_mpool_t *mp)
 {
     return (mp->super.freelist == NULL) && (mp->super.data->quota == 0);
-}
-
-ucg_status_t ucg_mpool_init_allocate_type(ucg_mpool_t *mp, ucg_mpool_allocate_type_t type)
-{
-    if (mp == NULL) {
-        return UCG_ERR_INVALID_PARAM;
-    }
-
-    mp->allocate_type = type;
-    return UCG_OK;
-}
-
-ucg_status_t ucg_mpool_init_max_chunk_size(ucg_mpool_t *mp, size_t length)
-{
-    if (mp == NULL) {
-        return UCG_ERR_INVALID_PARAM;
-    }
-
-    mp->max_chunk_size = length;
-    return UCG_OK;
 }
 
 ucg_status_t ucg_mpool_chunk_mmap(ucg_mpool_t *mp, size_t *size_p, void **chunk_p)

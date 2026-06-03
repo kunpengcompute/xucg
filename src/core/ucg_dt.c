@@ -207,8 +207,6 @@ static void ucg_dt_unpack_contiguous(ucg_dt_state_t *state, uint64_t offset,
 
 ucg_status_t ucg_dt_global_init()
 {
-    ucg_mpool_init_allocate_type(&ucg_dt_state_mp, UCG_MPOOL_ALLOCATE_BY_HUGETBL);
-    ucg_mpool_init_max_chunk_size(&ucg_dt_state_mp, UCG_DEAULT_MAX_CHUNK_SIZE);
     return UCG_MPOOL_INIT(&ucg_dt_state_mp, 0, sizeof(ucg_dt_state_t), 0,
                           UCG_CACHE_LINE_SIZE, 16, -1, NULL, "dt state mpool");
 }

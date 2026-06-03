@@ -20,8 +20,6 @@ static ucg_status_t ucg_mpool_list_create_mpool(ucg_mpool_list_elem_t *mpool_lis
     ucg_mpool_t *mp = &mpool_list_elem->super;
 
     mpool_list_elem->length = length;
-    ucg_mpool_init_allocate_type(mp, UCG_MPOOL_ALLOCATE_BY_HUGETBL);
-    ucg_mpool_init_max_chunk_size(mp, UCG_DEAULT_MAX_CHUNK_SIZE);
     status = ucg_mpool_init(mp, 0, length,
                             0, UCG_CACHE_LINE_SIZE, UCG_ELEMS_PER_CHUNK,
                             UINT_MAX, NULL, "mpool list elem");

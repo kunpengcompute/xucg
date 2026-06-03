@@ -400,8 +400,6 @@ static ucg_status_t ucg_context_init_version(uint32_t major_version,
 
     ucg_list_head_init(&ctx->plist);
 
-    ucg_mpool_init_allocate_type(&ctx->meta_op_mp, UCG_MPOOL_ALLOCATE_BY_HUGETBL);
-    ucg_mpool_init_max_chunk_size(&ctx->meta_op_mp, UCG_DEAULT_MAX_CHUNK_SIZE);
     status = ucg_mpool_init(&ctx->meta_op_mp, 0, sizeof(ucg_plan_meta_op_t),
                             0, UCG_CACHE_LINE_SIZE, UCG_ELEMS_PER_CHUNK,
                             UINT_MAX, NULL, "meta op mpool");

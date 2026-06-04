@@ -21,12 +21,6 @@
 #define UCG_MPOOL_INIT(...) ucg_mpool_init(__VA_ARGS__)
 #endif
 
-typedef enum {
-    UCG_MPOOL_ALLOCATE_BY_HUGETBL = 0,
-    UCG_MPOOL_ALLOCATE_BY_MMAP,
-    UCG_MPOOL_ALLOCATE_LAST
-} ucg_mpool_allocate_type_t;
-
 typedef struct ucg_mmap_mpool_chunk_hdr {
     size_t size;
 } ucg_mmap_mpool_chunk_hdr_t;
@@ -74,8 +68,6 @@ typedef struct ucg_mpool_ops {
 struct ucg_mpool {
     ucs_mpool_t super;      /**< UCS memory pool */
     ucg_mpool_ops_t *ops;   /**< UCG mpool ops */
-    ucg_mpool_allocate_type_t allocate_type;
-    size_t max_chunk_size;  /*ucg mpool max chunk size*/
     ucg_lock_t lock;
 };
 
@@ -99,6 +91,28 @@ ucg_status_t ucg_mpool_init(ucg_mpool_t *mp, size_t priv_size,
                             size_t elem_size, size_t align_offset, size_t alignment,
                             unsigned elems_per_chunk, unsigned max_elems,
                             ucg_mpool_ops_t *ops, const char *name);
+
+/**
+ * @brief Create a memory pool.
+ *
+ * @param [in] mp               the memory pool
+ * @param [in] priv_size        user defined private data length, can be 0
+ * @param [in] elem_size        the size of an element alloc from mpool
+ * @param [in] align_offset     offset in the element which should be aligned to the given boundary
+ * @param [in] alignment        boundary to which align the given offset within the element
+ * @param [in] elems_per_chunk  the max number of elements allocated from a single chunk
+ * @param [in] max_elems        the max number of elements allocated from this mpool
+ *                              UINT_MAX is for unlimited
+ * @param [in] ops              the memory pool ops, if NULL will use the default mpool ops
+ * @param [in] name             the name of this mpool
+ * @param [in] length           addition length for max_size
+ *
+ * @return the status of init
+ */
+ucg_status_t ucg_mpool_chunk_init(ucg_mpool_t *mp, size_t priv_size,
+                                  size_t elem_size, size_t align_offset, size_t alignment,
+                                  unsigned elems_per_chunk, unsigned max_elems,
+                                  ucg_mpool_ops_t *ops, const char *name, size_t length);
 
 /**
  * @brief Create a thread-safe memory pool.
@@ -149,16 +163,6 @@ void ucg_mpool_put(void *obj);
  * @return      Whether a memory pool is empty
  */
 int ucg_mpool_is_empty(ucg_mpool_t *mp);
-
-/**
- * @brief Init mpoolallocate type
- */
-ucg_status_t ucg_mpool_init_allocate_type(ucg_mpool_t *mp, ucg_mpool_allocate_type_t type);
-
-/**
- * @brief Init mpool max chunk size
- */
-ucg_status_t ucg_mpool_init_max_chunk_size(ucg_mpool_t *mp, size_t length);
 
 /**
  * @brief posix mmap chunk allocator.

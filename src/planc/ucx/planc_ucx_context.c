@@ -540,8 +540,6 @@ ucg_status_t ucg_planc_ucx_context_init(const ucg_planc_params_t *params,
         max_op_size = (planm->op_size > max_op_size) ? planm->op_size : max_op_size;
     }
 
-    ucg_mpool_init_allocate_type(&ctx->op_mp, UCG_MPOOL_ALLOCATE_BY_HUGETBL);
-    ucg_mpool_init_max_chunk_size(&ctx->op_mp, UCG_DEAULT_MAX_CHUNK_SIZE);
     status = ucg_mpool_init(&ctx->op_mp, 0, max_op_size,
                             0, UCG_CACHE_LINE_SIZE, UCG_ELEMS_PER_CHUNK,
                             UINT_MAX, NULL, "planc ucx op mpool");

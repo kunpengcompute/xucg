@@ -676,7 +676,7 @@ ucg_status_t ucg_request_msg_size(const ucg_coll_args_t *args, const uint32_t si
             break;
         case UCG_COLL_TYPE_REDUCE_SCATTER_BLOCK:
         case UCG_COLL_TYPE_IREDUCE_SCATTER_BLOCK:
-            *msize = ucg_dt_size(args->reduce_scatter_block.dt) * args->reduce_scatter_block.recvcount * size;
+            *msize = ucg_dt_size(args->reduce_scatter_block.dt) * (args->reduce_scatter_block.recvcount + 1) * size;
             break;
         default:
             return UCG_ERR_INVALID_PARAM;

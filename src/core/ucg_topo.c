@@ -580,9 +580,11 @@ static void ucg_topo_cleanup_detail(ucg_topo_t *topo)
 
 static ucg_status_t ucg_topo_calc_ppn(ucg_topo_t *topo)
 {
+    int32_t ppn = topo->ppn;
     ucg_topo_detail_t *detail = &topo->detail;
     int32_t nnode = detail->nnode;
     ucg_topo_location_t *locations = detail->locations;
+    detail->nnode_in_order = 1;
 
     if (nnode == 0) {
         topo->ppn = UCG_TOPO_PPX_UNKNOWN;
@@ -610,6 +612,14 @@ static ucg_status_t ucg_topo_calc_ppn(ucg_topo_t *topo)
         }
     }
     topo->ppn = res;
+
+    for (int i = 0; i < group_size; i++) {
+        ucg_location_t location;
+        topo->get_location(topo->group, i, &location);
+        if (location.node_id != i / ppn) {
+            detail->nnode_in_order = 0;
+        }
+    }
 out:
     ucg_free(process_cnt);
     return UCG_OK;

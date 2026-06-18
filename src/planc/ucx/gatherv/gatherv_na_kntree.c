@@ -481,13 +481,9 @@ static ucg_status_t ucg_planc_ucx_gatherv_na_kntree_check(ucg_vgroup_t *vgroup,
         ucg_info("Node-aware kntree gatherv don't support ppn==1");
         return UCG_ERR_UNSUPPORTED;
     }
-    for (int i = 0;i < vgroup->size;i++) {
-        ucg_location_t location;
-        vgroup->group->topo->get_location(vgroup->group->topo->group, i, &location);
-        if (location.node_id != i / ppn) {
-            ucg_info("Node-aware kntree gatherv does not support node is not order");
-            return UCG_ERR_UNSUPPORTED;
-        }
+    if (vgroup->group->topo->detail.nnode_in_order == 0) {
+        ucg_info("Node-aware kntree gatherv does not support node is not order");
+        return UCG_ERR_UNSUPPORTED;
     }
     return UCG_OK;
 }

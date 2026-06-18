@@ -87,6 +87,7 @@ typedef struct ucg_topo_detail {
     int32_t nnode;
     int32_t nsocket;
     int32_t nrank_continuous;
+    int32_t nnode_in_order;
     /* The length of the locations array is determined by @ref ucg_group_t::size */
     ucg_topo_location_t *locations;
 } ucg_topo_detail_t;
